@@ -259,6 +259,10 @@ const SUITES: &[Suite] = &[
                 name: "environment inheritance",
                 run: general::test_env,
             },
+            Test {
+                name: "touch creates a missing file",
+                run: general::test_touch_creates_file,
+            },
         ],
     },
     Suite {

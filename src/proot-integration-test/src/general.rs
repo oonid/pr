@@ -68,6 +68,28 @@ pub fn test_signal() -> TestResult {
     }
 }
 
+pub fn test_touch_creates_file() -> TestResult {
+    let file = "/tmp/pit-touch";
+    let _ = fs::remove_file(file);
+    let missing = std::ffi::CString::new(file).unwrap();
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, missing.as_ptr(), std::ptr::null(), 0) };
+    let errno = std::io::Error::last_os_error().raw_os_error();
+    if rc != -1 || errno != Some(libc::ENOENT) {
+        return Err(format!("utimensat on missing file: rc={} errno={:?}", rc, errno));
+    }
+    let out = std::process::Command::new("/bin/sh")
+        .args(["-c", "touch /tmp/pit-touch && test -f /tmp/pit-touch && touch /tmp/pit-touch && echo ok"])
+        .output()
+        .map_err(|e| format!("touch: {}", e))?;
+    let _ = fs::remove_file(file);
+    let stdout = std::str::from_utf8(&out.stdout).unwrap_or("").trim();
+    if stdout == "ok" {
+        Ok(())
+    } else {
+        Err(format!("touch did not create the file: {:?}", stdout))
+    }
+}
+
 pub fn test_env() -> TestResult {
     let out = std::process::Command::new("/bin/sh")
         .args(["-c", "echo $HOME"])

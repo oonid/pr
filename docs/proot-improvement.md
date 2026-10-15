@@ -683,7 +683,11 @@ is `PR_getuid` or `PR_void` and the result is non-zero. Previously this block wa
 guarded by `#ifdef USERLAND`, so non-USERLAND builds did not zero it.
 
 For `utimensat`/`utimes`/`futimesat`/`utime`, a separate EXIT handler in the
-non-USERLAND code path forces any negative result to 0 when `euid == 0`.
+non-USERLAND code path forces any negative result to 0 when `euid == 0`, except
+ENOENT for an absolute path that does not exist on the host (`utime_target_missing()`).
+`touch(1)` and Python's `Path.touch()` call `utimensat` first and create the file
+only after that ENOENT; zeroing it made them report success without creating anything.
+An L2S-converted symlink always exists on the host, so the dpkg/tar case still gets 0.
 
 ### Files changed
 
