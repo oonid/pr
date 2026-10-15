@@ -168,7 +168,7 @@ Command::new("/bin/sh").args(["-c", "apk update 2>&1"]).output()
 
 ### Proot caveats
 
-**`touch` silently fails inside proot:** BusyBox `touch` uses `utimensat` which proot intercepts incorrectly. `touch /path/to/file` returns exit code 0 but the file is never created on disk. Use `echo > /path/to/file` instead — shell redirection uses `open(O_CREAT|O_WRONLY|O_TRUNC)` which proot handles correctly. See `docs/important-notes.md` § pr-cli Caveats.
+**`touch` on older proot builds:** before the utimensat ENOENT fix, `touch /new/file` exited 0 without creating the file. Current builds create it; scripts that must also run on older builds can keep `echo > /path/to/file`. See `docs/important-notes.md` § pr-cli Caveats.
 
 **Double shell wrapping via `pr-cli login`:** `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')>"`. Never pass `/bin/sh -c` as trailing args — it causes double wrapping and broken quoting:
 ```bash

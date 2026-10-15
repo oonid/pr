@@ -749,6 +749,26 @@ static int handle_sysenter_end(Tracee *tracee, Config *config)
 
 }
 
+#ifndef USERLAND
+static bool utime_target_missing(Tracee *tracee, Reg path_sysarg)
+{
+	char path[PATH_MAX];
+	struct stat statl;
+	word_t address;
+	int size;
+
+	address = peek_reg(tracee, MODIFIED, path_sysarg);
+	if (address == 0)
+		return false;
+
+	size = read_string(tracee, path, address, PATH_MAX);
+	if (size <= 1 || size > PATH_MAX || path[0] != '/')
+		return false;
+
+	return lstat(path, &statl) < 0 && errno == ENOENT;
+}
+#endif
+
 /**
  * Adjust current @tracee's syscall result according to @config.  This
  * function returns -errno if an error occured, otherwise 0.
@@ -940,10 +960,14 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 	case PR_utime: {
 		/* On Android, utimensat/utimes on L2S-converted symlinks returns
 		 * ENOENT (SELinux masquerades EPERM for timestamp ops on app data
-		 * files).  fake-root forces any error to 0 so dpkg/tar proceed.
+		 * files).  fake-root forces any error to 0 so dpkg/tar proceed,
+		 * except a real ENOENT for a missing target: touch(1) and
+		 * Python's Path.touch() create the file only after that ENOENT.
 		 * Successful calls (result==0) pass through unchanged. */
 		word_t ts_result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
-		if (config->euid == 0 && (int) ts_result < 0)
+		Reg ts_path = (sysnum == PR_utimes || sysnum == PR_utime) ? SYSARG_1 : SYSARG_2;
+		if (config->euid == 0 && (int) ts_result < 0
+		    && !((int) ts_result == -ENOENT && utime_target_missing(tracee, ts_path)))
 			poke_reg(tracee, SYSARG_RESULT, 0);
 		return 0;
 	}

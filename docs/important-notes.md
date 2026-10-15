@@ -256,18 +256,15 @@ this environment (link() is always blocked), so the stubs are the correct long-t
 
 ## pr-cli Caveats
 
-### `touch` silently fails inside proot
+### `touch` silently failed inside proot (fixed)
 
-BusyBox `touch` uses `utimensat` which proot intercepts incorrectly on Android.
-`touch /path/to/file` returns exit code 0 but the file is never created on disk.
-The file may appear to exist within the same proot session (proot's translation
-layer caches it) but will not persist to the host filesystem.
-
-**Workaround:** Use `echo > /path/to/file` instead. Shell redirection uses
-`open(O_CREAT|O_WRONLY|O_TRUNC)` which proot handles correctly.
-
-This affects any script that uses `touch` to create marker or sentinel files
-inside proot. The `pr-cli` test scripts use `echo >` for this reason.
+`touch` and Python's `Path.touch()` call `utimensat` on the path first and create
+the file only when it returns ENOENT. fake_id0's utimes EXIT handler forced every
+error to 0 (for dpkg on L2S symlinks), so `touch /new/file` exited 0 without
+creating the file. The handler now lets ENOENT through when the target does not
+exist on the host (`docs/proot-improvement.md §28`); the integration test
+"touch creates a missing file" covers it. Proot binaries built before this fix
+still need `echo > /path/to/file`.
 
 ### Double shell wrapping via `pr-cli login`
 
