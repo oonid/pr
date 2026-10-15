@@ -162,19 +162,22 @@ The kernel sees the actual `.l2s.` symlink on disk and returns its target.
 
 **File**: `src/proot/src/syscall/exit.c`
 
-After `detranslate_path()` in the readlink exit handler, check if the detranslated result
-contains `/.l2s/`. If so, return `-EINVAL` — making the symlink invisible to the guest.
+After `detranslate_path()` in the readlink exit handler, check if the basename of the
+detranslated result starts with `L2S_PREFIX` (`.l2s.`, defined in `extension/extension.h`).
+If so, return `-EINVAL` — making the symlink invisible to the guest.
 
 ```c
-status = detranslate_path(tracee, referee, referer);
-if (status < 0)
-    break;
-
-if (status > 0 && strstr(referee, "/.l2s/") != NULL) {
+const char *l2s_name = strrchr(referee, '/');
+if (strncmp(l2s_name != NULL ? l2s_name + 1 : referee,
+	    L2S_PREFIX, strlen(L2S_PREFIX)) == 0) {
     status = -EINVAL;
     break;
 }
 ```
+
+The first version matched `/.l2s/` in the path, which only holds when `PROOT_L2S_DIR`
+points at `<rootfs>/.l2s`. Without that directory link2symlink stores the intermediate
+beside the original (`/usr/bin/.l2s..apk.<hash>`), and `realpath /usr/bin/cc` leaked it.
 
 This works because:
 - `realpath()` calls `readlink()` on each path component

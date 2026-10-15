@@ -227,7 +227,7 @@ The `default:` case in the SIGSYS handler differentiates between syscalls:
 | `PR_statfs`/`PR_statfs64` tmpfs faking | Writes `TMPFS_MAGIC` (0x01021994) for `/dev/shm` path |
 | `PR_statx` handling | Delegates to `handle_statx_syscall()` from `tracee/statx.c` |
 | `PR_ioctl` FICLONE fix | Changes EACCES to EOPNOTSUPP for FICLONE ioctl (from termux) |
-| `PR_readlink`/`PR_readlinkat` `.l2s.` hiding | After `detranslate_path()`, applies `substitute_binding()` to replace detranslated path with host-side binding path for absolute paths, then returns EINVAL if result contains `/.l2s/` — makes link2symlink's fake symlinks invisible to `readlink()`, preserving original hard-link semantics |
+| `PR_readlink`/`PR_readlinkat` `.l2s.` hiding | After `detranslate_path()`, applies `substitute_binding()` to replace detranslated path with host-side binding path for absolute paths, then returns EINVAL if the result's basename starts with `L2S_PREFIX` (`.l2s.`, so it holds whether L2S files live in `PROOT_L2S_DIR` or beside the original) — makes link2symlink's fake symlinks invisible to `readlink()`, preserving original hard-link semantics |
 
 ### From termux
 - Negative result debug logging (first 50 calls)
