@@ -208,4 +208,12 @@ extern int fix_symlink_size_callback(Extension *extension, ExtensionEvent event,
 extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 
+/* Name prefix of link2symlink's intermediate and final files, in
+ * PROOT_L2S_DIR or beside the original when that is unset.  */
+#ifdef USERLAND
+#define L2S_PREFIX ".proot.l2s."
+#else
+#define L2S_PREFIX ".l2s."
+#endif
+
 #endif /* EXTENSION_H */

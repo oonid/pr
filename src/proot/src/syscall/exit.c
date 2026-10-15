@@ -405,7 +405,11 @@ void translate_syscall_exit(Tracee *tracee)
 				break;
 		}
 
-		if (strstr(referee, "/.l2s/") != NULL) {
+		/* A fake hard link must read as a regular file, wherever
+		 * link2symlink stored its intermediate.  */
+		const char *l2s_name = strrchr(referee, '/');
+		if (strncmp(l2s_name != NULL ? l2s_name + 1 : referee,
+			    L2S_PREFIX, strlen(L2S_PREFIX)) == 0) {
 			status = -EINVAL;
 			break;
 		}

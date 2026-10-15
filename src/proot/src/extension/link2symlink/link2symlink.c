@@ -20,12 +20,7 @@
 #include "arch.h"
 #include "attribute.h"
 
-#ifdef USERLAND
-#define PREFIX ".proot.l2s."
-#endif 
-#ifndef USERLAND
-#define PREFIX ".l2s."
-#endif 
+#define PREFIX L2S_PREFIX
 #define DELETED_SUFFIX " (deleted)"
 
 static int decrement_link_count(Tracee *tracee, Reg sysarg);
