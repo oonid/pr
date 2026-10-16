@@ -33,6 +33,7 @@ class TerminalActivity : ComponentActivity() {
     private var session: ProotLauncher.Session? = null
     private var emulator: TerminalEmulator? = null
     private var readerThread: Thread? = null
+    private var initialImeRequested = false
     private var initialImeShown = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,7 +118,12 @@ class TerminalActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && !initialImeShown) ensureInitialKeyboard(attempt = 0)
+        if (hasFocus && !initialImeRequested) {
+            // Once per screen: with a hardware keyboard the IME never shows, and later focus gains
+            // (returning from another app) must not force it open.
+            initialImeRequested = true
+            ensureInitialKeyboard(attempt = 0)
+        }
     }
 
     // The terminal library asks for the IME once, 100 ms after composition. If the activity's open
