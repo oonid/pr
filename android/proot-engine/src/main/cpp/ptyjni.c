@@ -182,6 +182,20 @@ Java_id_or_oo_pr_engine_PtyNative_nativeWaitPid(JNIEnv *env, jclass cls, jint pi
     return -2;
 }
 
+/* Block until @pid exits and reap it: exit code, or 128 + signal; -1 on error. */
+JNIEXPORT jint JNICALL
+Java_id_or_oo_pr_engine_PtyNative_nativeWaitPidBlocking(JNIEnv *env, jclass cls, jint pid) {
+    int status;
+    pid_t result;
+    do {
+        result = waitpid(pid, &status, 0);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
+}
+
 JNIEXPORT void JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeClose(JNIEnv *env, jclass cls, jint fd) {
     close(fd);

@@ -2,6 +2,7 @@ package id.or.oo.pr.engine
 
 import android.util.Log
 import java.io.File
+import kotlin.concurrent.thread
 
 class ProotLauncher(private val host: ProotHost) {
 
@@ -28,14 +29,14 @@ class ProotLauncher(private val host: ProotHost) {
         val envVars = buildEnvVars()
         val args = arrayOf(prCli.absolutePath, "login", distroName, "--user", user)
 
-        val masterFd = PtyNative.forkPty(args[0], args, envVars, rows, cols)
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(args[0], args, envVars, rows, cols)
         if (masterFd < 0) {
             Log.e(TAG, "forkPty failed with fd=$masterFd")
             return null
         }
 
         Log.i(TAG, "PTY session started for $distroName, masterFd=$masterFd")
-        return Session(masterFd)
+        return Session(masterFd, pid)
     }
 
     /**
@@ -49,14 +50,14 @@ class ProotLauncher(private val host: ProotHost) {
         cols: Int = 80,
     ): Session? {
         val envVars = buildEnvVars()
-        val masterFd = PtyNative.forkPty(args[0], args.toTypedArray(), envVars, rows, cols)
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(args[0], args.toTypedArray(), envVars, rows, cols)
         if (masterFd < 0) {
             Log.e(TAG, "forkPty failed with fd=$masterFd for ${args.joinToString(" ")}")
             return null
         }
 
         Log.i(TAG, "PTY custom session started: ${args.joinToString(" ")}, masterFd=$masterFd")
-        return Session(masterFd)
+        return Session(masterFd, pid)
     }
 
     fun runCommand(
@@ -68,14 +69,14 @@ class ProotLauncher(private val host: ProotHost) {
         val envVars = buildEnvVars()
         val args = arrayOf(prCli.absolutePath, *command.split(" ").toTypedArray())
 
-        val masterFd = PtyNative.forkPty(args[0], args, envVars, rows, cols)
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(args[0], args, envVars, rows, cols)
         if (masterFd < 0) {
             Log.e(TAG, "forkPty failed for command: $command")
             return null
         }
 
         Log.i(TAG, "PTY command started: $command, masterFd=$masterFd")
-        return Session(masterFd)
+        return Session(masterFd, pid)
     }
 
     private fun buildEnvVars(): Array<String> {
@@ -98,9 +99,24 @@ class ProotLauncher(private val host: ProotHost) {
         )
     }
 
-    class Session(val masterFd: Int) {
+    class Session(val masterFd: Int, val pid: Int = -1) {
         var closed = false
             private set
+
+        /** Child exit code (128 + signal if killed), set once the child has been reaped. */
+        @Volatile
+        var exitCode: Int? = null
+            private set
+
+        init {
+            // Reap the child as soon as it exits, however the session ends; without a waiter it
+            // stays a zombie until the app process dies.
+            if (pid > 0) {
+                thread(isDaemon = true, name = "pty-reaper-$pid") {
+                    exitCode = PtyNative.waitPidBlocking(pid)
+                }
+            }
+        }
 
         fun read(buf: ByteArray, offset: Int = 0, length: Int = buf.size): Int {
             if (closed) return -1
