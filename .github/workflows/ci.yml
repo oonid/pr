@@ -44,6 +44,12 @@ jobs:
         cd src/proot-integration-test
         cargo fmt -- --check
 
+    # pr-cli embeds this binary (include_bytes! in cmd_test.rs), so it must exist before cargo test.
+    - name: Build Integration Test Binary
+      run: |
+        cd src/proot-integration-test
+        cargo build --target aarch64-linux-android --release
+
     - name: Run Cargo Test (pr-cli)
       run: |
         cd src/pr-cli
@@ -52,11 +58,6 @@ jobs:
     - name: Build Proot C Binaries
       run: |
         ./scripts/build.sh --arch=arm64 --ndk-path=$ANDROID_NDK_LATEST_HOME
-
-    - name: Build Integration Test Binary
-      run: |
-        cd src/proot-integration-test
-        cargo build --target aarch64-linux-android --release
 
     - name: Build Rust CLI (pr-cli)
       run: |
