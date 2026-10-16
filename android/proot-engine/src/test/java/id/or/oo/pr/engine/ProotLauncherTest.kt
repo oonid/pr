@@ -40,4 +40,17 @@ class ProotLauncherTest {
         assertEquals("xterm-256color", envMap["TERM"])
         assertEquals("en_US.UTF-8", envMap["LANG"])
     }
+
+    @Test
+    fun testBuildEnvVarsPassesNetworkDnsServers() {
+        val host = object : ProotHost by fakeHost {
+            override val dnsServers = listOf("192.168.1.1", "2400:9800:2:2::245")
+        }
+        val method: Method = ProotLauncher::class.java.getDeclaredMethod("buildEnvVars")
+        method.isAccessible = true
+        val envVars = method.invoke(ProotLauncher(host)) as Array<String>
+        val envMap = envVars.toList().chunked(2).associate { it[0] to it[1] }
+
+        assertEquals("192.168.1.1,2400:9800:2:2::245", envMap["APP_DNS_SERVERS"])
+    }
 }

@@ -118,11 +118,13 @@ pub fn command_login(
         return Err("no /etc/passwd".to_string());
     }
 
+    // Follow the network the device is on now; a resolv.conf the user wrote is left alone.
     let resolv_conf_path = format!("{}/etc/resolv.conf", rootfs);
-    if !Path::new(&resolv_conf_path).exists() {
+    let existing = std::fs::read_to_string(&resolv_conf_path).ok();
+    if resolv_conf_is_managed(existing.as_deref()) {
         let _ = std::fs::write(
             &resolv_conf_path,
-            "nameserver 8.8.8.8\nnameserver 1.1.1.1\n",
+            resolv_conf_contents(&network_dns_servers()),
         );
     }
 

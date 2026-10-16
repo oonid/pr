@@ -5,6 +5,65 @@ pub const DEFAULT_FAKE_KERNEL_VERSION: &str =
     "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000";
 pub const DEFAULT_PRIMARY_NAMESERVER: &str = "8.8.8.8";
 pub const DEFAULT_SECONDARY_NAMESERVER: &str = "8.8.4.4";
+
+/// First line of a resolv.conf that pr-cli owns and rewrites at each login.
+pub const RESOLV_CONF_MARKER: &str =
+    "# Managed by pr-cli: refreshed at login from the active network's DNS. Delete this line to keep your own servers.\n";
+
+/// What pr-cli wrote before network DNS, so existing installs are refreshed too.
+const LEGACY_RESOLV_CONFS: [&str; 2] = [
+    "nameserver 8.8.8.8\nnameserver 8.8.4.4\n",
+    "nameserver 8.8.8.8\nnameserver 1.1.1.1\n",
+];
+
+/// DNS servers of the active Android network, passed by the app as `APP_DNS_SERVERS` (comma-separated).
+pub fn network_dns_servers() -> Vec<String> {
+    std::env::var("APP_DNS_SERVERS")
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// At most three nameservers (the musl and glibc limit): up to two from the network, so some
+/// networks that block public DNS still resolve, then the public servers as fallback.
+pub fn resolv_conf_contents(network: &[String]) -> String {
+    let mut servers: Vec<String> = Vec::new();
+    for raw in network {
+        // A scoped or link-local address (fe80::1%wlan0) cannot be used from resolv.conf.
+        let ip = match raw.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V6(v6)) if (v6.segments()[0] & 0xffc0) == 0xfe80 => continue,
+            Ok(ip) => ip.to_string(),
+            Err(_) => continue,
+        };
+        if !servers.contains(&ip) && servers.len() < 2 {
+            servers.push(ip);
+        }
+    }
+    for fallback in [DEFAULT_PRIMARY_NAMESERVER, DEFAULT_SECONDARY_NAMESERVER] {
+        if servers.len() < 3 && !servers.iter().any(|s| s == fallback) {
+            servers.push(fallback.to_string());
+        }
+    }
+    let mut contents = String::from(RESOLV_CONF_MARKER);
+    for server in servers {
+        contents.push_str(&format!("nameserver {}\n", server));
+    }
+    contents
+}
+
+/// True when login may rewrite resolv.conf: missing, written by pr-cli, or an old pr-cli default.
+pub fn resolv_conf_is_managed(existing: Option<&str>) -> bool {
+    match existing {
+        None => true,
+        Some(contents) => {
+            contents.starts_with(RESOLV_CONF_MARKER) || LEGACY_RESOLV_CONFS.contains(&contents)
+        }
+    }
+}
 pub const DEFAULT_PATH_ENV_SUFFIX: &str =
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/games:/usr/games";
 
@@ -369,6 +428,62 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn nameservers(contents: &str) -> Vec<&str> {
+        contents
+            .lines()
+            .filter_map(|l| l.strip_prefix("nameserver "))
+            .collect()
+    }
+
+    #[test]
+    fn resolv_conf_puts_network_dns_first_then_public_fallback() {
+        let contents = resolv_conf_contents(&["192.168.1.1".to_string()]);
+        assert!(contents.starts_with(RESOLV_CONF_MARKER));
+        assert_eq!(
+            nameservers(&contents),
+            ["192.168.1.1", "8.8.8.8", "8.8.4.4"]
+        );
+    }
+
+    #[test]
+    fn resolv_conf_skips_invalid_duplicate_and_scoped_servers_and_caps_at_three() {
+        let network = [
+            "2400:9800:2:2::245",
+            "not-an-ip",
+            "fe80::1%wlan0",
+            "2400:9800:2:2::245",
+            "2400:9800:2:2::246",
+            "10.0.0.1",
+        ]
+        .map(String::from);
+        let contents = resolv_conf_contents(&network);
+        assert_eq!(
+            nameservers(&contents),
+            ["2400:9800:2:2::245", "2400:9800:2:2::246", "8.8.8.8"]
+        );
+    }
+
+    #[test]
+    fn resolv_conf_without_network_dns_uses_public_servers() {
+        assert_eq!(
+            nameservers(&resolv_conf_contents(&[])),
+            ["8.8.8.8", "8.8.4.4"]
+        );
+    }
+
+    #[test]
+    fn login_refreshes_only_pr_managed_resolv_conf() {
+        assert!(resolv_conf_is_managed(None));
+        assert!(resolv_conf_is_managed(Some(&resolv_conf_contents(&[]))));
+        assert!(resolv_conf_is_managed(Some(
+            "nameserver 8.8.8.8\nnameserver 8.8.4.4\n"
+        )));
+        assert!(resolv_conf_is_managed(Some(
+            "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"
+        )));
+        assert!(!resolv_conf_is_managed(Some("nameserver 9.9.9.9\n")));
+    }
 
     #[test]
     fn app_dir_alias_maps_data_data_to_user_0() {

@@ -657,6 +657,7 @@ private suspend fun runDistroCommand(
         "HOME" to app.homeDir.absolutePath,
         "TERM" to "xterm-256color",
         "TMPDIR" to app.cacheDir.absolutePath,
+        "APP_DNS_SERVERS" to app.dnsServers.joinToString(","),
     )
 
     val prCli = File(binDir, "pr-cli").absolutePath

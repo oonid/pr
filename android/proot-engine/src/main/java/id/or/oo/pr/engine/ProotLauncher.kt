@@ -94,6 +94,7 @@ class ProotLauncher(private val host: ProotHost) {
             "TERM", "xterm-256color",
             "LANG", "en_US.UTF-8",
             "TMPDIR", host.cacheDir.absolutePath,
+            "APP_DNS_SERVERS", host.dnsServers.joinToString(","),
         )
     }
 

@@ -22,8 +22,8 @@ use crate::shared::{
     get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_native_loader,
     get_native_proot, get_oci_container_dir, get_oci_container_manifest_path,
     get_oci_container_rootfs_dir, get_oci_containers_dir, get_plugins_dir, get_prefix, msg_error,
-    msg_status, resolve_installed_rootfs, DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION,
-    DEFAULT_PRIMARY_NAMESERVER, DEFAULT_SECONDARY_NAMESERVER,
+    msg_status, network_dns_servers, resolv_conf_contents, resolve_installed_rootfs,
+    DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION,
 };
 use crate::source_parse::{InstallSourceInput, InstallSourceInputKind};
 
@@ -1157,10 +1157,7 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     // /etc/resolv.conf
     let resolv_path = format!("{}/etc/resolv.conf", rootfs);
     let _ = fs::remove_file(&resolv_path);
-    let resolv = format!(
-        "nameserver {}\nnameserver {}\n",
-        DEFAULT_PRIMARY_NAMESERVER, DEFAULT_SECONDARY_NAMESERVER
-    );
+    let resolv = resolv_conf_contents(&network_dns_servers());
     fs::write(&resolv_path, &resolv).map_err(|e| format!("write resolv.conf: {}", e))?;
     msg_status(&format!("Creating file '{}'...", resolv_path));
 
