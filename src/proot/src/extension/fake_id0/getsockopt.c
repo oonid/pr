@@ -41,7 +41,10 @@ int handle_getsockopt_exit_end(Tracee *tracee) {
 			/* A peer outside this PRoot (another PRoot session, or the host side)
 			 * running as our real user appears with this tracee's fake ids, as
 			 * files owned by the real user do.  Without this, a server started
-			 * from one session rejects clients from another as a foreign uid.  */
+			 * from one session rejects clients from another as a foreign uid.
+			 * The peer's own fake ids are unknown here, so sessions that fake
+			 * different users (not pr-cli, which is always 0:0) all look like
+			 * the caller.  */
 			Config *own_config = get_fake_id_for_pid(tracee->pid);
 			if (own_config == NULL)
 				return 0;
