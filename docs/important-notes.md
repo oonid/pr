@@ -266,6 +266,13 @@ exist on the host (`docs/proot-improvement.md §28`); the integration test
 "touch creates a missing file" covers it. Proot binaries built before this fix
 still need `echo > /path/to/file`.
 
+### Ubuntu 26.04 coreutils: `unknown program 'libproot-loader'` (fixed)
+
+uutils coreutils 0.8 names its utility from `AT_EXECFN` as read through
+`prctl(PR_GET_AUXV)` / `/proc/self/auxv`, which held the loader's path. Proot now
+serves the loader-patched auxv from both (`docs/proot-improvement.md §30`). Older
+proot builds break every coreutils command and `dpkg --configure` on Ubuntu 26.04.
+
 ### Double shell wrapping via `pr-cli login`
 
 `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')\>"`

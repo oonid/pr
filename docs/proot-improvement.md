@@ -744,3 +744,46 @@ args.push(format!("--bind={}", app_dir.display()));
 | File | Change |
 |------|--------|
 | `src/pr-cli/src/shared.rs` | `build_proot_args()`: derive `app_dir` from `APP_PREFIX` via `.parent().parent()` |
+
+---
+
+## 30. Solved: kernel auxv views expose the loader (Ubuntu 26.04 coreutils)
+
+### Problem
+
+Ubuntu 26.04 ships uutils coreutils 0.8 (`rust-coreutils`) as `/usr/bin/*`. Every
+command failed with `coreutils: unknown program 'libproot-loader'`, which also broke
+`dpkg --configure` (maintainer scripts call `mkdir`, `chmod`, `env`, ...).
+
+The multicall binary picks the utility from `AT_EXECFN` unless its basename equals
+argv[0]'s (`validation::binary_path`). It reads auxv with rustix, which uses
+`prctl(PR_GET_AUXV)` and falls back to `/proc/self/auxv`. Both return the kernel's
+saved copy, where `AT_EXECFN` is the path the kernel executed: proot's loader.
+
+The loader rewrites auxv only on the initial stack (`AT_PHDR`, `AT_PHNUM`, `AT_ENTRY`,
+`AT_BASE`, `AT_EXECFN`), and fake_id0 rewrites the ids there too. `getauxval()` reads
+that copy, so most programs never noticed the kernel's views disagreeing on every
+patched value, plus `AT_SYSINFO_EHDR`.
+
+### Fix
+
+`execve/exit.c` records the initial-stack auxv address in `LoadInfo.auxv_address`
+before the load script moves the stack pointer. The new built-in `auxv` extension
+serves that copy from both kernel views:
+
+- `open`/`openat` of `/proc/<pid>/auxv` for a tracee is redirected to a temp file
+  holding the tracee's stack auxv (same pattern as the mountinfo extension).
+- On `prctl(PR_GET_AUXV)` exit, the buffer is overwritten with the stack auxv,
+  zero-padded; the result (the kernel's copy size) is kept.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `execve/execve.h` | `LoadInfo.auxv_address` |
+| `execve/exit.c` | Record it at execve exit |
+| `extension/auxv/auxv.c` | New extension: `/proc/<pid>/auxv` and `PR_GET_AUXV` |
+| `extension/extension.h`, `cli/cli.c`, `GNUmakefile` | Declare, always enable, build it |
+
+The integration test "auxv views match the stack" compares every record of both
+views with `getauxval()`.

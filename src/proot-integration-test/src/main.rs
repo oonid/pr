@@ -263,6 +263,10 @@ const SUITES: &[Suite] = &[
                 name: "touch creates a missing file",
                 run: general::test_touch_creates_file,
             },
+            Test {
+                name: "auxv views match the stack",
+                run: general::test_auxv_matches_stack,
+            },
         ],
     },
     Suite {

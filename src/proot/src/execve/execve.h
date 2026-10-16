@@ -51,6 +51,10 @@ typedef struct load_info {
 	ElfHeader elf_header;
 	bool needs_executable_stack;
 
+	/* Initial-stack auxv the loader patches in place; the kernel's
+	 * views of auxv keep the loader's own values.  */
+	word_t auxv_address;
+
 	struct load_info *interp;
 } LoadInfo;
 
