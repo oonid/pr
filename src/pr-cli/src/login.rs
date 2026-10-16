@@ -122,9 +122,9 @@ pub fn command_login(
     let resolv_conf_path = format!("{}/etc/resolv.conf", rootfs);
     let existing = std::fs::read_to_string(&resolv_conf_path).ok();
     if resolv_conf_is_managed(existing.as_deref()) {
-        let _ = std::fs::write(
+        let _ = write_resolv_conf(
             &resolv_conf_path,
-            resolv_conf_contents(&network_dns_servers()),
+            &resolv_conf_contents(&network_dns_servers()),
         );
     }
 
