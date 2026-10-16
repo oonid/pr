@@ -1,4 +1,5 @@
 #include <sys/socket.h>  /* SOL_SOCKET,SO_PEERCRED */
+#include <unistd.h>      /* getuid(2), getgid(2) */
 
 #include "tracee/reg.h"
 #include "tracee/mem.h"
@@ -33,9 +34,22 @@ int handle_getsockopt_exit_end(Tracee *tracee) {
 		int status = read_data(tracee, &cred, cred_addr, sizeof(struct ucred));
 		if (status) return 0;
 		Config *peer_config = get_fake_id_for_pid(cred.pid);
-		if (peer_config == NULL) return 0;
-		cred.uid = peer_config->euid;
-		cred.gid = peer_config->egid;
+		if (peer_config != NULL) {
+			cred.uid = peer_config->euid;
+			cred.gid = peer_config->egid;
+		} else {
+			/* A peer outside this PRoot (another PRoot session, or the host side)
+			 * running as our real user appears with this tracee's fake ids, as
+			 * files owned by the real user do.  Without this, a server started
+			 * from one session rejects clients from another as a foreign uid.  */
+			Config *own_config = get_fake_id_for_pid(tracee->pid);
+			if (own_config == NULL)
+				return 0;
+			if (cred.uid == getuid())
+				cred.uid = own_config->euid;
+			if (cred.gid == getgid())
+				cred.gid = own_config->egid;
+		}
 		write_data(tracee, cred_addr, &cred, sizeof(struct ucred));
 	}
 	return 0;
