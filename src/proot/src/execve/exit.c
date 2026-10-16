@@ -488,6 +488,9 @@ void translate_execve_exit(Tracee *tracee)
 		bzero(tracee->heap, sizeof(Heap));
 	}
 
+	/* Before the load script moves the stack pointer.  */
+	tracee->load_info->auxv_address = get_elf_aux_vectors_address(tracee);
+
 	/* Transfer the load script to the loader.  */
 	mem_prepare_after_execve(tracee);
 	status = transfer_load_script(tracee);

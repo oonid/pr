@@ -90,6 +90,50 @@ pub fn test_touch_creates_file() -> TestResult {
     }
 }
 
+// The loader rewrites auxv on the initial stack (AT_EXECFN, AT_PHDR, AT_ENTRY,
+// AT_BASE, fake-root ids); getauxval() reads that copy. The kernel's own views
+// must agree, or programs that read them (uutils coreutils via rustix) see the
+// loader instead of themselves.
+fn check_auxv_pairs(source: &str, bytes: &[u8]) -> TestResult {
+    let mut mismatches = Vec::new();
+    for pair in bytes.chunks_exact(16) {
+        let kind = u64::from_ne_bytes(pair[..8].try_into().unwrap());
+        let value = u64::from_ne_bytes(pair[8..].try_into().unwrap());
+        if kind == 0 {
+            return if mismatches.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("{}: {}", source, mismatches.join(", ")))
+            };
+        }
+        let stack = unsafe { libc::getauxval(kind as libc::c_ulong) } as u64;
+        if stack != value {
+            mismatches.push(format!("type {} is {:#x} not {:#x}", kind, value, stack));
+        }
+    }
+    Err(format!("{}: no AT_NULL terminator", source))
+}
+
+pub fn test_auxv_matches_stack() -> TestResult {
+    let raw = fs::read("/proc/self/auxv").map_err(|e| format!("/proc/self/auxv: {}", e))?;
+    check_auxv_pairs("/proc/self/auxv", &raw)?;
+
+    const PR_GET_AUXV: libc::c_int = 0x4155_5856;
+    let mut buf = vec![0u8; 4096];
+    let rc = unsafe { libc::prctl(PR_GET_AUXV, buf.as_mut_ptr(), buf.len(), 0, 0) };
+    if rc < 0 {
+        // Kernels before 6.4 have no PR_GET_AUXV.
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        return if errno == Some(libc::EINVAL) {
+            Ok(())
+        } else {
+            Err(format!("PR_GET_AUXV: errno={:?}", errno))
+        };
+    }
+    let len = (rc as usize).min(buf.len());
+    check_auxv_pairs("PR_GET_AUXV", &buf[..len])
+}
+
 pub fn test_env() -> TestResult {
     let out = std::process::Command::new("/bin/sh")
         .args(["-c", "echo $HOME"])

@@ -207,6 +207,7 @@ extern int link2symlink_callback(Extension *extension, ExtensionEvent event, int
 extern int fix_symlink_size_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+extern int auxv_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 
 /* Name prefix of link2symlink's intermediate and final files, in
  * PROOT_L2S_DIR or beside the original when that is unset.  */
