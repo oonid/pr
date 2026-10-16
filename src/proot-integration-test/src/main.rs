@@ -157,6 +157,10 @@ const SUITES: &[Suite] = &[
                 name: "readlink small buffer",
                 run: readlink::test_readlink_small_buffer,
             },
+            Test {
+                name: "readlink /proc/self/fd of a hard link",
+                run: readlink::test_proc_fd_of_hard_link,
+            },
         ],
     },
     Suite {

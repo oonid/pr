@@ -125,3 +125,35 @@ if(n<0)return 1;b[n]='\0';printf("%s\n",b);return 0;}"#;
         Err(format!("expected {:?}, got {:?}", expected, got))
     }
 }
+
+// An fd link names the open file even when that file is a fake hard link (an L2S final file).
+pub fn test_proc_fd_of_hard_link() -> TestResult {
+    use std::os::unix::fs::MetadataExt;
+    let a = "/tmp/pit-hl-a";
+    let b = "/tmp/pit-hl-b";
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    fs::write(a, b"hardlink").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(a, b).map_err(|e| format!("link: {}", e))?;
+    let file = fs::File::open(b).map_err(|e| format!("open: {}", e))?;
+    let fd_link = format!(
+        "/proc/self/fd/{}",
+        std::os::unix::io::AsRawFd::as_raw_fd(&file)
+    );
+    let result = fs::read_link(&fd_link)
+        .map_err(|e| format!("readlink {}: {}", fd_link, e))
+        .and_then(|target| {
+            let ino = file.metadata().map_err(|e| e.to_string())?.ino();
+            let target_ino = fs::metadata(&target)
+                .map_err(|e| format!("stat {:?}: {}", target, e))?
+                .ino();
+            if target_ino == ino {
+                Ok(())
+            } else {
+                Err(format!("{:?} is not the open file", target))
+            }
+        });
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    result
+}
