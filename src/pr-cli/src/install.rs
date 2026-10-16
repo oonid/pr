@@ -1857,6 +1857,7 @@ mod tests {
 
     #[test]
     fn cleanup_oci_on_failure_ignores_unsafe_paths() {
+        let _guard = env_lock().lock().expect("lock env");
         let _prev_prefix = std::env::var("APP_PREFIX").ok();
         let tmp_dir = unique_temp_dir("pr-cli-cleanup-oci");
         let prefix = tmp_dir.join("usr");
