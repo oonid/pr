@@ -15,21 +15,6 @@ use crate::shared::{
     msg_status, resolve_installed_rootfs, InstalledSourceType,
 };
 
-fn chmod_recursive(path: &Path) {
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o755));
-                chmod_recursive(&p);
-            } else {
-                let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o644));
-            }
-        }
-    }
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
-}
-
 /// Remove a directory tree, handling 0000-permission proot bind-mount stubs.
 ///
 /// proot creates empty placeholder dirs (apex, odm, product, sdcard, system,
@@ -835,37 +820,6 @@ mod tests {
         let err = command_copy("/tmp/does-not-exist", "/tmp/destination-file")
             .expect_err("must reject missing source path");
         assert_eq!(err, "source not found");
-    }
-
-    #[test]
-    fn chmod_recursive_sets_directory_and_file_modes() {
-        let tmp_dir = unique_temp_dir("pr-cli-commands-extra-chmod-recursive");
-        let nested = tmp_dir.join("nested");
-        let file = nested.join("note.txt");
-        fs::create_dir_all(&nested).expect("create nested dir");
-        fs::write(&file, b"hello").expect("write file");
-        fs::set_permissions(&tmp_dir, fs::Permissions::from_mode(0o700)).expect("chmod root");
-        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).expect("chmod nested");
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("chmod file");
-
-        chmod_recursive(&tmp_dir);
-
-        let root_mode = fs::metadata(&tmp_dir)
-            .expect("root meta")
-            .permissions()
-            .mode()
-            & 0o777;
-        let nested_mode = fs::metadata(&nested)
-            .expect("nested meta")
-            .permissions()
-            .mode()
-            & 0o777;
-        let file_mode = fs::metadata(&file).expect("file meta").permissions().mode() & 0o777;
-        assert_eq!(root_mode, 0o755);
-        assert_eq!(nested_mode, 0o755);
-        assert_eq!(file_mode, 0o644);
-
-        let _ = fs::remove_dir_all(tmp_dir);
     }
 
     #[test]

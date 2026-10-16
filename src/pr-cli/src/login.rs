@@ -24,10 +24,7 @@ extern "C" {
 fn android_log(_msg: &str) {}
 
 struct PasswdEntry {
-    uid: u32,
-    gid: u32,
     home: String,
-    shell: String,
 }
 
 fn parse_passwd_entry(line: &str) -> Option<PasswdEntry> {
@@ -36,10 +33,7 @@ fn parse_passwd_entry(line: &str) -> Option<PasswdEntry> {
         return None;
     }
     Some(PasswdEntry {
-        uid: fields[2].parse().ok()?,
-        gid: fields[3].parse().ok()?,
         home: fields[5].to_string(),
-        shell: fields[6].to_string(),
     })
 }
 
@@ -248,15 +242,11 @@ mod tests {
     fn parse_passwd_entry_accepts_valid_line() {
         let line = "alice:x:1000:1000:Alice:/home/alice:/bin/sh";
         let entry = parse_passwd_entry(line).expect("parse passwd line");
-        assert_eq!(entry.uid, 1000);
-        assert_eq!(entry.gid, 1000);
         assert_eq!(entry.home, "/home/alice");
-        assert_eq!(entry.shell, "/bin/sh");
     }
 
     #[test]
     fn parse_passwd_entry_rejects_invalid_line() {
-        assert!(parse_passwd_entry("alice:x:baduid:1000:Alice:/home/alice:/bin/sh").is_none());
         assert!(parse_passwd_entry("too:few:fields").is_none());
     }
 
