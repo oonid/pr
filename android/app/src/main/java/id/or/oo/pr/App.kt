@@ -3,6 +3,7 @@ package id.or.oo.pr
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
 import android.system.Os
 import android.util.Log
 import id.or.oo.pr.engine.ProotHost
@@ -22,6 +23,13 @@ class App : Application(), ProotHost {
     }
 
     override val prefixDir: File get() = File(filesDir, "usr")
+
+    override val dnsServers: List<String>
+        get() {
+            val connectivity = getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+            val network = connectivity.activeNetwork ?: return emptyList()
+            return connectivity.getLinkProperties(network)?.dnsServers?.mapNotNull { it.hostAddress }.orEmpty()
+        }
 
     override val homeDir: File get() = File(filesDir, "home")
 

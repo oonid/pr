@@ -281,6 +281,17 @@ only that. proot resolves a symlink's absolute target as a guest path, so under 
 L2S link made by the app (gcc, cc, ...) failed `execve` with ENOENT while `stat` still worked.
 `build_proot_args()` now also binds the other path of the app directory (`app_dir_alias()`).
 
+### Container DNS follows the active network
+
+pr-cli used to write `8.8.8.8` / `8.8.4.4` (install) or `8.8.8.8` / `1.1.1.1` (login) into
+`/etc/resolv.conf`, and musl/glibc query those directly, so networks that drop direct public DNS
+broke apk/apt inside containers while Android itself still resolved. The app now passes the
+active network's DNS servers as `APP_DNS_SERVERS`; pr-cli writes up to two of them first, then
+the public servers as fallback (three nameservers at most), and refreshes the file at each login.
+A resolv.conf without pr-cli's marker line (and not an old pr-cli default) is left alone. A
+network whose only DNS servers are unreachable from the app (seen: IPv6-only DNS on mobile data)
+still falls back to the public servers.
+
 ### Double shell wrapping via `pr-cli login`
 
 `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')\>"`
