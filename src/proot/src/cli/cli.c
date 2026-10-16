@@ -574,13 +574,13 @@ const char *expand_front_variable(TALLOC_CTX *context, const char *string)
 
 static int indent_level = 0;
 
-void __cyg_profile_func_enter(void *this_function, void *call_site) DONT_INSTRUMENT;
-void __cyg_profile_func_enter(void *this_function, void *call_site)
+void __cyg_profile_func_enter(void *this_function UNUSED, void *call_site UNUSED) DONT_INSTRUMENT;
+void __cyg_profile_func_enter(void *this_function UNUSED, void *call_site UNUSED)
 {
-	void *const pointers[] = { this_function, call_site };
 	char **symbols = NULL;
 
 #ifdef __GLIBC__
+	void *const pointers[] = { this_function, call_site };
 	symbols = backtrace_symbols(pointers, 2);
 #endif
 	if (symbols == NULL)

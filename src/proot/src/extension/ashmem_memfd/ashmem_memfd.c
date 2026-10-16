@@ -168,7 +168,7 @@ static void ashmem_memfd_handle_stat_exit(Tracee *tracee, AshmemMemfdState *stat
 	state->chain_state = CS_STAT_CHAINED_IOCTL;
 }
 
-int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t data1, intptr_t data2)
+int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t data1, intptr_t data2 UNUSED)
 {
 	switch (event) {
 	case INITIALIZATION: {

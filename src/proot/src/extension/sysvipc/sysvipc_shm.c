@@ -478,7 +478,7 @@ static void sysvipc_shm_update_stats(struct SysVIpcSharedMem *shm)
 
 int sysvipc_shmctl(Tracee *tracee, struct SysVIpcConfig *config)
 {
-	size_t shm_index;
+	size_t shm_index UNUSED;
 	struct SysVIpcSharedMem *shm;
 	LOOKUP_IPC_OBJECT(shm_index, shm, config->ipc_namespace->shms)
 

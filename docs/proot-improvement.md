@@ -847,3 +847,38 @@ Read the guest path into `path_guest`, return `read_path()`'s status, and return
 | `src/proot-integration-test/src/chroot.rs`, `main.rs` | New `chroot` suite |
 | `src/pr-cli/src/cmd_test.rs` | `pr-cli test` runs the `chroot` suite |
 
+---
+
+## 33. Build warnings
+
+`scripts/build.sh --arch=arm64` reported 27 compiler warnings. Most were noise, a few were bugs:
+
+- `extension/fake_id0/helper_functions.c`: an unbraced `else` made `emulated_gid` always
+  the effective gid in the permission check, also when `uses_real` asked for the real one
+  (USERLAND builds only).
+- `extension/port_switch/port_switch.c` (`-p`, never passed by pr-cli): `sizeof` of a
+  pointer instead of the struct it points to, and a repeated condition that left a direct
+  IPv6 `sendto` (not via `socketcall`) unrewritten. It now writes back only the port, so it
+  never writes past a sockaddr shorter than the struct or past the socketcall argument block.
+- `extension/fake_id0/chroot.c`: the ignored `realpath()` result (section 32).
+- `src/proot/lib/talloc/replace.h` (our stub config for the vendored talloc) lacked the
+  defines a configured build has, so talloc fell back to `va_copy` as plain assignment and
+  compiled without its constructor, which randomizes the chunk magic from `AT_RANDOM`. It
+  now defines `HAVE_VA_COPY`, `HAVE_CONSTRUCTOR_ATTRIBUTE`, `HAVE_SYS_AUXV_H` and
+  `HAVE_GETAUXVAL`.
+- `scripts/build.sh` reused `build/sysroot/<arch>/usr/lib/libtalloc.a` whenever it existed,
+  so a `replace.h` change only applied after deleting it by hand. It now rebuilds the
+  library when `replace.h`, `talloc.c` or `talloc.h` is newer.
+
+The rest were unused variables, sign comparisons and an always-true `else if`. Eight
+warnings are left as upstream has them:
+
+| Warning | Where | Why it stays |
+|---------|-------|--------------|
+| `talloc_autofree_context` deprecated (x4) | `execve/enter.c`, `path/glue.c`, `path/temp.c` | Allocations that live until exit; replacing it means giving each one an owner, for no behaviour change |
+| `mktemp` deprecated (x2) | `syscall/socket.c`, `extension/sysvipc/sysvipc_shm.c` | Both need a name to `bind()` a Unix socket to, not an open file |
+| inline asm clobbers SP/PC (x2) | `loader/loader.c` | The asm sets SP and branches to the entry point without returning, so the clobbers have no effect |
+
+Not fixed here: when link2symlink is off, the seccomp `PR_linkat` fallback
+(`tracee/seccomp.c`) emulates `linkat` with a rename, so the source name disappears and
+`AT_SYMLINK_FOLLOW` is ignored. pr-cli always enables link2symlink.
