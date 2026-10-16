@@ -140,6 +140,37 @@ pub fn test_auxv_matches_stack() -> TestResult {
     check_auxv_pairs("PR_GET_AUXV", &buf[..len])
 }
 
+// execveat(AT_FDCWD, path) is translated to execve; the new program must start normally.
+pub fn test_execveat_at_fdcwd() -> TestResult {
+    let path = std::ffi::CString::new("/bin/true").unwrap();
+    let argv = [path.as_ptr(), std::ptr::null()];
+    let envp: [*const libc::c_char; 1] = [std::ptr::null()];
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return Err("fork failed".to_string());
+    }
+    if pid == 0 {
+        unsafe {
+            libc::syscall(
+                libc::SYS_execveat,
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                argv.as_ptr(),
+                envp.as_ptr(),
+                0,
+            );
+            libc::_exit(99);
+        }
+    }
+    let mut status = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
+        Ok(())
+    } else {
+        Err(format!("execveat child wait status {:#x}", status))
+    }
+}
+
 pub fn test_env() -> TestResult {
     let out = std::process::Command::new("/bin/sh")
         .args(["-c", "echo $HOME"])

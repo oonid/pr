@@ -267,6 +267,10 @@ const SUITES: &[Suite] = &[
                 name: "auxv views match the stack",
                 run: general::test_auxv_matches_stack,
             },
+            Test {
+                name: "execveat(AT_FDCWD) runs a program",
+                run: general::test_execveat_at_fdcwd,
+            },
         ],
     },
     Suite {
