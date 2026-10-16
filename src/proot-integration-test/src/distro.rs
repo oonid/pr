@@ -74,7 +74,7 @@ pub fn test_install_tools() -> TestResult {
             run_sh("apk add --no-progress vim gcc rust cargo git 2>&1")?;
         }
         Some("apt") => {
-            run_sh("apt-get install -y -qq vim gcc rustc cargo git 2>&1")?;
+            run_sh("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq vim gcc rustc cargo git 2>&1")?;
         }
         _ => return Err("no package manager".to_string()),
     }
