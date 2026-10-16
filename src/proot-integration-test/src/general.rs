@@ -171,6 +171,41 @@ pub fn test_execveat_at_fdcwd() -> TestResult {
     }
 }
 
+pub fn test_stat_statx_owner_agree() -> TestResult {
+    let file = "/tmp/pit-statx-owner";
+    fs::write(file, b"owner").map_err(|e| format!("write: {}", e))?;
+    let path = std::ffi::CString::new(file).unwrap();
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let stat_rc = unsafe { libc::stat(path.as_ptr(), &mut st) };
+    let mut stx: libc::statx = unsafe { std::mem::zeroed() };
+    let wanted = libc::STATX_UID | libc::STATX_GID;
+    let statx_rc = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            0,
+            wanted,
+            &mut stx as *mut libc::statx,
+        )
+    };
+    let _ = fs::remove_file(file);
+    if stat_rc != 0 || statx_rc != 0 {
+        return Err(format!("stat rc={} statx rc={}", stat_rc, statx_rc));
+    }
+    if stx.stx_mask & wanted != wanted {
+        return Err(format!("statx mask {:#x} lacks uid/gid", stx.stx_mask));
+    }
+    if (st.st_uid, st.st_gid) == (stx.stx_uid, stx.stx_gid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "stat uid:gid {}:{} but statx {}:{}",
+            st.st_uid, st.st_gid, stx.stx_uid, stx.stx_gid
+        ))
+    }
+}
+
 pub fn test_env() -> TestResult {
     let out = std::process::Command::new("/bin/sh")
         .args(["-c", "echo $HOME"])
