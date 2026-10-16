@@ -787,3 +787,25 @@ serves that copy from both kernel views:
 
 The integration test "auxv views match the stack" compares every record of both
 views with `getauxval()`.
+
+---
+
+## 31. Solved: SO_PEERCRED for peers in another PRoot session
+
+### Problem
+
+fake_id0's `getsockopt(SO_PEERCRED)` exit handler replaced the peer's uid/gid with fake ids only
+when the peer pid was a tracee of the same PRoot. A server started from one `pr-cli login`
+session (or by the host side) and a client in another session saw each other with the real
+app uid while their own `getuid()` reported 0. Programs that authenticate a Unix-socket peer by
+comparing the two rejected each other: Hermes discovery reported `unsafe_control_peer` for a
+gateway started from another terminal session.
+
+### Fix
+
+`extension/fake_id0/getsockopt.c`: when the peer is not our tracee, a uid/gid equal to PRoot's
+real uid/gid is reported as this tracee's fake euid/egid, the same rule that makes files owned by
+the real user appear owned by root. Peers running as any other uid are reported unchanged.
+
+Verified in the Alpine arm64 VM: a server outside PRoot and a client inside it now agree
+(`peer_uid=0`, was 1000); integration suite 39/39.
