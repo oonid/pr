@@ -288,9 +288,10 @@ pr-cli used to write `8.8.8.8` / `8.8.4.4` (install) or `8.8.8.8` / `1.1.1.1` (l
 broke apk/apt inside containers while Android itself still resolved. The app now passes the
 active network's DNS servers as `APP_DNS_SERVERS`; pr-cli writes up to two of them first, then
 the public servers as fallback (three nameservers at most), and refreshes the file at each login.
-A resolv.conf without pr-cli's marker line (and not an old pr-cli default) is left alone. A
-network whose only DNS servers are unreachable from the app (seen: IPv6-only DNS on mobile data)
-still falls back to the public servers.
+A resolv.conf without pr-cli's marker line (and not an old pr-cli default) is left alone. IPv6
+servers are passed only when the network has an IPv6 default route; otherwise (seen: IPv6-only
+DNS on mobile data) glibc would wait out its timeout on them before every lookup. The file is
+replaced atomically (temporary file + rename), and one that cannot be read as text is left alone.
 
 ### Double shell wrapping via `pr-cli login`
 
