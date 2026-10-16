@@ -55,6 +55,16 @@ pub fn resolv_conf_contents(network: &[String]) -> String {
     contents
 }
 
+/// Replace resolv.conf atomically: running sessions re-read it on every lookup, so a truncate-then-write
+/// could hand them an empty file. A symlink in its place is replaced, not followed.
+pub fn write_resolv_conf(path: &str, contents: &str) -> std::io::Result<()> {
+    let tmp = format!("{}.pr-cli.{}", path, std::process::id());
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 /// True when login may rewrite resolv.conf: missing, written by pr-cli, or an old pr-cli default.
 pub fn resolv_conf_is_managed(existing: Option<&str>) -> bool {
     match existing {
@@ -470,6 +480,28 @@ mod tests {
             nameservers(&resolv_conf_contents(&[])),
             ["8.8.8.8", "8.8.4.4"]
         );
+    }
+
+    #[test]
+    fn write_resolv_conf_replaces_file_atomically_without_leftovers() {
+        let dir = std::env::temp_dir().join(format!("pr-cli-resolv-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.join("resolv.conf");
+        std::os::unix::fs::symlink("/run/systemd/resolve/stub-resolv.conf", &path)
+            .expect("symlink");
+
+        write_resolv_conf(path.to_str().unwrap(), "nameserver 192.0.2.1\n").expect("write");
+
+        let meta = fs::symlink_metadata(&path).expect("meta");
+        assert!(meta.file_type().is_file());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "nameserver 192.0.2.1\n");
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("resolv.conf")]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
