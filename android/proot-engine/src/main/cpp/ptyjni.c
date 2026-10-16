@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <android/log.h>
 
+#define UNUSED __attribute__((unused))
 #define TAG "PTY"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -39,7 +40,7 @@ static pid_t last_child_pid = -1;
 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
-    JNIEnv *env, jclass cls, jstring jCmd, jobjectArray jArgs, jobjectArray jEnvVars,
+    JNIEnv *env, jclass cls UNUSED, jstring jCmd, jobjectArray jArgs, jobjectArray jEnvVars,
     jint rows, jint cols) {
 
     int ptm_fd = open_ptm();
@@ -127,13 +128,13 @@ Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
 }
 
 JNIEXPORT jint JNICALL
-Java_id_or_oo_pr_engine_PtyNative_nativeGetPid(JNIEnv *env, jclass cls) {
+Java_id_or_oo_pr_engine_PtyNative_nativeGetPid(JNIEnv *env UNUSED, jclass cls UNUSED) {
     return (jint) last_child_pid;
 }
 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeRead(
-    JNIEnv *env, jclass cls, jint fd, jbyteArray jBuf, jint offset, jint length) {
+    JNIEnv *env, jclass cls UNUSED, jint fd, jbyteArray jBuf, jint offset, jint length) {
 
     jbyte *buf = (*env)->GetByteArrayElements(env, jBuf, NULL);
     ssize_t n = read(fd, buf + offset, length);
@@ -148,7 +149,7 @@ Java_id_or_oo_pr_engine_PtyNative_nativeRead(
 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeWrite(
-    JNIEnv *env, jclass cls, jint fd, jbyteArray jBuf, jint offset, jint length) {
+    JNIEnv *env, jclass cls UNUSED, jint fd, jbyteArray jBuf, jint offset, jint length) {
 
     jbyte *buf = (*env)->GetByteArrayElements(env, jBuf, NULL);
     ssize_t n = write(fd, buf + offset, length);
@@ -163,7 +164,7 @@ Java_id_or_oo_pr_engine_PtyNative_nativeWrite(
 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeResize(
-    JNIEnv *env, jclass cls, jint fd, jint rows, jint cols) {
+    JNIEnv *env UNUSED, jclass cls UNUSED, jint fd, jint rows, jint cols) {
 
     struct winsize ws;
     memset(&ws, 0, sizeof(ws));
@@ -173,7 +174,7 @@ Java_id_or_oo_pr_engine_PtyNative_nativeResize(
 }
 
 JNIEXPORT jint JNICALL
-Java_id_or_oo_pr_engine_PtyNative_nativeWaitPid(JNIEnv *env, jclass cls, jint pid) {
+Java_id_or_oo_pr_engine_PtyNative_nativeWaitPid(JNIEnv *env UNUSED, jclass cls UNUSED, jint pid) {
     int status;
     pid_t result = waitpid(pid, &status, WNOHANG);
     if (result < 0) return -1;
@@ -184,7 +185,7 @@ Java_id_or_oo_pr_engine_PtyNative_nativeWaitPid(JNIEnv *env, jclass cls, jint pi
 
 /* Block until @pid exits and reap it: exit code, or 128 + signal; -1 on error. */
 JNIEXPORT jint JNICALL
-Java_id_or_oo_pr_engine_PtyNative_nativeWaitPidBlocking(JNIEnv *env, jclass cls, jint pid) {
+Java_id_or_oo_pr_engine_PtyNative_nativeWaitPidBlocking(JNIEnv *env UNUSED, jclass cls UNUSED, jint pid) {
     int status;
     pid_t result;
     do {
@@ -197,6 +198,6 @@ Java_id_or_oo_pr_engine_PtyNative_nativeWaitPidBlocking(JNIEnv *env, jclass cls,
 }
 
 JNIEXPORT void JNICALL
-Java_id_or_oo_pr_engine_PtyNative_nativeClose(JNIEnv *env, jclass cls, jint fd) {
+Java_id_or_oo_pr_engine_PtyNative_nativeClose(JNIEnv *env UNUSED, jclass cls UNUSED, jint fd) {
     close(fd);
 }
