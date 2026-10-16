@@ -24,6 +24,21 @@ pub fn get_prefix() -> String {
     std::env::var("APP_PREFIX").unwrap_or_else(|_| "/data/data/id.or.oo.pr/files/usr".to_string())
 }
 
+/// The other path of the same primary-user app data directory. L2S links store absolute host
+/// paths, so links made from the app (`/data/user/0/<pkg>`) and from `adb run-as`
+/// (`/data/data/<pkg>`) only resolve when both paths are bound.
+pub fn app_dir_alias(app_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let pkg = app_dir.file_name()?;
+    let parent = app_dir.parent()?;
+    if parent == std::path::Path::new("/data/data") {
+        Some(std::path::Path::new("/data/user/0").join(pkg))
+    } else if parent == std::path::Path::new("/data/user/0") {
+        Some(std::path::Path::new("/data/data").join(pkg))
+    } else {
+        None
+    }
+}
+
 pub fn get_bin_dir() -> String {
     format!("{}/bin", get_prefix())
 }
@@ -188,6 +203,9 @@ pub fn build_proot_args(
 
         args.push(format!("--bind={}/cache", app_dir.display()));
         args.push(format!("--bind={}", app_dir.display()));
+        if let Some(alias) = app_dir_alias(app_dir).filter(|a| a.is_dir()) {
+            args.push(format!("--bind={}", alias.display()));
+        }
 
         if can_list_dir("/storage") {
             args.push("--bind=/storage".to_string());
@@ -349,8 +367,30 @@ pub fn build_proot_child_env() -> Vec<(String, String)> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn app_dir_alias_maps_data_data_to_user_0() {
+        assert_eq!(
+            app_dir_alias(Path::new("/data/data/id.or.oo.pr")),
+            Some(PathBuf::from("/data/user/0/id.or.oo.pr"))
+        );
+    }
+
+    #[test]
+    fn app_dir_alias_maps_user_0_to_data_data() {
+        assert_eq!(
+            app_dir_alias(Path::new("/data/user/0/id.or.oo.pr")),
+            Some(PathBuf::from("/data/data/id.or.oo.pr"))
+        );
+    }
+
+    #[test]
+    fn app_dir_alias_is_none_for_secondary_users_and_other_paths() {
+        assert_eq!(app_dir_alias(Path::new("/data/user/10/id.or.oo.pr")), None);
+        assert_eq!(app_dir_alias(Path::new("/tmp/pr-test/app")), None);
+    }
 
     fn env_lock() -> &'static std::sync::Mutex<()> {
         super::global_test_env_lock()

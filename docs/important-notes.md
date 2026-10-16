@@ -273,6 +273,14 @@ uutils coreutils 0.8 names its utility from `AT_EXECFN` as read through
 serves the loader-patched auxv from both (`docs/proot-improvement.md §30`). Older
 proot builds break every coreutils command and `dpkg --configure` on Ubuntu 26.04.
 
+### L2S links and the two app-data paths (fixed)
+
+link2symlink stores absolute host paths. The app sees its data as `/data/user/0/<pkg>`;
+`adb shell run-as` starts pr-cli without `APP_PREFIX`, so it used `/data/data/<pkg>` and bound
+only that. proot resolves a symlink's absolute target as a guest path, so under run-as every
+L2S link made by the app (gcc, cc, ...) failed `execve` with ENOENT while `stat` still worked.
+`build_proot_args()` now also binds the other path of the app directory (`app_dir_alias()`).
+
 ### Double shell wrapping via `pr-cli login`
 
 `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')\>"`
