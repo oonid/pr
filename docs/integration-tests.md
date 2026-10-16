@@ -43,6 +43,7 @@ src/proot-integration-test/
   src/pipe.rs             pipe/pipe2 syscall availability (3 tests)
   src/general.rs          file I/O, symlinks, pipes, signals, env, touch, auxv, execveat, statx (9 tests)
   src/ssh.rs              openssh-client: version, keygen, fingerprint, scp (4 tests)
+  src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
 ```
 
 ---
@@ -60,6 +61,7 @@ src/proot-integration-test/
 | pipe | 3 | always | pipe2 availability (disproves blocked-by-seccomp theory) |
 | general | 9 | always | Basic proot stability: file I/O, symlinks, pipes, signals, env; touch, auxv views, execveat, stat/statx owner |
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
+| chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 
 ### Suite Details
 
@@ -149,6 +151,15 @@ openssh-client is absent.
 
 Note: no network is required. All tests are local (key generation + binary invocation only).
 
+#### chroot (2 tests)
+
+Each test calls `chroot()` in a forked child, so the runner keeps its root.
+
+1. **chroot into a directory** — `chroot("/tmp/pit-chroot")` succeeds and the marker
+   file inside it is visible at `/`
+2. **chroot into a missing directory is ENOENT** — `chroot("/tmp/pit-chroot-missing")`
+   fails with `ENOENT`
+
 ---
 
 ## CLI Usage
@@ -159,7 +170,7 @@ pr-cli test <distro> -s <suite>   # Run single suite
 pr-cli test <distro> -v           # Verbose (shows rootfs path)
 ```
 
-Available suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh
+Available suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot
 
 ---
 

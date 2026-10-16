@@ -2,6 +2,7 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+mod chroot;
 mod clone;
 mod distro;
 mod gcc;
@@ -160,6 +161,20 @@ const SUITES: &[Suite] = &[
             Test {
                 name: "readlink /proc/self/fd of a hard link",
                 run: readlink::test_proc_fd_of_hard_link,
+            },
+        ],
+    },
+    Suite {
+        name: "chroot",
+        probe: chroot::probe,
+        tests: &[
+            Test {
+                name: "chroot into a directory",
+                run: chroot::test_chroot_into_directory,
+            },
+            Test {
+                name: "chroot into a missing directory is ENOENT",
+                run: chroot::test_chroot_missing_target,
             },
         ],
     },
