@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **37/37 ALL PASS** on Alpine.
+Result: **46/46 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
 
 ---
 
@@ -53,12 +53,12 @@ src/proot-integration-test/
 |-------|-------|-------|----------|
 | distro | 8 | always | Package manager detection, tool installation, os-release |
 | clone | 5 | always | T8.1 CLONE_VM/VFORK stripping (ptrace + SIGSYS paths) |
-| readlink | 6 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip |
+| readlink | 7 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files |
 | gcc | 3 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe |
 | rust | 4 | `/usr/bin/rustc` exists | T8.3 si_syscall=-1 suppression, T8.4 SIGSYS handlers |
 | git | 3 | `/usr/bin/git` exists | T8.3 si_syscall=-1, T8.4 setuid/setgid handlers |
 | pipe | 3 | always | pipe2 availability (disproves blocked-by-seccomp theory) |
-| general | 5 | always | Basic proot stability: file I/O, symlinks, pipes, signals, env |
+| general | 9 | always | Basic proot stability: file I/O, symlinks, pipes, signals, env; touch, auxv views, execveat, stat/statx owner |
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 
 ### Suite Details
