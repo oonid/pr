@@ -6,10 +6,12 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.system.Os
 import android.util.Log
+import id.or.oo.pr.engine.NetworkDns
 import id.or.oo.pr.engine.ProotHost
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.Inet6Address
 
 class App : Application(), ProotHost {
 
@@ -28,7 +30,11 @@ class App : Application(), ProotHost {
         get() {
             val connectivity = getSystemService(ConnectivityManager::class.java) ?: return emptyList()
             val network = connectivity.activeNetwork ?: return emptyList()
-            return connectivity.getLinkProperties(network)?.dnsServers?.mapNotNull { it.hostAddress }.orEmpty()
+            val link = connectivity.getLinkProperties(network) ?: return emptyList()
+            val hasIpv6DefaultRoute = link.routes.any {
+                it.destination.prefixLength == 0 && it.destination.address is Inet6Address
+            }
+            return NetworkDns.usableServers(link.dnsServers, hasIpv6DefaultRoute)
         }
 
     override val homeDir: File get() = File(filesDir, "home")
