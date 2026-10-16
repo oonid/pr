@@ -120,7 +120,7 @@ pub fn command_login(
 
     // Follow the network the device is on now; a resolv.conf the user wrote is left alone.
     let resolv_conf_path = format!("{}/etc/resolv.conf", rootfs);
-    let existing = std::fs::read_to_string(&resolv_conf_path).ok();
+    let existing = read_existing_resolv_conf(&resolv_conf_path);
     if resolv_conf_is_managed(existing.as_deref()) {
         let _ = write_resolv_conf(
             &resolv_conf_path,

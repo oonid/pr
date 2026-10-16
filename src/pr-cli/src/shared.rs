@@ -65,6 +65,16 @@ pub fn write_resolv_conf(path: &str, contents: &str) -> std::io::Result<()> {
     })
 }
 
+/// The current resolv.conf for [`resolv_conf_is_managed`]: None only when the file is missing. A file
+/// that cannot be read as text (not UTF-8, no permission) is the user's, so it reads as unmanaged.
+pub fn read_existing_resolv_conf(path: &str) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => Some(String::new()),
+    }
+}
+
 /// True when login may rewrite resolv.conf: missing, written by pr-cli, or an old pr-cli default.
 pub fn resolv_conf_is_managed(existing: Option<&str>) -> bool {
     match existing {
@@ -484,6 +494,8 @@ mod tests {
 
     #[test]
     fn write_resolv_conf_replaces_file_atomically_without_leftovers() {
+        // temp_dir() reads TMPDIR, which other tests change under this lock.
+        let _guard = env_lock().lock().expect("lock env");
         let dir = std::env::temp_dir().join(format!("pr-cli-resolv-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create dir");
@@ -501,6 +513,24 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from("resolv.conf")]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_user_resolv_conf_is_left_alone() {
+        // temp_dir() reads TMPDIR, which other tests change under this lock.
+        let _guard = env_lock().lock().expect("lock env");
+        let dir = std::env::temp_dir().join(format!("pr-cli-resolv-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.join("resolv.conf");
+        assert!(resolv_conf_is_managed(
+            read_existing_resolv_conf(path.to_str().unwrap()).as_deref()
+        ));
+        fs::write(&path, b"# caf\xe9\nnameserver 9.9.9.9\n").expect("write latin-1");
+        assert!(!resolv_conf_is_managed(
+            read_existing_resolv_conf(path.to_str().unwrap()).as_deref()
+        ));
         let _ = fs::remove_dir_all(&dir);
     }
 
