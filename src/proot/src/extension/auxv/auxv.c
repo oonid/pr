@@ -67,16 +67,37 @@ static void *stack_auxv(const Tracee *tracee, size_t *size)
 	return buffer;
 }
 
+/* Tgid of @pid from /proc/<pid>/status, or -1.  */
+static long thread_group_id(pid_t pid)
+{
+	char status_path[64];
+	char line[128];
+	long tgid = -1;
+	FILE *file;
+
+	snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
+	file = fopen(status_path, "r");
+	if (file == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		if (strncmp(line, "Tgid:", 5) == 0) {
+			tgid = strtol(line + 5, NULL, 10);
+			break;
+		}
+	}
+	fclose(file);
+	return tgid;
+}
+
 /**
- * Redirect an open of "/proc/<pid>/auxv" for a tracee to a temporary
- * file holding that tracee's stack auxv.
+ * Redirect an open of the caller's own "/proc/<pid>/auxv" to a temporary
+ * file holding its stack auxv.
  */
 static void redirect_proc_auxv(Tracee *tracee, char path[PATH_MAX])
 {
 	const char *suffix = "/auxv";
 	size_t suffix_len = strlen(suffix);
 	size_t len = strlen(path);
-	const Tracee *target;
 	char *pid_end = NULL;
 	const char *new_path;
 	void *content;
@@ -93,11 +114,14 @@ static void redirect_proc_auxv(Tracee *tracee, char path[PATH_MAX])
 	if (pid_end != path + len - suffix_len || pid <= 0 || pid > INT_MAX)
 		return;
 
-	target = get_tracee(tracee, pid, false);
-	if (target == NULL)
+	/* Only the caller's own process: /proc/self/auxv names the thread-group
+	 * leader, whose memory a thread shares.  Another tracee is never looked
+	 * up, since get_tracee() would free its ctx in the middle of its own
+	 * syscall.  */
+	if (pid != tracee->pid && pid != thread_group_id(tracee->pid))
 		return;
 
-	content = stack_auxv(target, &size);
+	content = stack_auxv(tracee, &size);
 	if (content == NULL)
 		return;
 
