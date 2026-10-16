@@ -79,8 +79,9 @@ word_t get_elf_aux_vectors_address(const Tracee *tracee)
 	word_t address;
 	word_t data;
 
-	/* Sanity check: this works only in execve sysexit.  */
-	assert(IS_IN_SYSEXIT2(tracee, PR_execve));
+	/* Sanity check: this works only in execve sysexit.  execveat(AT_FDCWD)
+	 * is translated to execve on entry and leaves the same new stack.  */
+	assert(IS_IN_SYSEXIT2(tracee, PR_execve) || IS_IN_SYSEXIT2(tracee, PR_execveat));
 
 	/* Right after execve, the stack layout is:
 	 *
