@@ -275,6 +275,10 @@ const SUITES: &[Suite] = &[
                 name: "execveat(AT_FDCWD) runs a program",
                 run: general::test_execveat_at_fdcwd,
             },
+            Test {
+                name: "stat and statx agree on owner",
+                run: general::test_stat_statx_owner_agree,
+            },
         ],
     },
     Suite {
