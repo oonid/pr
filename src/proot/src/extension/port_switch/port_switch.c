@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <asm/types.h>
 #include <linux/net.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -142,12 +143,23 @@ int port_switch_callback(Extension *extension, ExtensionEvent event, intptr_t da
     }
 }
 
+static void write_port(Tracee *tracee, bool is_socketcall, bool is_udp, const long socketcall_arg2[], size_t offset, in_port_t port)
+{
+    word_t address;
+
+    if (is_socketcall)
+        address = socketcall_arg2[is_udp ? 4 : 1];
+    else
+        address = peek_reg(tracee, CURRENT, is_udp ? SYSARG_5 : SYSARG_2);
+    write_data(tracee, address + offset, &port, sizeof(port));
+}
+
 void mod_port(Tracee *tracee, bool is_socketcall, bool is_bind, bool is_udp, struct sockaddr_storage *my_sockaddr, long socketcall_arg2[]) {   
     /** IPv4 and IPv6 addresses are stored in different structures. Because of this, the port must be changed
      *  in different ways depending on the address family. 
      *
-     *  Socketcall stores the arguments to the system call it wraps in a pointer, the modified sockaddr must be written 
-     *  separately to an array and then to the tracee.
+     *  Socketcall stores the arguments to the system call it wraps in a pointer, so the sockaddr address is taken
+     *  from that array. Only the port is written back.
      *  
      *  Modifying the port is avoided if the port is not within the section of ports that Android reserves. This is to
      *  avoid problems in UDP server/client communications, in cases where the server sends a message back to the client.
@@ -169,21 +181,7 @@ void mod_port(Tracee *tracee, bool is_socketcall, bool is_bind, bool is_udp, str
                 else
                    in->sin_port = htons(ntohs(in->sin_port) + PORT_ADDITION); 
 
-                if(is_socketcall && is_udp) {
-                    write_data(tracee, socketcall_arg2[4], in, sizeof(in));
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), socketcall_arg2, sizeof(socketcall_arg2));
-                }
-
-                else if(!is_socketcall && is_udp)
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_5), in, sizeof(in));
-                
-                else if(is_socketcall && !is_udp) {
-                    write_data(tracee, socketcall_arg2[1], in, sizeof(in));
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), socketcall_arg2, sizeof(socketcall_arg2));
-                }
-
-                else if(!is_socketcall && !is_udp)
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), in, sizeof(in));
+                write_port(tracee, is_socketcall, is_udp, socketcall_arg2, offsetof(struct sockaddr_in, sin_port), in->sin_port);
             }
             break;
         }
@@ -199,21 +197,7 @@ void mod_port(Tracee *tracee, bool is_socketcall, bool is_bind, bool is_udp, str
                 else
                     in6->sin6_port = htons(ntohs(in6->sin6_port) + PORT_ADDITION);
     
-                if(is_socketcall && is_udp) { 
-                    write_data(tracee, socketcall_arg2[4], in6, sizeof(in6));
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), socketcall_arg2, sizeof(socketcall_arg2));
-                }
-
-                else if(is_socketcall && is_udp)
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_5), in6, sizeof(in6));
-
-                else if(is_socketcall && !is_udp) { 
-                    write_data(tracee, socketcall_arg2[1], in6, sizeof(in6));
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), socketcall_arg2, sizeof(socketcall_arg2));
-                }
-
-                else if(!is_socketcall && !is_udp)
-                    write_data(tracee, peek_reg(tracee, CURRENT, SYSARG_2), in6, sizeof(in6));
+                write_port(tracee, is_socketcall, is_udp, socketcall_arg2, offsetof(struct sockaddr_in6, sin6_port), in6->sin6_port);
             }
             break;
         }
