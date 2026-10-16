@@ -75,10 +75,16 @@ pub fn test_touch_creates_file() -> TestResult {
     let rc = unsafe { libc::utimensat(libc::AT_FDCWD, missing.as_ptr(), std::ptr::null(), 0) };
     let errno = std::io::Error::last_os_error().raw_os_error();
     if rc != -1 || errno != Some(libc::ENOENT) {
-        return Err(format!("utimensat on missing file: rc={} errno={:?}", rc, errno));
+        return Err(format!(
+            "utimensat on missing file: rc={} errno={:?}",
+            rc, errno
+        ));
     }
     let out = std::process::Command::new("/bin/sh")
-        .args(["-c", "touch /tmp/pit-touch && test -f /tmp/pit-touch && touch /tmp/pit-touch && echo ok"])
+        .args([
+            "-c",
+            "touch /tmp/pit-touch && test -f /tmp/pit-touch && touch /tmp/pit-touch && echo ok",
+        ])
         .output()
         .map_err(|e| format!("touch: {}", e))?;
     let _ = fs::remove_file(file);
