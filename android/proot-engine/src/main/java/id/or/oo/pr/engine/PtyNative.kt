@@ -5,6 +5,8 @@ object PtyNative {
         System.loadLibrary("ptyjni")
     }
 
+    // Synchronized with forkPtyWithPid, which reads the pid this call records natively.
+    @Synchronized
     fun forkPty(cmd: String, args: Array<String>?, envVars: Array<String>?, rows: Int, cols: Int): Int {
         return nativeForkPty(cmd, args, envVars, rows, cols)
     }
