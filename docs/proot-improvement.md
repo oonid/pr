@@ -811,3 +811,39 @@ the real user appear owned by root. Peers running as any other uid are reported 
 
 Verified in the Alpine arm64 VM: a server outside PRoot and a client inside it now agree
 (`peer_uid=0`, was 1000); integration suite 39/39.
+
+---
+
+## 32. Solved: fake-root chroot aborted PRoot
+
+### Problem
+
+`chroot` into an existing directory under `--change-id=0:0` killed the whole session:
+
+```
+./path/path.c:551: ... compare_paths2(...): assertion "length1 > 0" failed
+proot warning: signal 6 received from process ...
+```
+
+`handle_chroot_exit_end()` (`extension/fake_id0/chroot.c`) runs after the kernel
+returns `EPERM`. On that ptrace path it read the guest path into `path`, not
+`path_guest`, then compared the uninitialized `path_guest` against every binding.
+The SIGSYS path (where seccomp blocks `chroot`, as on Android) fills `path_guest`
+earlier and was not affected. The same function also ignored a failing `realpath()`
+and went on to `stat()` an uninitialized buffer. On the SIGSYS path the kernel never
+sees the call, so a missing target reached `realpath()` and the result was decided by
+stack contents. Upstream termux-proot has both.
+
+### Fix
+
+Read the guest path into `path_guest`, return `read_path()`'s status, and return
+`-errno` when `realpath()` fails.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `extension/fake_id0/chroot.c` | Guest path buffer, `read_path()` status, `realpath()` check |
+| `src/proot-integration-test/src/chroot.rs`, `main.rs` | New `chroot` suite |
+| `src/pr-cli/src/cmd_test.rs` | `pr-cli test` runs the `chroot` suite |
+
