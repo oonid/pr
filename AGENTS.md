@@ -110,7 +110,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ```bash
 cd src/pr-cli && cargo test
-# 32 tests: 12 unit + 20 integration (14 plugin parsers)
+# 169 tests: 144 library unit + 2 binary + 23 integration (14 plugin parsers)
 ```
 
 ### On-device integration tests
@@ -122,9 +122,9 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-**Test suites:** distro (8), clone (5), readlink (6), gcc (3), rust (4), git (3), pipe (3), general (5)
+**Test suites:** distro (8), clone (5), readlink (7), gcc (3), rust (4), git (3), pipe (3), general (9), ssh (4)
 
-**Results:** 37/37 pass on Alpine and Debian. Rust suite 4/4 on Debian (rustc compile + cargo build work).
+**Results:** 46/46 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build).
 
 ### Known test failures (Alpine-specific)
 
@@ -224,5 +224,5 @@ Use the Superpowers workflow and skills (`subagent-driven-development`, `brainst
 - `docs/important-notes.md` — Critical constraints, seccomp handlers, pr-cli caveats, read first
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot; §29 covers bind mount bug
 - `docs/rust-toolchain-support.md` — vfork/CLONE_VM fix, link2symlink readlink fix
-- `docs/integration-tests.md` — Integration test suite (37/37 pass)
+- `docs/integration-tests.md` — Integration test suite (46 tests)
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (PROOT_LOADER mechanism)
