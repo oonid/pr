@@ -264,9 +264,8 @@ static int handle_seccomp_event_common(Tracee *tracee)
 			break;
 		}
             	translate_path(tracee, path, AT_FDCWD, original, true);
-		errno = 0;
-		status = statfs64(path, &my_statfs64); 
-		if (errno != 0) {
+		status = statfs64(path, &my_statfs64);
+		if (status < 0) {
 			set_result_after_seccomp(tracee, -errno);
 			break;
 		}
@@ -549,18 +548,18 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		sxid = peek_reg(tracee, CURRENT, SYSARG_3);
 		if (sysnum == PR_setresuid)
 			ret = getresuid(&rxid_, &exid_, &sxid_);
-		else if (sysnum == PR_setresgid)
+		else
 			ret = getresgid(&rxid_, &exid_, &sxid_);
 		if (ret) {  // EFAULT = address outside address space
 			set_result_after_seccomp(tracee, -EPERM);
 			break;
 		}
 		ret = 0;
-		if (rxid != rxid_ && rxid != -1)
+		if (rxid != rxid_ && rxid != (gid_t) -1)
 			ret = -EPERM;
-		if (exid != exid_ && exid != -1)
+		if (exid != exid_ && exid != (gid_t) -1)
 			ret = -EPERM;
-		if (sxid != sxid_ && sxid != -1)
+		if (sxid != sxid_ && sxid != (gid_t) -1)
 			ret = -EPERM;
 		set_result_after_seccomp(tracee, ret);
 		break;
@@ -644,7 +643,6 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		char new_translated[PATH_MAX];
 		int olddirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
 		int newdirfd = peek_reg(tracee, CURRENT, SYSARG_3);
-		int flags = peek_reg(tracee, CURRENT, SYSARG_5);
 		int size;
 
 		size = read_string(tracee, oldpath, peek_reg(tracee, CURRENT, SYSARG_2), PATH_MAX);

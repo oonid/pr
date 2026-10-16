@@ -652,7 +652,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 					translate_syscall(tracee);
 				}
 
-				if (tracee->skip_next_seccomp_signal || siginfo.si_syscall == SYSCALL_AVOIDER) {
+				if (tracee->skip_next_seccomp_signal || (word_t) siginfo.si_syscall == SYSCALL_AVOIDER) {
 					VERBOSE(tracee, 4, "suppressed SIGSYS after void syscall");
 					tracee->skip_next_seccomp_signal = false;
 					signal = 0;

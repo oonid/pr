@@ -105,7 +105,6 @@ int ldso_env_passthru(const Tracee *tracee, ArrayOfXPointers *envp, ArrayOfXPoin
 	size_t i;
 
 	for (i = 0; i < envp->length; i++) {
-		bool is_known = false;
 		char *env;
 
 		status = read_xpointee_as_string(envp, i, &env);
@@ -125,9 +124,11 @@ int ldso_env_passthru(const Tracee *tracee, ArrayOfXPointers *envp, ArrayOfXPoin
 		    && strcmp(env, tracee->host_ldso_paths) == 0)
 			env = (char *) tracee->guest_ldso_paths;
 
-#define PASSTHRU(check, name)						\
+		if (is_env_name(env, "LD_LIBRARY_PATH"))
+			has_seen_library_path = true;
+
+#define PASSTHRU(name)							\
 		if (is_env_name(env, name)) {				\
-			check |= true;					\
 			/* Errors are not fatal here.  */		\
 			status = resize_array_of_xpointers(argv, offset, 2);	\
 			if (status >= 0) {				\
@@ -139,28 +140,28 @@ int ldso_env_passthru(const Tracee *tracee, ArrayOfXPointers *envp, ArrayOfXPoin
 			continue;					\
 		}							\
 
-		PASSTHRU(has_seen_library_path, "LD_LIBRARY_PATH");
-		PASSTHRU(is_known, "LD_PRELOAD");
-		PASSTHRU(is_known, "LD_BIND_NOW");
-		PASSTHRU(is_known, "LD_TRACE_LOADED_OBJECTS");
-		PASSTHRU(is_known, "LD_AOUT_LIBRARY_PATH");
-		PASSTHRU(is_known, "LD_AOUT_PRELOAD");
-		PASSTHRU(is_known, "LD_AUDIT");
-		PASSTHRU(is_known, "LD_BIND_NOT");
-		PASSTHRU(is_known, "LD_DEBUG");
-		PASSTHRU(is_known, "LD_DEBUG_OUTPUT");
-		PASSTHRU(is_known, "LD_DYNAMIC_WEAK");
-		PASSTHRU(is_known, "LD_HWCAP_MASK");
-		PASSTHRU(is_known, "LD_KEEPDIR");
-		PASSTHRU(is_known, "LD_NOWARN");
-		PASSTHRU(is_known, "LD_ORIGIN_PATH");
-		PASSTHRU(is_known, "LD_POINTER_GUARD");
-		PASSTHRU(is_known, "LD_PROFILE");
-		PASSTHRU(is_known, "LD_PROFILE_OUTPUT");
-		PASSTHRU(is_known, "LD_SHOW_AUXV");
-		PASSTHRU(is_known, "LD_USE_LOAD_BIAS");
-		PASSTHRU(is_known, "LD_VERBOSE");
-		PASSTHRU(is_known, "LD_WARN");
+		PASSTHRU("LD_LIBRARY_PATH");
+		PASSTHRU("LD_PRELOAD");
+		PASSTHRU("LD_BIND_NOW");
+		PASSTHRU("LD_TRACE_LOADED_OBJECTS");
+		PASSTHRU("LD_AOUT_LIBRARY_PATH");
+		PASSTHRU("LD_AOUT_PRELOAD");
+		PASSTHRU("LD_AUDIT");
+		PASSTHRU("LD_BIND_NOT");
+		PASSTHRU("LD_DEBUG");
+		PASSTHRU("LD_DEBUG_OUTPUT");
+		PASSTHRU("LD_DYNAMIC_WEAK");
+		PASSTHRU("LD_HWCAP_MASK");
+		PASSTHRU("LD_KEEPDIR");
+		PASSTHRU("LD_NOWARN");
+		PASSTHRU("LD_ORIGIN_PATH");
+		PASSTHRU("LD_POINTER_GUARD");
+		PASSTHRU("LD_PROFILE");
+		PASSTHRU("LD_PROFILE_OUTPUT");
+		PASSTHRU("LD_SHOW_AUXV");
+		PASSTHRU("LD_USE_LOAD_BIAS");
+		PASSTHRU("LD_VERBOSE");
+		PASSTHRU("LD_WARN");
 	}
 
 	if (!has_seen_library_path) {
