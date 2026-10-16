@@ -293,6 +293,46 @@ servers are passed only when the network has an IPv6 default route; otherwise (s
 DNS on mobile data) glibc would wait out its timeout on them before every lookup. The file is
 replaced atomically (temporary file + rename), and one that cannot be read as text is left alone.
 
+### Login user: home only, always fake root and `/bin/sh`
+
+**Current behaviour** (`src/pr-cli/src/login.rs`, `shared.rs`):
+
+- `pr-cli login <distro> --user <name>` looks the user up in the container's `/etc/passwd`
+  and fails if the user is missing, but only the **home directory** is used, as `HOME`.
+  The session always starts in `/` (`--cwd=/` in `build_proot_args()`).
+- The session always starts `/bin/sh -l`; the user's login shell from `/etc/passwd` is
+  ignored (Ubuntu's `/bin/bash` for root, for example).
+- PRoot always gets `--change-id=0:0`, so every user, `--user alice` included, runs as fake
+  root: `id -u` is 0 and new files appear owned by root.
+
+**History:** `2f2bdbc` started the passwd shell in the passwd home with
+`--change-id=<uid>:<gid>`; `96c383d` (making login work under targetSdk 28 / W^X) replaced
+that with `/bin/sh -l`, `--cwd=/` and `--change-id=0:0` without recording why. AGENTS.md
+Critical Constraint 7 now requires `--change-id=0:0`: dpkg and other tools check
+`getuid() == 0`.
+
+**What could change, and what stands in the way:**
+
+- **Start in the home directory:** pass the passwd home as `--cwd`. Low risk.
+- **Login shell:** try the passwd shell and fall back to `/bin/sh -l`. The check has to run
+  inside the session (for example `/bin/sh -l -c 'exec "$shell" -l || exec /bin/sh -l'`),
+  not on the host: shells are often absolute symlinks (`/bin/sh -> /bin/busybox`) or L2S
+  links that point outside the rootfs when followed from the host, and under W^X the mode
+  bits do not say whether a file can be executed.
+- **Non-root users:** not a matter of passing `--change-id=<uid>:<gid>`. It conflicts with
+  Constraint 7, and fake_id0 is built around fake root:
+  - every file owned by the real app uid, which is the whole rootfs, would appear owned by
+    the user, and the kernel lets the app uid write all of it, so the user could edit
+    `/etc/passwd`: there is no permission separation to gain;
+  - `chown()` is answered with the caller's uid (`chown.c`), which non-root callers read as
+    an error, and the utimes / permission-error masking applies only when `euid == 0`.
+  It would need fake_id0 to keep its own per-file ownership, not just a flag.
+- **Groups:** this build is not USERLAND, so `getgroups()` returns the app's real Android
+  gids (inet 3003 and others), which are not in `/etc/group`; `id` shows them.
+
+Each of these changes what existing scripts see (`id`, `$SHELL`, `$PWD`), so it needs its own
+tests and a device run.
+
 ### Double shell wrapping via `pr-cli login`
 
 `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')\>"`

@@ -86,10 +86,6 @@ enum Commands {
     ClearCache {},
 }
 
-fn get_prefix() -> PathBuf {
-    PathBuf::from(shared::get_prefix())
-}
-
 fn get_plugins_dir() -> PathBuf {
     PathBuf::from(shared::get_plugins_dir())
 }
