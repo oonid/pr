@@ -771,8 +771,10 @@ patched value, plus `AT_SYSINFO_EHDR`.
 before the load script moves the stack pointer. The new built-in `auxv` extension
 serves that copy from both kernel views:
 
-- `open`/`openat` of `/proc/<pid>/auxv` for a tracee is redirected to a temp file
-  holding the tracee's stack auxv (same pattern as the mountinfo extension).
+- `open`/`openat` of the caller's own `/proc/<pid>/auxv` (its pid, or its thread-group
+  leader's for `/proc/self` from a thread) is redirected to a temp file holding its stack
+  auxv. Other processes keep the kernel's view: looking up another tracee with
+  `get_tracee()` would free that tracee's per-syscall memory.
 - On `prctl(PR_GET_AUXV)` exit, the buffer is overwritten with the stack auxv,
   zero-padded; the result (the kernel's copy size) is kept.
 
