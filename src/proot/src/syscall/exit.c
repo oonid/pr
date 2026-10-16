@@ -27,6 +27,7 @@
 #include <linux/net.h>   /* SYS_*, */
 #include <linux/ioctl.h> /* _IOW, */
 #include <string.h>      /* strlen(3), */
+#include <stdbool.h>     /* bool, */
 
 #include "cli/note.h"
 #include "syscall/syscall.h"
@@ -55,6 +56,30 @@
  * this syscall to @tracee->status if an error occured previously
  * during the translation, that is, if @tracee->status is less than 0.
  */
+/**
+ * True when @path is "/proc/<pid>/fd/<n>".
+ */
+static bool is_proc_fd_link(const char *path)
+{
+	const char *cursor;
+
+	if (strncmp(path, "/proc/", 6) != 0)
+		return false;
+	cursor = path + 6;
+	if (*cursor < '0' || *cursor > '9')
+		return false;
+	while (*cursor >= '0' && *cursor <= '9')
+		cursor++;
+	if (strncmp(cursor, "/fd/", 4) != 0)
+		return false;
+	cursor += 4;
+	if (*cursor == '\0')
+		return false;
+	while (*cursor >= '0' && *cursor <= '9')
+		cursor++;
+	return *cursor == '\0';
+}
+
 void translate_syscall_exit(Tracee *tracee)
 {
 	word_t syscall_number;
@@ -406,10 +431,14 @@ void translate_syscall_exit(Tracee *tracee)
 		}
 
 		/* A fake hard link must read as a regular file, wherever
-		 * link2symlink stored its intermediate.  */
+		 * link2symlink stored its intermediate.  An fd link is not a
+		 * fake hard link: it names the open file, which really is the
+		 * .l2s. final file.  */
 		const char *l2s_name = strrchr(referee, '/');
-		if (strncmp(l2s_name != NULL ? l2s_name + 1 : referee,
-			    L2S_PREFIX, strlen(L2S_PREFIX)) == 0) {
+		if (get_extension(tracee, link2symlink_callback) != NULL
+		    && !is_proc_fd_link(referer)
+		    && strncmp(l2s_name != NULL ? l2s_name + 1 : referee,
+			       L2S_PREFIX, strlen(L2S_PREFIX)) == 0) {
 			status = -EINVAL;
 			break;
 		}

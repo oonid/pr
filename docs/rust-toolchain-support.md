@@ -175,6 +175,11 @@ if (strncmp(l2s_name != NULL ? l2s_name + 1 : referee,
 }
 ```
 
+Two exceptions: the check runs only when link2symlink is enabled, and never for
+`/proc/<pid>/fd/<n>` links, which must name the open file (its `.l2s.` final file
+really exists in the guest); hiding those made `readlink` of an fd opened on a
+hard-linked file fail with EINVAL.
+
 The first version matched `/.l2s/` in the path, which only holds when `PROOT_L2S_DIR`
 points at `<rootfs>/.l2s`. Without that directory link2symlink stores the intermediate
 beside the original (`/usr/bin/.l2s..apk.<hash>`), and `realpath /usr/bin/cc` leaked it.
