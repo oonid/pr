@@ -2,6 +2,8 @@ package id.or.oo.pr
 
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.OnBackPressedCallback
@@ -12,6 +14,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
 import org.connectbot.terminal.Terminal
@@ -28,6 +33,7 @@ class TerminalActivity : ComponentActivity() {
     private var session: ProotLauncher.Session? = null
     private var emulator: TerminalEmulator? = null
     private var readerThread: Thread? = null
+    private var initialImeShown = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,10 +107,53 @@ class TerminalActivity : ComponentActivity() {
                         foregroundColor = Color.White,
                         keyboardEnabled = true,
                         showSoftKeyboard = true,
+                        // The library moves focus to its Compose node first; re-target the IME after it.
+                        onTerminalTap = { window.decorView.post { showKeyboard() } },
                     )
                 }
             }
         }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !initialImeShown) ensureInitialKeyboard(attempt = 0)
+    }
+
+    // The terminal library asks for the IME once, 100 ms after composition. If the activity's open
+    // transition has not finished, WindowManager drops that request (ImeTracker:
+    // PHASE_WM_ABORT_SHOW_IME_POST_LAYOUT) and nothing asks again, so the keyboard never appears.
+    // Re-ask from the focused window until the IME is actually visible once.
+    private fun ensureInitialKeyboard(attempt: Int) {
+        window.decorView.postDelayed({
+            if (isFinishing || initialImeShown) return@postDelayed
+            val imeVisible = ViewCompat.getRootWindowInsets(window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            if (imeVisible) {
+                initialImeShown = true
+            } else if (attempt < 5) {
+                showKeyboard()
+                ensureInitialKeyboard(attempt + 1)
+            }
+        }, 300)
+    }
+
+    // The IME attaches to the library's input view (the one text editor in the window), not to
+    // whatever Compose node holds focus.
+    private fun showKeyboard() {
+        val editor = findTextEditor(window.decorView) ?: return
+        editor.requestFocus()
+        WindowCompat.getInsetsController(window, editor).show(WindowInsetsCompat.Type.ime())
+    }
+
+    private fun findTextEditor(view: View): View? {
+        if (view.onCheckIsTextEditor()) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                findTextEditor(view.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
     }
 
     override fun onDestroy() {
