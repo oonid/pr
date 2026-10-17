@@ -9,7 +9,7 @@ import org.connectbot.terminal.TerminalEmulatorFactory
 class ProotSessionFactory(private val host: ProotHost) : SessionManager.SessionFactory {
 
     override fun create(alias: String, onEnded: (ManagedSession) -> Unit): ManagedSession {
-        val session = ProotLauncher(host).startSession(alias)
+        val session = ProotLauncher(host).startSession(alias, rows = 24, cols = 80)
             ?: throw IllegalStateException("could not start a terminal for $alias")
         val pty = ProotPty(session)
         try {

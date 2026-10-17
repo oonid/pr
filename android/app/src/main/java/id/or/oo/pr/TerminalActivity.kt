@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -126,7 +127,7 @@ class TerminalActivity : ComponentActivity() {
                         LeavePrompt(
                             onEnd = {
                                 showLeavePrompt.value = false
-                                sessions.end(alias)
+                                current.end()
                                 finish()
                             },
                             onKeep = {
@@ -220,7 +221,7 @@ class TerminalActivity : ComponentActivity() {
     }
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 private fun LeavePrompt(onEnd: () -> Unit, onKeep: () -> Unit, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = onCancel,
@@ -236,7 +237,7 @@ private fun LeavePrompt(onEnd: () -> Unit, onKeep: () -> Unit, onCancel: () -> U
     )
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 private fun StartFailed(alias: String, reason: String) {
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF1a1a2e)) {
