@@ -816,12 +816,12 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 			gid = 0; /* Not fatal.  */
 		
 		/* Override only if the file is owned by the current user.
-		*		  * Errors are not fatal here.  */
-		if (uid == getuid())
-			poke_uint32(tracee, address + offsetof_stat_uid(tracee), config->suid);
-		
-		if (gid == getgid())
-			poke_uint32(tracee, address + offsetof_stat_gid(tracee), config->sgid);
+		 * Errors are not fatal here.  */
+		if (fake_owner_uid(config, uid) != uid)
+			poke_uint32(tracee, address + offsetof_stat_uid(tracee), fake_owner_uid(config, uid));
+
+		if (fake_owner_gid(config, gid) != gid)
+			poke_uint32(tracee, address + offsetof_stat_gid(tracee), fake_owner_gid(config, gid));
 		
 		return 0;
 	}

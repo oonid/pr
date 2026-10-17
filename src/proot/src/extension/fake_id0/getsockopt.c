@@ -48,10 +48,8 @@ int handle_getsockopt_exit_end(Tracee *tracee) {
 			Config *own_config = get_fake_id_for_pid(tracee->pid);
 			if (own_config == NULL)
 				return 0;
-			if (cred.uid == getuid())
-				cred.uid = own_config->euid;
-			if (cred.gid == getgid())
-				cred.gid = own_config->egid;
+			cred.uid = fake_owner_uid(own_config, cred.uid);
+			cred.gid = fake_owner_gid(own_config, cred.gid);
 		}
 		write_data(tracee, cred_addr, &cred, sizeof(struct ucred));
 	}

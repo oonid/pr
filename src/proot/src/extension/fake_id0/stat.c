@@ -40,11 +40,11 @@ int handle_stat_exit_end(Tracee *tracee, Config *config, Reg stat_sysarg) {
 
 	/* Override only if the file is owned by the current user.
 	 * Errors are not fatal here.  */
-	if (uid == getuid())
-		poke_uint32(tracee, address + offsetof_stat_uid(tracee), config->suid);
+	if (fake_owner_uid(config, uid) != uid)
+		poke_uint32(tracee, address + offsetof_stat_uid(tracee), fake_owner_uid(config, uid));
 
-	if (gid == getgid())
-		poke_uint32(tracee, address + offsetof_stat_gid(tracee), config->sgid);
+	if (fake_owner_gid(config, gid) != gid)
+		poke_uint32(tracee, address + offsetof_stat_gid(tracee), fake_owner_gid(config, gid));
 
 	return 0;
 }
@@ -147,11 +147,11 @@ int handle_stat_exit_end(Tracee *tracee, Config *config, word_t sysnum) {
 	
 	/* Override only if the file is owned by the current user.
 	 * Errors are not fatal here.  */
-	if (uid == getuid()) 
-		poke_uint32(tracee, address + offsetof_stat_uid(tracee), config->suid);
-	
-	if (gid == getgid()) 
-		poke_uint32(tracee, address + offsetof_stat_gid(tracee), config->sgid);
+	if (fake_owner_uid(config, uid) != uid)
+		poke_uint32(tracee, address + offsetof_stat_uid(tracee), fake_owner_uid(config, uid));
+
+	if (fake_owner_gid(config, gid) != gid)
+		poke_uint32(tracee, address + offsetof_stat_gid(tracee), fake_owner_gid(config, gid));
 	
 	return 0;
 }
@@ -162,14 +162,16 @@ int fake_id0_handle_statx_syscall(Tracee *tracee, Config *config, uintptr_t stat
 	// TODO: USERLAND
 	struct statx_syscall_state *state = (struct statx_syscall_state *) statx_state_raw;
 	if (state->statx_buf.stx_mask & STATX_UID) {
-		if (state->statx_buf.stx_uid == getuid()) {
-			state->statx_buf.stx_uid = config->suid;
+		uid_t uid = fake_owner_uid(config, state->statx_buf.stx_uid);
+		if (uid != state->statx_buf.stx_uid) {
+			state->statx_buf.stx_uid = uid;
 			state->updated_stats = true;
 		}
 	}
 	if (state->statx_buf.stx_mask & STATX_GID) {
-		if (state->statx_buf.stx_gid == getgid()) {
-			state->statx_buf.stx_gid = config->sgid;
+		gid_t gid = fake_owner_gid(config, state->statx_buf.stx_gid);
+		if (gid != state->statx_buf.stx_gid) {
+			state->statx_buf.stx_gid = gid;
 			state->updated_stats = true;
 		}
 	}
