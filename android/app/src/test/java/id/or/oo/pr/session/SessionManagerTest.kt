@@ -20,6 +20,9 @@ class SessionManagerTest {
     private val endedNotices = CopyOnWriteArrayList<Pair<String, Int?>>()
     private var failNext = false
     private var foregroundFails = false
+    private var stopFails = false
+    private val keepAwakeAtStop = CopyOnWriteArrayList<Boolean>()
+    private val runningAtStop = CopyOnWriteArrayList<List<String>>()
 
     private val factory = SessionManager.SessionFactory { alias, onEnded ->
         if (failNext) throw IllegalStateException("pr-cli not found")
@@ -29,14 +32,17 @@ class SessionManagerTest {
         ManagedSession(alias, pty, null, { _, _, _ -> }, onEnded, endGraceMs = 100, exitCodeWaitMs = 100)
     }
 
-    private val foreground = object : SessionManager.ForegroundController {
+    private val foreground: SessionManager.ForegroundController = object : SessionManager.ForegroundController {
         override fun start() {
             if (foregroundFails) throw IllegalStateException("not allowed")
             foregroundCalls += "start"
         }
 
         override fun stop() {
+            keepAwakeAtStop += manager.keepCpuAwake.value
+            runningAtStop += manager.running.value
             foregroundCalls += "stop"
+            if (stopFails) throw IllegalStateException("stop refused")
         }
     }
 
@@ -100,8 +106,8 @@ class SessionManagerTest {
         manager.attach(session, screen)
         ptys.getValue("alpine").exit(2)
         eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
         assertTrue(endedNotices.isEmpty())
-        assertTrue(manager.running.value.isEmpty())
         manager.detach(session, screen)
         val next = open("alpine")
         assertNotSame(session, next)
@@ -163,5 +169,35 @@ class SessionManagerTest {
     fun backgroundErrorIsNullWhenTheServiceStarts() {
         open("alpine")
         assertNull(manager.backgroundError.value)
+    }
+
+    @Test
+    fun runningIsPublishedOnlyAfterTheForegroundHasStopped() {
+        open("alpine")
+        manager.keepCpuAwake.value = true
+        manager.endAll()
+        eventually { foregroundCalls.contains("stop") }
+        assertEquals(listOf(false), keepAwakeAtStop)
+        assertEquals(listOf(listOf("alpine")), runningAtStop)
+    }
+
+    @Test
+    fun aForegroundStopFailureIsReportedAndTheSessionStillEnds() {
+        stopFails = true
+        open("alpine")
+        ptys.getValue("alpine").exit(0)
+        eventually { manager.running.value.isEmpty() }
+        eventually { manager.backgroundError.value == "stop refused" }
+        assertEquals(listOf("alpine" to 0), endedNotices)
+    }
+
+    @Test
+    fun aStaleBackgroundErrorClearsWhenTheLastSessionEnds() {
+        foregroundFails = true
+        open("alpine")
+        assertEquals("not allowed", manager.backgroundError.value)
+        manager.end("alpine")
+        eventually { manager.running.value.isEmpty() }
+        eventually { manager.backgroundError.value == null }
     }
 }
