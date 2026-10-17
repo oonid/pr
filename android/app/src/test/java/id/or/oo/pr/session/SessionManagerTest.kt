@@ -24,13 +24,22 @@ class SessionManagerTest {
     private val keepAwakeAtStop = CopyOnWriteArrayList<Boolean>()
     private val runningAtStop = CopyOnWriteArrayList<List<String>>()
     private val runningAtStart = CopyOnWriteArrayList<List<String>>()
+    @Volatile private var beforeEnded: (ManagedSession) -> Unit = {}
 
     private val factory = SessionManager.SessionFactory { alias, onEnded ->
         if (failNext) throw IllegalStateException("pr-cli not found")
         created.incrementAndGet()
         val pty = FakePty()
         ptys[alias] = pty
-        ManagedSession(alias, pty, null, { _, _, _ -> }, onEnded, endGraceMs = 100, exitCodeWaitMs = 100)
+        ManagedSession(
+            alias,
+            pty,
+            null,
+            { _, _, _ -> },
+            { session -> beforeEnded(session); onEnded(session) },
+            endGraceMs = 100,
+            exitCodeWaitMs = 100,
+        )
     }
 
     private val foreground: SessionManager.ForegroundController = object : SessionManager.ForegroundController {
@@ -207,5 +216,30 @@ class SessionManagerTest {
         manager.end("alpine")
         eventually { manager.running.value.isEmpty() }
         eventually { manager.backgroundError.value == null }
+    }
+
+    @Test
+    fun detachingAfterExitWithoutReopenDropsTheSession() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        ptys.getValue("alpine").exit(0)
+        eventually { manager.running.value.isEmpty() }
+        manager.detach(session, screen)
+        assertTrue(manager.running.value.isEmpty())
+        assertNotSame(session, open("alpine"))
+    }
+
+    @Test
+    fun detachingBetweenExitAndOnEndedStillClearsRunning() {
+        val screen = ManagedSession.Screen {}
+        beforeEnded = { session -> manager.detach(session, screen) }
+        val session = open("alpine")
+        manager.attach(session, screen)
+        manager.keepCpuAwake.value = true
+        ptys.getValue("alpine").exit(0)
+        eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
+        assertEquals(false, manager.keepCpuAwake.value)
     }
 }
