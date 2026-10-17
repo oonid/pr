@@ -92,7 +92,11 @@ class SessionManager(
     private fun updateRunning() {
         val before = _running.value.size
         val now = sessions.values.filter { it.exit.value == null }.map { it.alias }
-        if (before == 0 && now.isNotEmpty()) startForeground()
+        if (before == 0 && now.isNotEmpty()) {
+            _running.value = now
+            startForeground()
+            return
+        }
         if (before > 0 && now.isEmpty()) {
             keepCpuAwake.value = false
             _backgroundError.value = null

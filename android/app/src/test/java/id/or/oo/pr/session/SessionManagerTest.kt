@@ -23,6 +23,7 @@ class SessionManagerTest {
     private var stopFails = false
     private val keepAwakeAtStop = CopyOnWriteArrayList<Boolean>()
     private val runningAtStop = CopyOnWriteArrayList<List<String>>()
+    private val runningAtStart = CopyOnWriteArrayList<List<String>>()
 
     private val factory = SessionManager.SessionFactory { alias, onEnded ->
         if (failNext) throw IllegalStateException("pr-cli not found")
@@ -35,6 +36,7 @@ class SessionManagerTest {
     private val foreground: SessionManager.ForegroundController = object : SessionManager.ForegroundController {
         override fun start() {
             if (foregroundFails) throw IllegalStateException("not allowed")
+            runningAtStart += manager.running.value
             foregroundCalls += "start"
         }
 
@@ -179,6 +181,12 @@ class SessionManagerTest {
         eventually { foregroundCalls.contains("stop") }
         assertEquals(listOf(false), keepAwakeAtStop)
         assertEquals(listOf(listOf("alpine")), runningAtStop)
+    }
+
+    @Test
+    fun runningIsPublishedBeforeTheForegroundStarts() {
+        open("alpine")
+        assertEquals(listOf(listOf("alpine")), runningAtStart)
     }
 
     @Test
