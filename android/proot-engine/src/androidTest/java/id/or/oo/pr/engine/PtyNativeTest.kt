@@ -32,7 +32,7 @@ class PtyNativeTest {
         var exitStatus = PtyNative.waitPid(pid)
         // If it hasn't exited yet, wait a tiny bit and retry (simple busy-wait for test)
         var retries = 50
-        while (exitStatus == -2 && retries > 0) {
+        while (exitStatus == PtyNative.STILL_RUNNING && retries > 0) {
             Thread.sleep(10)
             exitStatus = PtyNative.waitPid(pid)
             retries--

@@ -1,6 +1,9 @@
 package id.or.oo.pr.engine
 
 object PtyNative {
+    /** [waitPid] result while the child has not exited yet. */
+    const val STILL_RUNNING = -2
+
     init {
         System.loadLibrary("ptyjni")
     }
@@ -35,6 +38,7 @@ object PtyNative {
         return nativeResize(fd, rows, cols)
     }
 
+    /** Reap [pid] if it has exited: exit code, or 128 + signal; [STILL_RUNNING]; -1 on error. */
     fun waitPid(pid: Int): Int {
         return nativeWaitPid(pid)
     }
