@@ -1,7 +1,9 @@
 package id.or.oo.pr.engine
 
 import android.os.ParcelFileDescriptor
+import android.system.Os
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -56,6 +58,52 @@ class PtyNativeContractTest {
         } finally {
             PtyNative.close(masterFd)
         }
+    }
+
+    private fun childOutput(script: String, forkOnMainThread: Boolean = false): String {
+        val args = arrayOf("sh", "-c", "$script; echo END")
+        var masterFd = -1
+        if (forkOnMainThread) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                masterFd = PtyNative.forkPty("/system/bin/sh", args, null, 24, 80)
+            }
+        } else {
+            masterFd = PtyNative.forkPty("/system/bin/sh", args, null, 24, 80)
+        }
+        assertTrue("forkPty failed", masterFd >= 0)
+        try {
+            return readUntil(masterFd) { it.contains("END") }
+        } finally {
+            PtyNative.close(masterFd)
+        }
+    }
+
+    private fun signalMask(out: String, field: String): Long =
+        Regex("$field:\\s*([0-9a-f]+)").find(out)?.groupValues?.get(1)?.toLong(16)
+            ?: throw AssertionError("no $field in: $out")
+
+    @Test
+    fun childHasOnlyTheTerminalDescriptors() {
+        val (readEnd, writeEnd) = ParcelFileDescriptor.createPipe()
+        val inheritable = Os.dup(readEnd.fileDescriptor)
+        try {
+            val out = childOutput("sleep 5 & ls -1 /proc/\$!/fd; kill \$!")
+            val fds = out.lines().map { it.trim() }.filter { it.isNotEmpty() && it.all(Char::isDigit) }
+            assertEquals("child descriptors: $out", listOf("0", "1", "2"), fds)
+        } finally {
+            Os.close(inheritable)
+            readEnd.close()
+            writeEnd.close()
+        }
+    }
+
+    @Test
+    fun childStartsWithNoBlockedOrIgnoredSignals() {
+        val bionicPosixTimerSignal = 1L shl (32 - 1)
+        val bionicArtProfilerSignal = 1L shl (38 - 1)
+        val out = childOutput("grep -E '^Sig(Blk|Ign)' /proc/self/status", forkOnMainThread = true)
+        assertEquals("blocked: $out", 0L, signalMask(out, "SigBlk") and bionicPosixTimerSignal.inv())
+        assertEquals("ignored: $out", 0L, signalMask(out, "SigIgn") and bionicArtProfilerSignal.inv())
     }
 
     @Test

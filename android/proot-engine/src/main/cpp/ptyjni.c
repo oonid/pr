@@ -6,7 +6,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -154,14 +156,28 @@ static void write_str(const char *s) {
     (void) write(STDERR_FILENO, s, strlen(s));
 }
 
+static void reset_signals(void) {
+    sigset_t none;
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, NULL);
+    for (int sig = 1; sig < NSIG; sig++)
+        if (sig != SIGKILL && sig != SIGSTOP) signal(sig, SIG_DFL);
+}
+
+static void close_inherited_fds(void) {
+    if (syscall(SYS_close_range, 3, ~0U, 0) == 0) return;
+    for (int fd = 3; fd < 65536; fd++) close(fd);
+}
+
 static void exec_child(const char *pts_name, const char *cmd, char **argv, char **envp) {
+    reset_signals();
     setsid();
     int pts_fd = open(pts_name, O_RDWR);
     if (pts_fd < 0) _exit(127);
     dup2(pts_fd, STDIN_FILENO);
     dup2(pts_fd, STDOUT_FILENO);
     dup2(pts_fd, STDERR_FILENO);
-    if (pts_fd > 2) close(pts_fd);
+    close_inherited_fds();
 
     execve(cmd, argv, envp);
 
