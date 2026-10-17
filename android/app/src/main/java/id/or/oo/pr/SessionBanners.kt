@@ -53,7 +53,7 @@ fun SessionBanners(app: App) {
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    Switch(checked = keepAwake, onCheckedChange = { app.sessions.keepCpuAwake.value = it })
+                    Switch(checked = keepAwake, onCheckedChange = { app.sessions.setKeepCpuAwake(it) })
                 }
             }
         }

@@ -53,6 +53,19 @@ class SessionManagerTest {
         (manager.open(alias) as SessionManager.OpenResult.Opened).session
 
     @Test
+    fun settingKeepCpuAwakeWithNoSessionsLeavesItOff() {
+        manager.setKeepCpuAwake(true)
+        assertEquals(false, manager.keepCpuAwake.value)
+    }
+
+    @Test
+    fun settingKeepCpuAwakeWhileRunningSetsIt() {
+        open("alpine")
+        manager.setKeepCpuAwake(true)
+        assertEquals(true, manager.keepCpuAwake.value)
+    }
+
+    @Test
     fun openingARunningContainerReturnsTheSameSession() {
         val first = open("alpine")
         val second = open("alpine")
