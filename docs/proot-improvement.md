@@ -875,10 +875,21 @@ warnings are left as upstream has them:
 
 | Warning | Where | Why it stays |
 |---------|-------|--------------|
-| `talloc_autofree_context` deprecated (x4) | `execve/enter.c`, `path/glue.c`, `path/temp.c` | Allocations that live until exit; replacing it means giving each one an owner, for no behaviour change |
-| `mktemp` deprecated (x2) | `syscall/socket.c`, `extension/sysvipc/sysvipc_shm.c` | Both need a name to `bind()` a Unix socket to, not an open file |
+| `talloc_autofree_context` deprecated (x4) | `execve/enter.c`, `path/glue.c`, `path/temp.c` | The context is freed at exit, and its destructors remove PRoot's temp files and directories (`path/temp.c`); a replacement would reimplement the same `atexit` cleanup |
+| `mktemp` deprecated (x2) | `syscall/socket.c`, `extension/sysvipc/sysvipc_shm.c` | Both need a name to `bind()` a Unix socket to, not an open file; `bind()` fails with `EADDRINUSE` if the name appears first, so the race is at worst a failed bind |
 | inline asm clobbers SP/PC (x2) | `loader/loader.c` | The asm sets SP and branches to the entry point without returning, so the clobbers have no effect |
 
 Not fixed here: when link2symlink is off, the seccomp `PR_linkat` fallback
 (`tracee/seccomp.c`) emulates `linkat` with a rename, so the source name disappears and
 `AT_SYMLINK_FOLLOW` is ignored. pr-cli always enables link2symlink.
+
+### Follow-ups, not urgent
+
+- **Loader clobbers:** dropping `"sp"` from `BRANCH` in `loader/assembly-arm64.h`, and
+  `"sp"`, `"pc"` in `loader/assembly-arm.h`, removes both inline-asm warnings. The asm never
+  returns (`__builtin_unreachable()` follows), and with NDK r27c both loaders and `proot`
+  came out byte-identical. proot-me and termux-proot still have the clobbers.
+- **CI toolchain:** CI builds with the runner's newest NDK (`$ANDROID_NDK_LATEST_HOME`,
+  30.x in 2026-10), while `scripts/build.sh` defaults to r27c and the committed binaries are
+  built with r27c. The warnings match, but CI does not build the toolchain that ships.
+  Pinning CI to r27c (cached download) would close that gap.
