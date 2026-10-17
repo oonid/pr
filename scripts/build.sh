@@ -151,7 +151,10 @@ build_talloc() {
     local talloc_lib="${sysroot}/usr/lib/libtalloc.a"
     local talloc_inc="${sysroot}/usr/include/talloc.h"
 
-    if [ -f "$talloc_lib" ] && [ -f "$talloc_inc" ]; then
+    if [ -f "$talloc_lib" ] && [ -f "$talloc_inc" ] \
+        && [ "$talloc_lib" -nt "${TALLOC_STUB}/replace.h" ] \
+        && [ "$talloc_lib" -nt "${TALLOC_SRC}/talloc.c" ] \
+        && [ "$talloc_lib" -nt "${TALLOC_SRC}/talloc.h" ]; then
         info "libtalloc already built for ${arch}"
         return
     fi
