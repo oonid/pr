@@ -219,6 +219,8 @@ Commit message policy:
 
 Use the Superpowers workflow and skills (`subagent-driven-development`, `brainstorming`, `writing-plans`, `executing-plans`, etc.) for managing tasks, implementing changes, and verifying logic.
 
+Save their documents in the neutral docs layout, not the skills' default `docs/superpowers/` folders: design specs in `docs/design/<topic>.md`, implementation plans in `docs/plans/<topic>.md`.
+
 ## Key References
 
 - `docs/important-notes.md` — Critical constraints, seccomp handlers, pr-cli caveats, read first

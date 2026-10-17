@@ -105,7 +105,7 @@ docs/                       # Technical documentation
 | Document | Description |
 |----------|-------------|
 | [`docs/important-notes.md`](docs/important-notes.md) | Critical constraints, seccomp handlers, caveats — read first |
-| [`docs/superpowers/specs/2026-09-13-proot-engine-library-design.md`](docs/superpowers/specs/2026-09-13-proot-engine-library-design.md) | Architecture of the extracted `:proot-engine` library |
+| [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
 | [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (29 sections) |
 | [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
 | [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |
