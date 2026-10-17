@@ -36,12 +36,12 @@ src/proot-integration-test/
   src/main.rs             TAP runner: proot-integration-test [suite|all]
   src/distro.rs           Package manager detection + tool installation (8 tests)
   src/clone.rs            CLONE_VM stripping tests (5 tests)
-  src/readlink.rs         .l2s. hiding, readlink, realpath tests (6 tests)
+  src/readlink.rs         .l2s. hiding, readlink, realpath tests (7 tests)
   src/gcc.rs              GCC prefix resolution, C compilation (3 tests)
   src/rust.rs             rustc, cargo build with timing diagnostics (4 tests)
   src/git.rs              git init, git config, cargo new with vcs git (3 tests)
   src/pipe.rs             pipe/pipe2 syscall availability (3 tests)
-  src/general.rs          file I/O, symlinks, pipes, signals, env (5 tests)
+  src/general.rs          file I/O, symlinks, pipes, signals, env, touch, auxv, execveat, statx (9 tests)
   src/ssh.rs              openssh-client: version, keygen, fingerprint, scp (4 tests)
 ```
 
@@ -82,7 +82,7 @@ src/proot-integration-test/
 4. **CLONE_THREAD preserved** — `std::thread::spawn()` + exec (validates CLONE_THREAD guard)
 5. **concurrent spawn stress** — 10 threads each spawning a process
 
-#### readlink (6 tests)
+#### readlink (7 tests)
 
 1. **regular symlink resolves** — Rust `read_link()` on `/tmp` symlink
 2. **realpath no .l2s.** — `realpath /usr/bin/cc` has no `.l2s.` path
@@ -90,6 +90,8 @@ src/proot-integration-test/
 4. **/proc/self/exe no .l2s.** — `std::env::current_exe()` has no `.l2s.`
 5. **lstat vs stat consistency** — both return valid results
 6. **readlink small buffer** — compiles C program with `cc` that calls `readlink()` with 4-byte buffer
+7. **readlink /proc/self/fd of a hard link** — the fd link of a file opened through a second
+   hard link names the open file (same inode)
 
 #### gcc (3 tests)
 
@@ -119,13 +121,20 @@ Each test uses `run_sh_timed()` which prints timing diagnostics to stderr:
 2. **pipe2(O_CLOEXEC)** — used by rustc for subprocess stdout/stderr capture
 3. **pipe2(O_NONBLOCK)** — non-blocking variant
 
-#### general (5 tests)
+#### general (9 tests)
 
 1. **file I/O roundtrip** — create, write, read, rename, delete in `/tmp`
 2. **symlink operations** — create, readlink, remove
 3. **pipe between processes** — `echo foo | cat | wc -c` (3-process pipeline)
 4. **signal propagation** — SIGINT trap/delivery
 5. **environment inheritance** — `$HOME` through proot
+6. **touch creates a missing file** — `utimensat()` on a missing file is ENOENT, and `touch`
+   creates it
+7. **auxv views match the stack** — every `/proc/self/auxv` and `PR_GET_AUXV` record equals
+   `getauxval()` (EINVAL from `PR_GET_AUXV` before Linux 6.4 passes)
+8. **execveat(AT_FDCWD) runs a program** — a forked child runs `/bin/true` through `execveat`
+9. **stat and statx agree on owner** — uid and gid of a new file match between `stat()` and
+   `statx()`
 
 #### ssh (4 tests)
 
