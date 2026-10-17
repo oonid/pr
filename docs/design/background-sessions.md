@@ -161,6 +161,9 @@ runs and sessions still survive; only the notification is hidden. The app does n
    **End all**, and **Keep CPU awake** / **Let CPU sleep**.
 2. **Session ended**: default importance. "alias: session ended (exit N)"; tapping opens the list.
 
+Tapping either returns to the one existing list (`CLEAR_TOP | SINGLE_TOP`): a terminal on top of it
+closes, which detaches its session, and the session keeps running.
+
 ## 6. Wake Lock and Battery Optimization
 
 Two different things stop a background session, and they need different remedies:
