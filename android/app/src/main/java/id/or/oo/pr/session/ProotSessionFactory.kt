@@ -13,24 +13,31 @@ class ProotSessionFactory(private val host: ProotHost) : SessionManager.SessionF
             ?: throw IllegalStateException("could not start a terminal for $alias")
         val pty = ProotPty(session)
         val emulatorThread = HandlerThread("emulator-$alias").apply { start() }
-        lateinit var managed: ManagedSession
-        val emulator = TerminalEmulatorFactory.create(
-            looper = emulatorThread.looper,
-            initialRows = 24,
-            initialCols = 80,
-            defaultForeground = Color.White,
-            defaultBackground = Color(0xFF1a1a2e),
-            onKeyboardInput = { data -> managed.write(data) },
-            onResize = { dims -> managed.resize(dims.rows, dims.columns) },
-        )
-        managed = ManagedSession(
-            alias = alias,
-            pty = pty,
-            emulator = emulator,
-            output = { buf, off, len -> emulator.writeInput(buf, off, len) },
-            onEnded = onEnded,
-            release = { emulatorThread.quitSafely() },
-        )
-        return managed
+        try {
+            lateinit var managed: ManagedSession
+            val emulator = TerminalEmulatorFactory.create(
+                looper = emulatorThread.looper,
+                initialRows = 24,
+                initialCols = 80,
+                defaultForeground = Color.White,
+                defaultBackground = Color(0xFF1a1a2e),
+                onKeyboardInput = { data -> managed.write(data) },
+                onResize = { dims -> managed.resize(dims.rows, dims.columns) },
+            )
+            managed = ManagedSession(
+                alias = alias,
+                pty = pty,
+                emulator = emulator,
+                output = { buf, off, len -> emulator.writeInput(buf, off, len) },
+                onEnded = onEnded,
+                release = { emulatorThread.quitSafely() },
+            )
+            return managed
+        } catch (t: Throwable) {
+            emulatorThread.quitSafely()
+            pty.forceKill()
+            session.close()
+            throw t
+        }
     }
 }
