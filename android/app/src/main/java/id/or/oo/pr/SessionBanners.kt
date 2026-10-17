@@ -71,7 +71,7 @@ fun SessionBanners(app: App) {
         }
         if (keepAwake && !exempt) {
             Banner(
-                text = "Deep sleep will pause background sessions until battery optimization is turned off for this app.",
+                text = "Some phones' battery savers can still stop background sessions. Allow PR to run unrestricted.",
                 action = "Allow",
                 onAction = {
                     try {

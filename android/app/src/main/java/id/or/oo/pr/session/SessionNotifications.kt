@@ -30,7 +30,7 @@ object SessionNotifications {
         val details = buildList {
             add(aliases.joinToString(", "))
             if (keepAwake) add("CPU kept awake")
-            if (keepAwake && !exempt) add("Deep sleep will pause sessions; allow in the app")
+            if (keepAwake && !exempt) add("Battery saver may stop sessions; allow in the app")
         }.joinToString(" · ")
         return NotificationCompat.Builder(context, CHANNEL_RUNNING)
             .setSmallIcon(R.drawable.ic_notification)
