@@ -573,6 +573,13 @@ mod tests {
         super::global_test_env_lock()
     }
 
+    fn restore_var(name: &str, saved: Option<std::ffi::OsString>) {
+        match saved {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
+
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -626,25 +633,24 @@ mod tests {
     #[test]
     fn build_proot_runtime_env_prefers_tmpdir_when_set() {
         let _guard = env_lock().lock().expect("lock env");
-        std::env::set_var("TMPDIR", "/tmp/custom-cache");
+        let saved_tmpdir = std::env::var_os("TMPDIR");
+        let tmpdir = std::env::temp_dir().to_string_lossy().to_string();
+        std::env::set_var("TMPDIR", &tmpdir);
         std::env::set_var("PROOT_L2S_DIR", "/tmp/custom-l2s");
 
         let env = build_proot_runtime_env();
         let map: std::collections::BTreeMap<&str, String> = env.into_iter().collect();
         assert_eq!(
             map.get("PROOT_TMP_DIR").map(String::as_str),
-            Some("/tmp/custom-cache")
+            Some(tmpdir.as_str())
         );
-        assert_eq!(
-            map.get("TMPDIR").map(String::as_str),
-            Some("/tmp/custom-cache")
-        );
+        assert_eq!(map.get("TMPDIR").map(String::as_str), Some(tmpdir.as_str()));
         assert_eq!(
             map.get("PROOT_L2S_DIR").map(String::as_str),
             Some("/tmp/custom-l2s")
         );
 
-        std::env::remove_var("TMPDIR");
+        restore_var("TMPDIR", saved_tmpdir);
         std::env::remove_var("PROOT_L2S_DIR");
     }
 
@@ -826,7 +832,9 @@ mod tests {
         fs::create_dir_all(&prefix).expect("create prefix");
         fs::create_dir_all(rootfs.join("tmp")).expect("create rootfs tmp");
         std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
-        std::env::set_var("TMPDIR", base.join("cache").to_string_lossy().to_string());
+        let saved_tmpdir = std::env::var_os("TMPDIR");
+        let tmpdir = std::env::temp_dir().to_string_lossy().to_string();
+        std::env::set_var("TMPDIR", &tmpdir);
 
         let args = build_proot_args(rootfs.to_str().expect("rootfs path"), false, true, &[]);
         let prefix_str = prefix.to_string_lossy().to_string();
@@ -837,14 +845,11 @@ mod tests {
         assert!(args.contains(&String::from("--bind=/sys")));
         assert!(args.contains(&String::from("--bind=/proc/self/fd:/dev/fd")));
         assert!(args.contains(&String::from("--bind=/dev/urandom:/dev/random")));
-        assert!(args.contains(&format!(
-            "--bind={}:/tmp",
-            base.join("cache").to_string_lossy()
-        )));
+        assert!(args.contains(&format!("--bind={}:/tmp", tmpdir)));
         assert!(!args.contains(&String::from("--link2symlink")));
 
         std::env::remove_var("APP_PREFIX");
-        std::env::remove_var("TMPDIR");
+        restore_var("TMPDIR", saved_tmpdir);
         let _ = fs::remove_dir_all(base);
     }
 }
