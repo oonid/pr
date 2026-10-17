@@ -42,7 +42,7 @@ fun SessionBanners(app: App) {
     val exempt = remember(resumes.intValue, keepAwake) { context.isIgnoringBatteryOptimizations() }
 
     Column {
-        if (running.isNotEmpty()) {
+        if (running.isNotEmpty() && backgroundError == null) {
             Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
