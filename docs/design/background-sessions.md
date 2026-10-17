@@ -44,12 +44,13 @@ is both started and bound, and keeps the session logic testable on the JVM.
 Owned by `App`, lives as long as the process. Holds at most one `ManagedSession` per container
 alias.
 
-- `open(alias): ManagedSession` returns the running session for the container, or starts one
-  through `ProotLauncher.startSession`. A failure to start is returned to the caller, not thrown
-  past it.
+- `open(alias): OpenResult` returns `Opened(session)` with the running session for the container,
+  or starts one through `ProotLauncher.startSession`. A failure to start is returned as
+  `Failed(reason)`, not thrown past the caller.
+- `attach(session, screen)` and `detach(session, screen)` connect a screen to a session.
 - `end(alias)` and `endAll()` close sessions.
-- `sessions: StateFlow<List<SessionInfo>>` (the aliases of running sessions) for the list screen
-  and the notification.
+- `running: StateFlow<List<String>>` (the aliases of running sessions) for the list screen and the
+  notification; `keepCpuAwake` and `backgroundError` are state flows too.
 - When the number of running sessions goes from 0 to 1 it starts `SessionService`. The service
   watches `running` and stops itself when it empties; the manager never stops it, so the stop
   always happens on the service's main thread after its `startForeground`.
@@ -59,9 +60,10 @@ alias.
 
 Seams, so the logic runs in JVM unit tests (the real emulator uses native code):
 
-- a session starter (real: `ProotLauncher`; tests: an in-memory fake);
-- an emulator factory (real: `TerminalEmulatorFactory`);
-- a foreground controller (real: starts `SessionService`).
+- a session factory (real: `ProotSessionFactory`, which starts the PTY through `ProotLauncher` and
+  creates the emulator through `TerminalEmulatorFactory`; tests: a fake PTY and no emulator);
+- a foreground controller (real: starts `SessionService`);
+- an ended notifier (real: posts the "session ended" notification).
 
 ### `ManagedSession` (new, app module)
 
