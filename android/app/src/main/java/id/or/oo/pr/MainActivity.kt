@@ -175,129 +175,131 @@ fun DistroListScreen(app: App) {
             )
         }
     ) { padding ->
-        // Distro list — always visible behind the sheet
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            item { SessionBanners(app) }
-            item {
-                CustomImageInstallCard(
-                    imageRef = customImageRef,
-                    alias = customAlias,
-                    isLoading = loadingDistro != null,
-                    onImageRefChange = { customImageRef = it },
-                    onAliasChange = { customAlias = it },
-                    onInstall = {
-                        if (loadingDistro != null) return@CustomImageInstallCard
-                        val source = customImageRef.trim()
-                        if (source.isEmpty()) return@CustomImageInstallCard
-                        val alias = customAlias.trim()
-                        if (alias.isNotEmpty() && !isValidOverrideAlias(alias)) {
-                            showOutput = true
-                            outputLines = listOf(
-                                "ERROR: Invalid alias '$alias'.",
-                                "Alias must start with an alphanumeric character and use only [A-Za-z0-9_.+-]."
-                            )
-                            return@CustomImageInstallCard
-                        }
-                        val args = mutableListOf("install", source)
-                        if (alias.isNotEmpty()) {
-                            args += listOf("--override-alias", alias)
-                        }
-                        loadingDistro = "__custom__"
-                        operationLabel = "Installing"
-                        operationDistroName = source
-                        showOutput = true
-                        outputLines = listOf("Installing $source…")
-                        scope.launch {
-                            runDistroCommand(app, args) { line ->
-                                outputLines = outputLines + line
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            SessionBanners(app)
+            // Distro list — always visible behind the sheet
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                item {
+                    CustomImageInstallCard(
+                        imageRef = customImageRef,
+                        alias = customAlias,
+                        isLoading = loadingDistro != null,
+                        onImageRefChange = { customImageRef = it },
+                        onAliasChange = { customAlias = it },
+                        onInstall = {
+                            if (loadingDistro != null) return@CustomImageInstallCard
+                            val source = customImageRef.trim()
+                            if (source.isEmpty()) return@CustomImageInstallCard
+                            val alias = customAlias.trim()
+                            if (alias.isNotEmpty() && !isValidOverrideAlias(alias)) {
+                                showOutput = true
+                                outputLines = listOf(
+                                    "ERROR: Invalid alias '$alias'.",
+                                    "Alias must start with an alphanumeric character and use only [A-Za-z0-9_.+-]."
+                                )
+                                return@CustomImageInstallCard
                             }
-                            loadingDistro = null
-                        }
-                    }
-                )
-            }
-            items(distros) { distro ->
-                DistroCard(
-                    distro = distro,
-                    isLoading = loadingDistro == distro.alias,
-                    isRunning = distro.alias in running,
-                    onInstall = {
-                        if (loadingDistro == null) {
-                            loadingDistro = distro.alias
+                            val args = mutableListOf("install", source)
+                            if (alias.isNotEmpty()) {
+                                args += listOf("--override-alias", alias)
+                            }
+                            loadingDistro = "__custom__"
                             operationLabel = "Installing"
-                            operationDistroName = distro.displayName
+                            operationDistroName = source
                             showOutput = true
-                            outputLines = listOf("Installing ${distro.displayName}…")
+                            outputLines = listOf("Installing $source…")
                             scope.launch {
-                                runDistroCommand(
-                                    app,
-                                    listOf(
-                                        "install",
-                                        distro.installSource,
-                                        "--override-alias",
-                                        distro.alias
-                                    )
-                                ) { line ->
+                                runDistroCommand(app, args) { line ->
                                     outputLines = outputLines + line
                                 }
                                 loadingDistro = null
                             }
                         }
-                    },
-                    onLogin = {
-                        if (loadingDistro == null) {
-                            val intent = Intent(context, TerminalActivity::class.java)
-                            intent.putExtra("distro", distro.alias)
-                            context.startActivity(intent)
-                        }
-                    },
-                    onRemove = {
-                        if (loadingDistro == null) {
-                            loadingDistro = distro.alias
-                            operationLabel = "Removing"
-                            operationDistroName = distro.displayName
-                            showOutput = true
-                            outputLines = listOf("Removing ${distro.displayName}…")
-                            scope.launch {
-                                if (distro.alias in app.sessions.running.value) {
-                                    app.sessions.end(distro.alias)
-                                    val stopped = withTimeoutOrNull(10_000) {
-                                        app.sessions.running.first { distro.alias !in it }
+                    )
+                }
+                items(distros) { distro ->
+                    DistroCard(
+                        distro = distro,
+                        isLoading = loadingDistro == distro.alias,
+                        isRunning = distro.alias in running,
+                        onInstall = {
+                            if (loadingDistro == null) {
+                                loadingDistro = distro.alias
+                                operationLabel = "Installing"
+                                operationDistroName = distro.displayName
+                                showOutput = true
+                                outputLines = listOf("Installing ${distro.displayName}…")
+                                scope.launch {
+                                    runDistroCommand(
+                                        app,
+                                        listOf(
+                                            "install",
+                                            distro.installSource,
+                                            "--override-alias",
+                                            distro.alias
+                                        )
+                                    ) { line ->
+                                        outputLines = outputLines + line
                                     }
-                                    if (stopped == null) {
-                                        outputLines = outputLines +
-                                            "Couldn't stop the ${distro.displayName} session; removal cancelled."
-                                        loadingDistro = null
-                                        return@launch
+                                    loadingDistro = null
+                                }
+                            }
+                        },
+                        onLogin = {
+                            if (loadingDistro == null) {
+                                val intent = Intent(context, TerminalActivity::class.java)
+                                intent.putExtra("distro", distro.alias)
+                                context.startActivity(intent)
+                            }
+                        },
+                        onRemove = {
+                            if (loadingDistro == null) {
+                                loadingDistro = distro.alias
+                                operationLabel = "Removing"
+                                operationDistroName = distro.displayName
+                                showOutput = true
+                                outputLines = listOf("Removing ${distro.displayName}…")
+                                scope.launch {
+                                    if (distro.alias in app.sessions.running.value) {
+                                        app.sessions.end(distro.alias)
+                                        val stopped = withTimeoutOrNull(10_000) {
+                                            app.sessions.running.first { distro.alias !in it }
+                                        }
+                                        if (stopped == null) {
+                                            outputLines = outputLines +
+                                                "Couldn't stop the ${distro.displayName} session; removal cancelled."
+                                            loadingDistro = null
+                                            return@launch
+                                        }
                                     }
+                                    runDistroCommand(app, listOf("remove", distro.alias)) { line ->
+                                        outputLines = outputLines + line
+                                    }
+                                    loadingDistro = null
                                 }
-                                runDistroCommand(app, listOf("remove", distro.alias)) { line ->
-                                    outputLines = outputLines + line
-                                }
-                                loadingDistro = null
                             }
-                        }
-                    },
-                    onTest = {
-                        if (loadingDistro == null) {
-                            loadingDistro = distro.alias
-                            operationLabel = "Testing"
-                            operationDistroName = distro.displayName
-                            showOutput = true
-                            outputLines = listOf("Testing ${distro.displayName}…")
-                            scope.launch {
-                                runDistroCommand(app, listOf("test", distro.alias)) { line ->
-                                    outputLines = outputLines + line
+                        },
+                        onTest = {
+                            if (loadingDistro == null) {
+                                loadingDistro = distro.alias
+                                operationLabel = "Testing"
+                                operationDistroName = distro.displayName
+                                showOutput = true
+                                outputLines = listOf("Testing ${distro.displayName}…")
+                                scope.launch {
+                                    runDistroCommand(app, listOf("test", distro.alias)) { line ->
+                                        outputLines = outputLines + line
+                                    }
+                                    loadingDistro = null
                                 }
-                                loadingDistro = null
                             }
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
         }
 
