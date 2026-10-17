@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **46/46 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
+Result: **48/48 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
 
 ---
 
