@@ -16,6 +16,10 @@ class FakePty : Pty {
     @Volatile var killed = false
     @Volatile var forceKilled = false
     @Volatile var closed = false
+    @Volatile var eofCount = 0
+    @Volatile var writesAfterClose = 0
+    @Volatile var resizesAfterClose = 0
+    @Volatile var onClose: () -> Unit = {}
 
     @Volatile
     override var exitCode: Int? = null
@@ -35,16 +39,19 @@ class FakePty : Pty {
     }
 
     override fun write(data: ByteArray): Int {
+        if (closed) writesAfterClose++
         written += String(data)
         return data.size
     }
 
     override fun resize(rows: Int, cols: Int) {
+        if (closed) resizesAfterClose++
         resizes += rows to cols
     }
 
     override fun sendEof() {
         eofSent = true
+        eofCount++
         if (!ignoresEof) exit(0)
     }
 
@@ -60,5 +67,6 @@ class FakePty : Pty {
 
     override fun close() {
         closed = true
+        onClose()
     }
 }

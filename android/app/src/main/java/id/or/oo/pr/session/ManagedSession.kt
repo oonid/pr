@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import org.connectbot.terminal.TerminalEmulator
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 class ManagedSession(
@@ -26,10 +27,12 @@ class ManagedSession(
     private val _exit = MutableStateFlow<Exit?>(null)
     val exit: StateFlow<Exit?> = _exit
 
-    @Volatile
-    var endRequested = false
-        private set
+    private val endFlag = AtomicBoolean(false)
+    val endRequested: Boolean
+        get() = endFlag.get()
 
+    private val ptyLock = Any()
+    private var closed = false
     private val ended = CountDownLatch(1)
     private val screenLock = Any()
     private var screen: Screen? = null
@@ -42,11 +45,11 @@ class ManagedSession(
     }
 
     fun write(data: ByteArray) {
-        if (_exit.value == null) pty.write(data)
+        synchronized(ptyLock) { if (!closed) pty.write(data) }
     }
 
     fun resize(rows: Int, cols: Int) {
-        if (_exit.value == null) pty.resize(rows, cols)
+        synchronized(ptyLock) { if (!closed) pty.resize(rows, cols) }
     }
 
     fun attach(screen: Screen): Screen? = synchronized(screenLock) {
@@ -63,8 +66,8 @@ class ManagedSession(
 
     fun end() {
         if (_exit.value != null) return
-        endRequested = true
-        pty.sendEof()
+        if (!endFlag.compareAndSet(false, true)) return
+        synchronized(ptyLock) { if (!closed) pty.sendEof() }
         thread(isDaemon = true, name = "pty-end-$alias") {
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.kill()
@@ -75,19 +78,28 @@ class ManagedSession(
 
     private fun readLoop() {
         val buf = ByteArray(8192)
-        while (true) {
-            val n = try {
-                pty.read(buf)
-            } catch (e: Exception) {
-                -1
+        try {
+            while (true) {
+                val n = pty.read(buf)
+                if (n < 0) break
+                if (n > 0) output(buf, 0, n)
             }
-            if (n < 0) break
-            if (n > 0) output(buf, 0, n)
+        } catch (e: Exception) {
+        } finally {
+            finish()
         }
-        val deadline = System.currentTimeMillis() + exitCodeWaitMs
-        while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
-        pty.close()
-        release()
+    }
+
+    private fun finish() {
+        runCatching {
+            val deadline = System.currentTimeMillis() + exitCodeWaitMs
+            while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        }
+        synchronized(ptyLock) {
+            closed = true
+            runCatching { pty.close() }
+        }
+        runCatching { release() }
         _exit.value = Exit(pty.exitCode)
         ended.countDown()
         onEnded(this)
