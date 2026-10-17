@@ -33,6 +33,12 @@ class SessionManager(
 
     val keepCpuAwake = MutableStateFlow(false)
 
+    fun setKeepCpuAwake(on: Boolean) {
+        synchronized(lock) {
+            if (_running.value.isNotEmpty()) keepCpuAwake.value = on
+        }
+    }
+
     private val _backgroundError = MutableStateFlow<String?>(null)
     val backgroundError: StateFlow<String?> = _backgroundError
 

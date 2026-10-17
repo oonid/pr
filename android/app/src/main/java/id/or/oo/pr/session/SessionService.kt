@@ -60,8 +60,7 @@ class SessionService : Service() {
         foreground = true
         when (intent?.action) {
             ACTION_END_ALL -> sessions.endAll()
-            ACTION_TOGGLE_WAKE ->
-                if (sessions.running.value.isNotEmpty()) sessions.keepCpuAwake.value = !sessions.keepCpuAwake.value
+            ACTION_TOGGLE_WAKE -> sessions.setKeepCpuAwake(!sessions.keepCpuAwake.value)
         }
         if (sessions.running.value.isEmpty()) stopRunning(startId)
         return START_NOT_STICKY
