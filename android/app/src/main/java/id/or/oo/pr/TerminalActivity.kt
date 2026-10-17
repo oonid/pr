@@ -2,6 +2,7 @@ package id.or.oo.pr
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -39,6 +40,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
+import id.or.oo.pr.session.SessionService
 import org.connectbot.terminal.SelectionController
 import org.connectbot.terminal.Terminal
 
@@ -53,7 +55,11 @@ class TerminalActivity : ComponentActivity() {
     private val showLeavePrompt = mutableStateOf(false)
 
     private val notificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted && (application as App).sessions.running.value.isNotEmpty()) {
+                ContextCompat.startForegroundService(this, Intent(this, SessionService::class.java))
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
