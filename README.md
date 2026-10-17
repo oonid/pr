@@ -80,7 +80,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-**46 tests** across 9 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh
+**48 tests** across 10 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot
 
 ### Host-side (pr-cli unit tests)
 
@@ -109,7 +109,7 @@ docs/                       # Technical documentation
 | [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (29 sections) |
 | [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
 | [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |
-| [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (46 tests) |
+| [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (48 tests) |
 
 ## Credits
 
