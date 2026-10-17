@@ -2,6 +2,7 @@
 #define FAKE_ID0_CONFIG_H
 
 #include <sys/types.h>   /* uid_t, gid_t */
+#include <unistd.h>      /* getuid, getgid */
 
 typedef struct {
 	uid_t ruid;
@@ -16,5 +17,15 @@ typedef struct {
 
 	mode_t umask;
 } Config;
+
+static inline uid_t fake_owner_uid(const Config *config, uid_t uid)
+{
+	return uid == getuid() ? config->euid : uid;
+}
+
+static inline gid_t fake_owner_gid(const Config *config, gid_t gid)
+{
+	return gid == getgid() ? config->egid : gid;
+}
 
 #endif /* FAKE_ID0_CONFIG_H */
