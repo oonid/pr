@@ -636,73 +636,8 @@ static int handle_seccomp_event_common(Tracee *tracee)
 	}
 
 	case PR_linkat:
-	{
-		char oldpath[PATH_MAX];
-		char newpath[PATH_MAX];
-		char old_translated[PATH_MAX];
-		char new_translated[PATH_MAX];
-		int olddirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
-		int newdirfd = peek_reg(tracee, CURRENT, SYSARG_3);
-		int size;
-
-		size = read_string(tracee, oldpath, peek_reg(tracee, CURRENT, SYSARG_2), PATH_MAX);
-		if (size < 0) {
-			set_result_after_seccomp(tracee, size);
-			break;
-		}
-		size = read_string(tracee, newpath, peek_reg(tracee, CURRENT, SYSARG_4), PATH_MAX);
-		if (size < 0) {
-			set_result_after_seccomp(tracee, size);
-			break;
-		}
-
-		status = translate_path(tracee, old_translated, olddirfd, oldpath, true);
-		if (status < 0) {
-			set_result_after_seccomp(tracee, status);
-			break;
-		}
-		status = translate_path(tracee, new_translated, newdirfd, newpath, true);
-		if (status < 0) {
-			set_result_after_seccomp(tracee, status);
-			break;
-		}
-
-		errno = 0;
-		if (renameat(AT_FDCWD, old_translated, AT_FDCWD, new_translated) == 0) {
-			set_result_after_seccomp(tracee, 0);
-		} else if (errno == EXDEV || errno == EACCES) {
-			int src_fd = open(old_translated, O_RDONLY);
-			if (src_fd < 0) {
-				set_result_after_seccomp(tracee, -errno);
-				break;
-			}
-			struct stat st;
-			fstat(src_fd, &st);
-			int dst_fd = open(new_translated, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
-			if (dst_fd < 0) {
-				close(src_fd);
-				set_result_after_seccomp(tracee, -errno);
-				break;
-			}
-			char cpbuf[8192];
-			ssize_t n;
-			while ((n = read(src_fd, cpbuf, sizeof(cpbuf))) > 0) {
-				ssize_t w = 0;
-				while (w < n) {
-					ssize_t wn = write(dst_fd, cpbuf + w, n - w);
-					if (wn < 0) break;
-					w += wn;
-				}
-			}
-			close(dst_fd);
-			close(src_fd);
-			unlink(old_translated);
-			set_result_after_seccomp(tracee, 0);
-		} else {
-			set_result_after_seccomp(tracee, -errno);
-		}
+		set_result_after_seccomp(tracee, -EPERM);
 		break;
-	}
 
 	case PR_getcwd:
 	{
