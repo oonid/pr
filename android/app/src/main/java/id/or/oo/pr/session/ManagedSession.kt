@@ -16,7 +16,6 @@ class ManagedSession(
     private val onEnded: (ManagedSession) -> Unit,
     private val endGraceMs: Long = 2_000,
     private val exitCodeWaitMs: Long = 2_000,
-    private val release: () -> Unit = {},
 ) {
     fun interface Screen {
         fun close()
@@ -99,7 +98,6 @@ class ManagedSession(
             closed = true
             runCatching { pty.close() }
         }
-        runCatching { release() }
         _exit.value = Exit(pty.exitCode)
         ended.countDown()
         onEnded(this)
