@@ -28,7 +28,7 @@ contents, and ends only when the user ends it or its program exits.
 | Sessions per container | One; open reattaches. More shells via tmux inside the container | Several, with a session list or tabs |
 | Who owns sessions | An app-wide `SessionManager`; a thin foreground service keeps the process alive (approach B) | A: a bound service owns the sessions. C: sessions in a separate process with IPC |
 | Back | Prompt every time: End session / Keep running / Cancel | Keep running plus a setting; End plus a separate Detach action |
-| CPU in deep sleep | "Keep CPU awake" toggle in the notification, off by default, not remembered; surviving Doze also needs the battery-optimization exemption, which the app asks for | Always hold a wake lock; no wake lock |
+| CPU in deep sleep | "Keep CPU awake" toggle in the notification and in the container list, off by default, not remembered; surviving Doze also needs the battery-optimization exemption, which the app asks for | Always hold a wake lock; no wake lock |
 | Service type | `specialUse` | `dataSync` (Android 15 limits it to 6 hours a day) |
 | Session ended while away | Post a "session ended (exit N)" notification | Silent |
 
@@ -176,6 +176,8 @@ Two different things stop a background session, and they need different remedies
 
 So the 24/7 gateway needs both the toggle and the exemption:
 
+- The toggle is in the notification and, while a session runs, at the top of the container list,
+  so it stays reachable when notifications are denied.
 - The toggle is off by default and kept in memory only: each time sessions start from zero it is
   off, so a forgotten toggle cannot drain the battery for days. It is released when toggled off or
   when the last session ends.

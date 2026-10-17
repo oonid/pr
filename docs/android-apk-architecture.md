@@ -283,9 +283,9 @@ all, Keep CPU awake). Design: `docs/design/background-sessions.md`.
 | End session, or End all in the notification | Ends: EOF, then the login shell is killed (proot's `--kill-on-exit` takes the rest), then proot |
 | Android kills the process | Every session ends; nothing is restored |
 
-"Keep CPU awake" holds a partial wake lock (screen off). Doze ignores wake locks and suspends network
-for apps that are not exempt from battery optimization, so a 24/7 session also needs the exemption,
-which the container list offers.
+"Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
+off). Doze ignores wake locks and suspends network for apps that are not exempt from battery
+optimization, so a 24/7 session also needs the exemption, which the container list offers.
 
 ---
 
