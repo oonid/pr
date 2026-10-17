@@ -1,9 +1,13 @@
 package id.or.oo.pr
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +28,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import id.or.oo.pr.session.SessionService
 import id.or.oo.pr.session.isIgnoringBatteryOptimizations
 
 @SuppressLint("BatteryLife")
@@ -35,8 +41,14 @@ fun SessionBanners(app: App) {
     val keepAwake by app.sessions.keepCpuAwake.collectAsState()
     val backgroundError by app.sessions.backgroundError.collectAsState()
     val resumes = remember { mutableIntStateOf(0) }
+    val notificationsGranted = remember { booleanArrayOf(context.canPostNotifications()) }
     LifecycleResumeEffect(Unit) {
         resumes.intValue++
+        val granted = context.canPostNotifications()
+        if (granted && !notificationsGranted[0] && app.sessions.running.value.isNotEmpty()) {
+            ContextCompat.startForegroundService(context, Intent(context, SessionService::class.java))
+        }
+        notificationsGranted[0] = granted
         onPauseOrDispose {}
     }
     val exempt = remember(resumes.intValue, keepAwake) { context.isIgnoringBatteryOptimizations() }
@@ -78,6 +90,11 @@ fun SessionBanners(app: App) {
         }
     }
 }
+
+private fun Context.canPostNotifications() =
+    Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
 
 @Composable
 private fun Banner(text: String, action: String?, onAction: () -> Unit) {
