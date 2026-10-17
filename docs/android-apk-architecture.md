@@ -308,7 +308,8 @@ that work also needs the session manager.
 - **T5.2-T5.6**: Integration testing on device (Alpine, Debian, Ubuntu, backup/restore, isolated mode)
 - **Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution
 - **Background sessions**: keep a session running after leaving its screen, with a foreground
-  service and a user choice between ending and keeping it on Back (see "Session lifetime and Back")
+  service and a user choice between ending and keeping it on Back (see "Session lifetime and Back").
+  Design: `docs/design/background-sessions.md`
 - **Compose theme**: Currently uses default Material3 — should adopt app branding (#1a1a2e navy, #e94560 red)
 - ~~**Terminal resize**: TerminalActivity does not yet observe Compose layout size changes to call `session.resize()` + `emulator.resize()` — terminal starts at 24x80 regardless of screen size~~ **Resolved**: `onResize` callback added to `TerminalEmulatorFactory.create()`; forwarded to `session.resize()`.
 
