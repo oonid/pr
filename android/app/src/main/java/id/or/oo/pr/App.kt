@@ -8,6 +8,10 @@ import android.system.Os
 import android.util.Log
 import id.or.oo.pr.engine.NetworkDns
 import id.or.oo.pr.engine.ProotHost
+import id.or.oo.pr.session.NotificationEndedNotifier
+import id.or.oo.pr.session.ProotSessionFactory
+import id.or.oo.pr.session.ServiceForegroundController
+import id.or.oo.pr.session.SessionManager
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -44,6 +48,14 @@ class App : Application(), ProotHost {
     
     @get:JvmName("getProotCacheDir")
     override val cacheDir: File get() = super.getCacheDir()
+
+    val sessions: SessionManager by lazy {
+        SessionManager(
+            ProotSessionFactory(this),
+            ServiceForegroundController(this),
+            NotificationEndedNotifier(this),
+        )
+    }
 
 
 
