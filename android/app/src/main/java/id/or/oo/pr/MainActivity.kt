@@ -28,7 +28,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -125,6 +127,7 @@ fun DistroListScreen(app: App) {
     var customImageRef by remember { mutableStateOf("") }
     var customAlias by remember { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val running by app.sessions.running.collectAsState()
 
     fun refreshDistros() {
         val legacyRootfsDir = File(app.prefixDir, "var/lib/pr/installed-rootfs")
@@ -178,6 +181,7 @@ fun DistroListScreen(app: App) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            item { SessionBanners(app) }
             item {
                 CustomImageInstallCard(
                     imageRef = customImageRef,
@@ -220,6 +224,7 @@ fun DistroListScreen(app: App) {
                 DistroCard(
                     distro = distro,
                     isLoading = loadingDistro == distro.alias,
+                    isRunning = distro.alias in running,
                     onInstall = {
                         if (loadingDistro == null) {
                             loadingDistro = distro.alias
@@ -258,6 +263,12 @@ fun DistroListScreen(app: App) {
                             showOutput = true
                             outputLines = listOf("Removing ${distro.displayName}…")
                             scope.launch {
+                                if (distro.alias in app.sessions.running.value) {
+                                    app.sessions.end(distro.alias)
+                                    withTimeoutOrNull(5_000) {
+                                        app.sessions.running.first { distro.alias !in it }
+                                    }
+                                }
                                 runDistroCommand(app, listOf("remove", distro.alias)) { line ->
                                     outputLines = outputLines + line
                                 }
@@ -440,6 +451,7 @@ fun CustomImageInstallCard(
 fun DistroCard(
     distro: DistroInfo,
     isLoading: Boolean,
+    isRunning: Boolean,
     onInstall: () -> Unit,
     onLogin: () -> Unit,
     onRemove: () -> Unit,
@@ -468,7 +480,11 @@ fun DistroCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = if (distro.isInstalled) "● Installed" else "○ Not installed",
+                    text = when {
+                        isRunning -> "● Running"
+                        distro.isInstalled -> "● Installed"
+                        else -> "○ Not installed"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = if (distro.isInstalled)
                         MaterialTheme.colorScheme.primary
