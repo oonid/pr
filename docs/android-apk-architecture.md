@@ -281,7 +281,7 @@ all, Keep CPU awake). Design: `docs/design/background-sessions.md`.
 | Home, switching apps, swiping the app away | Keeps running |
 | `exit` in the shell, or the program ends | Ends; with no screen attached, a "session ended" notification is posted |
 | End session, or End all in the notification | Ends: EOF, then the login shell is killed (proot's `--kill-on-exit` takes the rest), then proot |
-| Android kills the process | Every session ends; nothing is restored |
+| Android kills the process | Every session ends; nothing is restored; a terminal restored from recents starts a fresh session |
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). Doze ignores wake locks and suspends network for apps that are not exempt from battery
