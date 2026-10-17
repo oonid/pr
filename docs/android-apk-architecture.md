@@ -284,8 +284,9 @@ all, Keep CPU awake). Design: `docs/design/background-sessions.md`.
 | Android kills the process | Every session ends; nothing is restored; a terminal restored from recents starts a fresh session |
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
-off). Doze ignores wake locks and suspends network for apps that are not exempt from battery
-optimization, so a 24/7 session also needs the exemption, which the container list offers.
+off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery
+savers can still stop an app that is not exempt from battery optimization, so the container list
+offers the exemption.
 
 ---
 

@@ -28,7 +28,7 @@ contents, and ends only when the user ends it or its program exits.
 | Sessions per container | One; open reattaches. More shells via tmux inside the container | Several, with a session list or tabs |
 | Who owns sessions | An app-wide `SessionManager`; a thin foreground service keeps the process alive (approach B) | A: a bound service owns the sessions. C: sessions in a separate process with IPC |
 | Back | Prompt every time: End session / Keep running / Cancel | Keep running plus a setting; End plus a separate Detach action |
-| CPU in deep sleep | "Keep CPU awake" toggle in the notification and in the container list, off by default, not remembered; surviving Doze also needs the battery-optimization exemption, which the app asks for | Always hold a wake lock; no wake lock |
+| CPU in deep sleep | "Keep CPU awake" toggle in the notification and in the container list, off by default, not remembered; the battery-optimization exemption, which the app offers, guards against vendor battery savers | Always hold a wake lock; no wake lock |
 | Service type | `specialUse` | `dataSync` (Android 15 limits it to 6 hours a day) |
 | Session ended while away | Post a "session ended (exit N)" notification | Silent |
 
@@ -175,21 +175,23 @@ Two different things stop a background session, and they need different remedies
 - **CPU sleep with the screen off.** Without a wake lock the CPU suspends soon after the screen
   turns off. "Keep CPU awake" holds a `PARTIAL_WAKE_LOCK` in `SessionService` so the CPU keeps
   running while the screen is off.
-- **Doze (deep sleep).** After the phone has been idle and unplugged for a while, Doze ignores wake
-  locks and suspends network access for every app that is not exempt from battery optimization. A
-  foreground service keeps an app out of App Standby, not out of Doze. Only exempt apps may hold
-  partial wake locks and use the network during Doze. Vendor lists such as "sleeping apps" can add
-  their own limits.
+- **Doze (deep sleep).** After the phone has been idle and unplugged for a while, Doze restricts
+  wake locks and network access for idle apps, but a process running a foreground service keeps
+  both. Measured on an Android 16 phone under `dumpsys deviceidle force-idle`, the session's
+  counter and network kept working without the exemption. Vendor battery savers (for example a
+  "sleeping apps" list) add their own limits and can still stop an app that is not exempt from
+  battery optimization.
 
-So the 24/7 gateway needs both the toggle and the exemption:
+So the 24/7 gateway needs the toggle, and the exemption guards against vendor battery savers:
 
 - The toggle is in the notification and, while a session runs, at the top of the container list,
   so it stays reachable when notifications are denied.
 - The toggle is off by default and kept in memory only: each time sessions start from zero it is
   off, so a forgotten toggle cannot drain the battery for days. It is released when toggled off or
   when the last session ends.
-- When the toggle is on and the app is not exempt, the notification text adds "Deep sleep will
-  pause sessions; allow in the app", and the list shows a banner with **Allow**, which opens the
+- When the toggle is on and the app is not exempt, the notification text adds "Battery saver
+  may stop sessions; allow in the app", and the list shows a banner ("Some phones' battery savers
+  can still stop background sessions. Allow PR to run unrestricted.") with **Allow**, which opens the
   system's ignore-battery-optimizations dialog. The dialog opens from the app screen, because
   Android 12+ blocks starting activities from notification actions routed through a service.
 
@@ -229,8 +231,8 @@ integration suite from an in-app terminal, and the 169 host tests stay green.
 2. Reattach shows the screen contents.
 3. Swipe the app away from recents; still counting.
 4. Screen off with Keep CPU awake on: the counter continues. Then `dumpsys battery unplug` and
-   `dumpsys deviceidle force-idle`: without the exemption the counter pauses (Doze ignores the wake
-   lock); with the exemption granted it continues.
+   `dumpsys deviceidle force-idle`: the counter and the network continue, with and without the
+   exemption (a foreground-service process keeps its wake lock and network in Doze).
 5. `exit` with no screen attached posts the "session ended" notification.
 6. End all ends every session and removes the ongoing notification.
 7. With the notification permission denied, sessions still survive.
