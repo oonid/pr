@@ -174,6 +174,26 @@ pub fn test_owner_follows_effective_ids() -> TestResult {
     }
 }
 
+pub fn test_tmp_file_has_the_fake_group() -> TestResult {
+    let file = "/tmp/pit-fr-tmp-group";
+    fs::write(file, b"x").map_err(|e| format!("write: {}", e))?;
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::stat(c(file).as_ptr(), &mut st) };
+    let _ = fs::remove_file(file);
+    if rc != 0 {
+        return Err(format!("stat: errno {}", errno()));
+    }
+    let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    if (st.st_uid, st.st_gid) == (uid, gid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is {}:{}, want {}:{}",
+            file, st.st_uid, st.st_gid, uid, gid
+        ))
+    }
+}
+
 const BPF_LD_W_ABS: u16 = 0x20;
 const BPF_JMP_JEQ_K: u16 = 0x15;
 const BPF_RET_K: u16 = 0x06;
