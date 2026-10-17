@@ -19,12 +19,12 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
     }
 
     override fun kill() {
-        if (session.exitCode != null) return
+        if (session.exitCode != null || session.pid <= 0) return
         childrenOf(session.pid).forEach { Process.sendSignal(it, Process.SIGNAL_KILL) }
     }
 
     override fun forceKill() {
-        if (session.exitCode == null) Process.sendSignal(session.pid, Process.SIGNAL_KILL)
+        if (session.exitCode == null && session.pid > 0) Process.sendSignal(session.pid, Process.SIGNAL_KILL)
     }
 
     override fun close() {
