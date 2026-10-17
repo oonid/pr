@@ -13,10 +13,6 @@ class ServiceForegroundController(private val context: Context) : SessionManager
     override fun start() {
         ContextCompat.startForegroundService(context, Intent(context, SessionService::class.java))
     }
-
-    override fun stop() {
-        context.stopService(Intent(context, SessionService::class.java))
-    }
 }
 
 class NotificationEndedNotifier(private val context: Context) : SessionManager.EndedNotifier {

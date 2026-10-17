@@ -50,8 +50,9 @@ alias.
 - `end(alias)` and `endAll()` close sessions.
 - `sessions: StateFlow<List<SessionInfo>>` (the aliases of running sessions) for the list screen
   and the notification.
-- When the number of running sessions goes from 0 to 1 it starts `SessionService`; from 1 to 0 it
-  stops it. This is the only place the two are kept in step.
+- When the number of running sessions goes from 0 to 1 it starts `SessionService`. The service
+  watches `running` and stops itself when it empties; the manager never stops it, so the stop
+  always happens on the service's main thread after its `startForeground`.
 - All changes to the session map are serialised: concurrent `open` and `end` for one container
   yield either the old session or a new one, never two.
 - Holds only the application context.
@@ -60,7 +61,7 @@ Seams, so the logic runs in JVM unit tests (the real emulator uses native code):
 
 - a session starter (real: `ProotLauncher`; tests: an in-memory fake);
 - an emulator factory (real: `TerminalEmulatorFactory`);
-- a foreground controller (real: starts and stops `SessionService`).
+- a foreground controller (real: starts `SessionService`).
 
 ### `ManagedSession` (new, app module)
 
@@ -87,8 +88,10 @@ when that screen closes, so the screen can still show the exit code.
 
 Holds no session state.
 
-- Keeps the process alive while at least one session runs; returns `START_NOT_STICKY`, and stops
-  itself if started with no sessions.
+- Keeps the process alive while at least one session runs; returns `START_NOT_STICKY`. Every
+  `onStartCommand` calls `startForeground` first, then stops the service if no session runs. When
+  `running` empties after that, it removes its notification (`stopForeground`) and calls
+  `stopSelfResult` with the last start id, so a start that arrives while it stops is not lost.
 - Owns the ongoing notification and its actions.
 - Holds the partial wake lock while "Keep CPU awake" is on.
 
