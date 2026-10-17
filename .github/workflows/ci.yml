@@ -12,8 +12,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
-      with:
-        submodules: true
+
+    - name: Fetch the submodules the build uses
+      run: |
+        git -c url."https://github.com/".insteadOf=git@github.com: \
+          submodule update --init --depth 1 vendor/samba vendor/termlib
 
     - name: Set up Java
       uses: actions/setup-java@v6
