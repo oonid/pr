@@ -64,6 +64,7 @@ class SessionManager(
             session.detach(screen)
             if (session.exit.value != null && !session.hasScreen && sessions[session.alias] === session) {
                 sessions.remove(session.alias)
+                updateRunning()
             }
         }
     }
