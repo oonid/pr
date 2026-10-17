@@ -28,7 +28,7 @@ contents, and ends only when the user ends it or its program exits.
 | Sessions per container | One; open reattaches. More shells via tmux inside the container | Several, with a session list or tabs |
 | Who owns sessions | An app-wide `SessionManager`; a thin foreground service keeps the process alive (approach B) | A: a bound service owns the sessions. C: sessions in a separate process with IPC |
 | Back | Prompt every time: End session / Keep running / Cancel | Keep running plus a setting; End plus a separate Detach action |
-| CPU in deep sleep | "Keep CPU awake" toggle in the notification, off by default, not remembered | Always hold a wake lock; no wake lock |
+| CPU in deep sleep | "Keep CPU awake" toggle in the notification, off by default, not remembered; surviving Doze also needs the battery-optimization exemption, which the app asks for | Always hold a wake lock; no wake lock |
 | Service type | `specialUse` | `dataSync` (Android 15 limits it to 6 hours a day) |
 | Session ended while away | Post a "session ended (exit N)" notification | Silent |
 
@@ -69,7 +69,13 @@ What `TerminalActivity` holds today, moved out of it:
 - the `ProotLauncher.Session` (PTY master fd, child pid, reaper);
 - the `TerminalEmulator`, which keeps the screen contents while no screen is attached;
 - the reader thread, which keeps draining PTY output with no screen attached, so a program that
-  writes a lot never blocks on a full PTY buffer.
+  writes a lot never blocks on a full PTY buffer;
+- its own `HandlerThread`, passed to `TerminalEmulatorFactory.create(looper = …)`. termlib builds a
+  screen snapshot on that looper after every burst of output, so a chatty program with no screen
+  attached would otherwise keep the main thread busy. The first implementation step verifies that
+  termlib works off the main looper; if it does not, the emulator stays on the main looper.
+
+termlib keeps at most 1000 scrollback lines, so a long-lived emulator's memory is bounded.
 
 It exposes `write`, `resize`, `attached` (whether a screen shows it) and the exit state. When the
 child exits it records the exit code and notifies the manager. The manager stops counting it as
@@ -88,7 +94,9 @@ Holds no session state.
 ### `TerminalActivity` (changed)
 
 A view onto a session. It calls `SessionManager.open(alias)`, draws the session's emulator, and
-forwards keyboard input and resizes. Closing the screen detaches; it never ends the session. Back
+forwards keyboard input and resizes. Closing the screen detaches; it never ends the session. A
+session is shown by at most one screen: opening a container whose session another screen shows
+attaches it to the new screen, and the old screen closes. Back
 keeps its current order: the first press hides the keyboard if it is up, the next clears a text
 selection if one is active, and after that it shows the End session / Keep running / Cancel
 prompt. If the session has ended, Back returns to the list without a prompt.
@@ -107,7 +115,7 @@ banners described in sections 5 and 6.
 | Event | Behaviour |
 |-------|-----------|
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
-| Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session |
+| Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
 | Home, or switching apps | No prompt; the session keeps running |
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
@@ -151,16 +159,26 @@ runs and sessions still survive; only the notification is hidden. The app does n
 
 ## 6. Wake Lock and Battery Optimization
 
-- "Keep CPU awake" holds a `PARTIAL_WAKE_LOCK` in `SessionService`; the screen can turn off.
-- Off by default and kept in memory only: each time sessions start from zero it is off, so a
-  forgotten toggle cannot drain the battery for days. Released when toggled off or when the last
-  session ends.
-- A wake lock is not enough for an app that is battery-optimized (Doze, and vendor "sleeping apps"
-  lists). When the toggle is turned on and the app is not exempt, the notification text adds
-  "Battery optimization may still pause sessions", and the list shows a banner with **Allow**,
-  which opens the system's ignore-battery-optimizations dialog. The dialog opens from the app
-  screen, because Android 12+ blocks starting activities from notification actions routed through a
-  service.
+Two different things stop a background session, and they need different remedies:
+
+- **CPU sleep with the screen off.** Without a wake lock the CPU suspends soon after the screen
+  turns off. "Keep CPU awake" holds a `PARTIAL_WAKE_LOCK` in `SessionService` so the CPU keeps
+  running while the screen is off.
+- **Doze (deep sleep).** After the phone has been idle and unplugged for a while, Doze ignores wake
+  locks and suspends network access for every app that is not exempt from battery optimization. A
+  foreground service keeps an app out of App Standby, not out of Doze. Only exempt apps may hold
+  partial wake locks and use the network during Doze. Vendor lists such as "sleeping apps" can add
+  their own limits.
+
+So the 24/7 gateway needs both the toggle and the exemption:
+
+- The toggle is off by default and kept in memory only: each time sessions start from zero it is
+  off, so a forgotten toggle cannot drain the battery for days. It is released when toggled off or
+  when the last session ends.
+- When the toggle is on and the app is not exempt, the notification text adds "Deep sleep will
+  pause sessions; allow in the app", and the list shows a banner with **Allow**, which opens the
+  system's ignore-battery-optimizations dialog. The dialog opens from the app screen, because
+  Android 12+ blocks starting activities from notification actions routed through a service.
 
 ## 7. Error Handling
 
@@ -197,16 +215,18 @@ integration suite from an in-app terminal, and the 169 host tests stay green.
 1. A counter writing a timestamp every second; Keep running; it keeps counting.
 2. Reattach shows the screen contents.
 3. Swipe the app away from recents; still counting.
-4. `dumpsys battery unplug` and `dumpsys deviceidle force-idle`: with Keep CPU awake on, the counter
-   continues; with it off, record what Doze does.
+4. Screen off with Keep CPU awake on: the counter continues. Then `dumpsys battery unplug` and
+   `dumpsys deviceidle force-idle`: without the exemption the counter pauses (Doze ignores the wake
+   lock); with the exemption granted it continues.
 5. `exit` with no screen attached posts the "session ended" notification.
 6. End all ends every session and removes the ongoing notification.
 7. With the notification permission denied, sessions still survive.
 
 ### Target check
 
-The Hermes gateway in the `hermes` container, Keep running, Keep CPU awake on, forced deep sleep:
-it keeps answering from the host through `adb forward` for at least 30 minutes.
+The Hermes gateway in the `hermes` container, Keep running, Keep CPU awake on, the exemption
+granted, forced deep sleep: it keeps answering from the host through `adb forward` for at least 30
+minutes, and its calls to the model provider keep working.
 
 ## 9. Out of Scope
 
