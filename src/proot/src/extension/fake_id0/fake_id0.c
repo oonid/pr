@@ -508,6 +508,30 @@ static int adjust_elf_auxv(Tracee *tracee, Config *config)
 	return 0;
 }
 
+#define AID_USER_OFFSET     100000
+#define AID_APP_START       10000
+#define AID_APP_END         19999
+#define AID_CACHE_GID_START 20000
+
+static gid_t android_app_cache_gid(void)
+{
+	uid_t uid = getuid();
+	uid_t app_id = uid % AID_USER_OFFSET;
+	gid_t cache_gid;
+	gid_t groups[256];
+	int count;
+
+	if (app_id < AID_APP_START || app_id > AID_APP_END)
+		return (gid_t) -1;
+	cache_gid = uid - app_id + (app_id - AID_APP_START + AID_CACHE_GID_START);
+
+	count = getgroups(sizeof(groups) / sizeof(groups[0]), groups);
+	for (int i = 0; i < count; i++)
+		if (groups[i] == cache_gid)
+			return cache_gid;
+	return (gid_t) -1;
+}
+
 static int handle_perm_err_exit_end(Tracee *tracee, Config *config, bool even_if_not_root) {
 	word_t result;
 
@@ -1171,6 +1195,7 @@ int fake_id0_callback(Extension *extension, ExtensionEvent event, intptr_t data1
 		config->fsgid = gid;
 			/* Set the umask to the typical linux value. */
 			config->umask = 022;
+		config->app_cache_gid = android_app_cache_gid();
 
 		extension->filtered_sysnums = filtered_sysnums;
 		return 0;

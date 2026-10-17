@@ -16,6 +16,8 @@ typedef struct {
 	gid_t fsgid;
 
 	mode_t umask;
+
+	gid_t app_cache_gid;
 } Config;
 
 static inline uid_t fake_owner_uid(const Config *config, uid_t uid)
@@ -25,7 +27,7 @@ static inline uid_t fake_owner_uid(const Config *config, uid_t uid)
 
 static inline gid_t fake_owner_gid(const Config *config, gid_t gid)
 {
-	return gid == getgid() ? config->egid : gid;
+	return gid == getgid() || gid == config->app_cache_gid ? config->egid : gid;
 }
 
 #endif /* FAKE_ID0_CONFIG_H */
