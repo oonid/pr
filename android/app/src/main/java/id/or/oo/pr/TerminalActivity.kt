@@ -2,6 +2,7 @@ package id.or.oo.pr
 
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -17,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import org.connectbot.terminal.SelectionController
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
 import org.connectbot.terminal.Terminal
@@ -35,6 +37,8 @@ class TerminalActivity : ComponentActivity() {
     private var readerThread: Thread? = null
     private var initialImeRequested = false
     private var initialImeShown = false
+    private var backPressStarted = false
+    private var selectionController: SelectionController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,10 +114,27 @@ class TerminalActivity : ComponentActivity() {
                         showSoftKeyboard = true,
                         // The library moves focus to its Compose node first; re-target the IME after it.
                         onTerminalTap = { window.decorView.post { showKeyboard() } },
+                        onSelectionControllerAvailable = { selectionController = it },
                     )
                 }
             }
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) backPressStarted = true
+            KeyEvent.ACTION_UP -> {
+                if (backPressStarted && !event.isCanceled) {
+                    val selection = selectionController
+                    if (selection != null && selection.isSelectionActive) selection.clearSelection()
+                    else onBackPressedDispatcher.onBackPressed()
+                }
+                backPressStarted = false
+            }
+        }
+        return true
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

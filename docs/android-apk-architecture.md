@@ -142,7 +142,10 @@ Full terminal emulator using ConnectBot's termlib (115 lines):
   - Exits on EOF or error
 - Renders using termlib's `Terminal()` composable with `keyboardEnabled=true` and `Modifier.systemBarsPadding()` to prevent the first rows of output being hidden behind the camera notch and Android status bar
 - Lifecycle: `onDestroy()` closes session and interrupts reader thread
-- Back press: `OnBackPressedCallback` triggers cleanup and `finish()`
+- Back press: `OnBackPressedCallback` triggers cleanup and `finish()`. `dispatchKeyEvent` routes
+  Back to it before the view tree, because the IME and Compose otherwise take the key-down; with
+  the keyboard up, the first Back only hides it, and with a text selection active, Back clears the
+  selection (through termlib's `SelectionController`) instead of leaving
 - Manifest: `windowSoftInputMode=adjustResize` + `configChanges="orientation|screenSize|keyboard|keyboardHidden"` — prevents activity destruction and PTY detachment when the soft keyboard appears
 
 ### T4.5 — Implement ProotLauncher
