@@ -17,7 +17,6 @@ class ManagedSessionTest {
     private fun session(
         endGraceMs: Long = 100,
         sink: (ByteArray, Int, Int) -> Unit = { buf, off, len -> output.append(String(buf, off, len)) },
-        release: () -> Unit = {},
     ) = ManagedSession(
         alias = "alpine",
         pty = pty,
@@ -26,7 +25,6 @@ class ManagedSessionTest {
         onEnded = { ended += it },
         endGraceMs = endGraceMs,
         exitCodeWaitMs = 100,
-        release = release,
     ).also { it.start() }
 
     @Test
@@ -131,14 +129,6 @@ class ManagedSessionTest {
         eventually { ended.isNotEmpty() }
         assertTrue(s.exit.value != null)
         assertTrue(pty.closed)
-    }
-
-    @Test
-    fun throwingReleaseStillRecordsTheExit() {
-        val s = session(release = { throw IllegalStateException("boom") })
-        pty.exit(5)
-        eventually { ended.isNotEmpty() }
-        assertEquals(ManagedSession.Exit(5), s.exit.value)
     }
 
     @Test
