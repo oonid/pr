@@ -268,8 +268,9 @@ The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()
 ### Session lifetime and Back
 
 Sessions live in `SessionManager` (`app/.../session/`), owned by `App`: one `ManagedSession` per
-container holds the PTY, the termlib emulator on its own `HandlerThread`, and a reader thread that
-keeps draining output with no screen attached. `TerminalActivity` attaches to a session and
+container holds the PTY, the termlib emulator, and a reader thread that keeps draining output with
+no screen attached. The emulator runs on the main looper because termlib resizes on the caller's
+thread and is not safe with its updates on another looper. `TerminalActivity` attaches to a session and
 detaches when it closes; a session is shown by at most one screen. `SessionService`, a `specialUse`
 foreground service, keeps the process alive while any session runs and owns the notification (End
 all, Keep CPU awake). Design: `docs/design/background-sessions.md`.

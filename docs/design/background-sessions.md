@@ -70,10 +70,11 @@ What `TerminalActivity` holds today, moved out of it:
 - the `TerminalEmulator`, which keeps the screen contents while no screen is attached;
 - the reader thread, which keeps draining PTY output with no screen attached, so a program that
   writes a lot never blocks on a full PTY buffer;
-- its own `HandlerThread`, passed to `TerminalEmulatorFactory.create(looper = …)`. termlib builds a
-  screen snapshot on that looper after every burst of output, so a chatty program with no screen
-  attached would otherwise keep the main thread busy. The first implementation step verifies that
-  termlib works off the main looper; if it does not, the emulator stays on the main looper.
+- the emulator runs on the main looper (`TerminalEmulatorFactory.create(looper = …)`). termlib
+  resizes on the caller's thread, the main thread, while it applies output on the emulator's
+  looper, and the two are not synchronised; on a separate looper a resize during output can index
+  past the new screen and crash the process. So a chatty program with no screen attached still
+  costs main-thread time for its screen snapshots.
 
 termlib keeps at most 1000 scrollback lines, so a long-lived emulator's memory is bounded.
 
