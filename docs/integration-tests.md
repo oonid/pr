@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **48/48 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
+Result: **54/54 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
 
 ---
 
@@ -44,6 +44,7 @@ src/proot-integration-test/
   src/general.rs          file I/O, symlinks, pipes, signals, env, touch, auxv, execveat, statx (9 tests)
   src/ssh.rs              openssh-client: version, keygen, fingerprint, scp (4 tests)
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
+  src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (6 tests)
 ```
 
 ---
@@ -62,6 +63,7 @@ src/proot-integration-test/
 | general | 9 | always | Basic proot stability: file I/O, symlinks, pipes, signals, env; touch, auxv views, execveat, stat/statx owner |
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
+| fakeroot | 6 | `geteuid() == 0` | fake_id0 chown errors and owner mapping; seccomp `linkat` fallback |
 
 ### Suite Details
 
@@ -160,6 +162,22 @@ Each test calls `chroot()` in a forked child, so the runner keeps its root.
 2. **chroot into a missing directory is ENOENT** — `chroot("/tmp/pit-chroot-missing")`
    fails with `ENOENT`
 
+#### fakeroot (6 tests)
+
+1. **chown of existing targets succeeds** — `chown` of a file and `lchown` of a dangling
+   symlink return 0
+2. **chown of a hard-linked file succeeds** — `chown` of both names and `lchown` of the
+   second (a link2symlink symlink under pr-cli)
+3. **chown of a missing target is ENOENT** — a missing path, and `chown` through a dangling
+   symlink
+4. **fchown of a closed fd is EBADF** — also `fchown(AT_FDCWD)`
+5. **file owner follows the effective ids** — after `setegid(1000)` and `seteuid(1000)` in a
+   forked child, `stat()` and `statx()` show a file in `/var/tmp` as 1000:1000 (not `/tmp`:
+   in the app it is the cache dir, whose files carry the app's cache gid)
+6. **blocked linkat keeps the source** — a forked child installs a seccomp filter that traps
+   `linkat`; the link fails with `EPERM` or succeeds, and the source stays. Only exercises the
+   fallback when proot runs without `--link2symlink` (the VM's no-l2s launcher)
+
 ---
 
 ## CLI Usage
@@ -170,7 +188,7 @@ pr-cli test <distro> -s <suite>   # Run single suite
 pr-cli test <distro> -v           # Verbose (shows rootfs path)
 ```
 
-Available suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot
+Available suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot
 
 ---
 
