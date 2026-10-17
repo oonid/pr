@@ -880,8 +880,8 @@ warnings are left as upstream has them:
 | inline asm clobbers SP/PC (x2) | `loader/loader.c` | The asm sets SP and branches to the entry point without returning, so the clobbers have no effect |
 
 Not fixed here: when link2symlink is off, the seccomp `PR_linkat` fallback
-(`tracee/seccomp.c`) emulates `linkat` with a rename, so the source name disappears and
-`AT_SYMLINK_FOLLOW` is ignored. pr-cli always enables link2symlink.
+(`tracee/seccomp.c`) emulated `linkat` with a rename, so the source name disappeared and
+`AT_SYMLINK_FOLLOW` was ignored. Fixed in section 34.
 
 ### Follow-ups, not urgent
 
@@ -893,3 +893,50 @@ Not fixed here: when link2symlink is off, the seccomp `PR_linkat` fallback
   30.x in 2026-10), while `scripts/build.sh` defaults to r27c and the committed binaries are
   built with r27c. The warnings match, but CI does not build the toolchain that ships.
   Pinning CI to r27c (cached download) would close that gap.
+
+---
+
+## 34. fake_id0 owner rule, chown errors, blocked linkat
+
+### Owner of the real user's files
+
+fake_id0 shows files owned by the real (app) uid/gid as owned by the caller's fake ids. The
+rule was copied in five places (`stat.c` twice, statx, the USERLAND fstat path in
+`fake_id0.c`, and the `SO_PEERCRED` peer case in `getsockopt.c`), and a copy drifting is how
+the statx gid bug happened. `fake_owner_uid()` / `fake_owner_gid()` in
+`extension/fake_id0/config.h` now hold it.
+
+The files mapped to the saved ids (`suid`/`sgid`) while `SO_PEERCRED` used the effective
+ones. Both now use `euid`/`egid`: the kernel gives new files the effective (fs) ids, and
+programs check ownership with `st_uid == geteuid()` (git `safe.directory`, ssh
+`StrictModes`). The two only differ while a process has dropped its effective ids, as
+`seteuid(1000)` with saved uid 0 does.
+
+### chown errors
+
+On Android the non-USERLAND chown handler replaces every chown with `getuid`, because SELinux
+returns a masqueraded `ENOENT` for chown in the app data dir and dpkg aborts on it (commit
+27a1fd1). That also made chown of a missing path, through a dangling symlink, or of a closed
+fd succeed. The handler now checks the target first (`fstatat` on the translated path,
+honouring `lchown` and `AT_SYMLINK_NOFOLLOW`; `/proc/<pid>/fd/<n>` for `fchown` and
+`AT_EMPTY_PATH`). Only an existing target is faked; otherwise the real syscall runs and
+returns the real error.
+
+### Blocked linkat
+
+When a seccomp filter traps `linkat` (link2symlink off), the SIGSYS handler in
+`tracee/seccomp.c` emulated it with `renameat`, or a copy and `unlink` on `EXDEV`/`EACCES`:
+the source name disappeared, `AT_SYMLINK_FOLLOW` was ignored and short writes were dropped. It
+now fails with `EPERM`, what a filesystem without hard links returns and what `cp`, git and
+dpkg handle. With link2symlink on (pr-cli always), proot rewrites `linkat` at syscall entry,
+before the kernel's seccomp check (Linux 4.8+), so this path is not reached.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `extension/fake_id0/config.h` | `fake_owner_uid()`, `fake_owner_gid()` |
+| `extension/fake_id0/stat.c`, `fake_id0.c`, `getsockopt.c` | Use them; effective ids |
+| `extension/fake_id0/chown.c` | Fake only an existing target |
+| `tracee/seccomp.c` | Blocked `linkat` fails with `EPERM` |
+| `src/proot-integration-test/src/fakeroot.rs` | New `fakeroot` suite |
