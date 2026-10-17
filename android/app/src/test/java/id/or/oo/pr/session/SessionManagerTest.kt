@@ -20,9 +20,6 @@ class SessionManagerTest {
     private val endedNotices = CopyOnWriteArrayList<Pair<String, Int?>>()
     private var failNext = false
     private var foregroundFails = false
-    private var stopFails = false
-    private val keepAwakeAtStop = CopyOnWriteArrayList<Boolean>()
-    private val runningAtStop = CopyOnWriteArrayList<List<String>>()
     private val runningAtStart = CopyOnWriteArrayList<List<String>>()
     @Volatile private var beforeEnded: (ManagedSession) -> Unit = {}
 
@@ -48,13 +45,6 @@ class SessionManagerTest {
             runningAtStart += manager.running.value
             foregroundCalls += "start"
         }
-
-        override fun stop() {
-            keepAwakeAtStop += manager.keepCpuAwake.value
-            runningAtStop += manager.running.value
-            foregroundCalls += "stop"
-            if (stopFails) throw IllegalStateException("stop refused")
-        }
     }
 
     private val manager = SessionManager(factory, foreground) { alias, code -> endedNotices += alias to code }
@@ -72,16 +62,16 @@ class SessionManagerTest {
     }
 
     @Test
-    fun foregroundStartsWithTheFirstSessionAndStopsWithTheLast() {
+    fun foregroundStartsWithTheFirstSessionOnly() {
         open("alpine")
         open("ubuntu")
+        assertEquals(listOf("alpine", "ubuntu"), manager.running.value)
         assertEquals(listOf("start"), foregroundCalls)
         manager.end("alpine")
         eventually { manager.running.value == listOf("ubuntu") }
-        assertEquals(listOf("start"), foregroundCalls)
         ptys.getValue("ubuntu").exit(0)
         eventually { manager.running.value.isEmpty() }
-        assertEquals(listOf("start", "stop"), foregroundCalls)
+        assertEquals(listOf("start"), foregroundCalls)
     }
 
     @Test
@@ -183,13 +173,13 @@ class SessionManagerTest {
     }
 
     @Test
-    fun runningIsPublishedOnlyAfterTheForegroundHasStopped() {
+    fun theLastSessionEndingEmptiesRunningWithoutCallingTheForeground() {
         open("alpine")
         manager.keepCpuAwake.value = true
         manager.endAll()
-        eventually { foregroundCalls.contains("stop") }
-        assertEquals(listOf(false), keepAwakeAtStop)
-        assertEquals(listOf(listOf("alpine")), runningAtStop)
+        eventually { manager.running.value.isEmpty() }
+        assertEquals(false, manager.keepCpuAwake.value)
+        assertEquals(listOf("start"), foregroundCalls)
     }
 
     @Test
@@ -199,13 +189,13 @@ class SessionManagerTest {
     }
 
     @Test
-    fun aForegroundStopFailureIsReportedAndTheSessionStillEnds() {
-        stopFails = true
+    fun aSessionAfterTheLastOneEndedStartsTheForegroundAgain() {
         open("alpine")
         ptys.getValue("alpine").exit(0)
         eventually { manager.running.value.isEmpty() }
-        eventually { manager.backgroundError.value == "stop refused" }
-        assertEquals(listOf("alpine" to 0), endedNotices)
+        open("alpine")
+        assertEquals(listOf("alpine"), manager.running.value)
+        assertEquals(listOf("start", "start"), foregroundCalls)
     }
 
     @Test

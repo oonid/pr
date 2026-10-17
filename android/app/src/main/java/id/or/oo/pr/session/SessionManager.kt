@@ -14,7 +14,6 @@ class SessionManager(
 
     interface ForegroundController {
         fun start()
-        fun stop()
     }
 
     fun interface EndedNotifier {
@@ -101,17 +100,8 @@ class SessionManager(
         if (before > 0 && now.isEmpty()) {
             keepCpuAwake.value = false
             _backgroundError.value = null
-            stopForeground()
         }
         _running.value = now
-    }
-
-    private fun stopForeground() {
-        try {
-            foreground.stop()
-        } catch (e: Exception) {
-            _backgroundError.value = e.message ?: e.javaClass.simpleName
-        }
     }
 
     private fun startForeground() {
