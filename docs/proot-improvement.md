@@ -940,3 +940,18 @@ before the kernel's seccomp check (Linux 4.8+), so this path is not reached.
 | `extension/fake_id0/chown.c` | Fake only an existing target |
 | `tracee/seccomp.c` | Blocked `linkat` fails with `EPERM` |
 | `src/proot-integration-test/src/fakeroot.rs` | New `fakeroot` suite |
+
+---
+
+## 35. The app's cache group maps to the fake group
+
+Android gives every app a cache group (`multiuser_get_cache_gid`: app id - 10000 + 20000,
+`u0_a515_cache` = 20515 for uid 10515), and the app's cache dir is setgid to it. pr-cli binds
+that dir at `/tmp`, so every file created there carried gid 20515, which the owner rule did
+not map: `ls -l /tmp` showed `root 20515` in a fake-root session.
+
+At initialization fake_id0 computes the cache gid from the real uid and keeps it in
+`Config.app_cache_gid` only if PRoot's process is in that group (an app process is; `run-as`,
+the VM and desktop Linux are not, and get `(gid_t) -1`). `fake_owner_gid()` maps it like the
+real gid, so stat, statx and the USERLAND fstat path show the fake group. (`SO_PEERCRED` uses the
+same helper, but a peer's primary gid is never the cache gid.)
