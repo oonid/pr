@@ -5,6 +5,7 @@ use std::time::Instant;
 mod chroot;
 mod clone;
 mod distro;
+mod fakeroot;
 mod gcc;
 mod general;
 mod git;
@@ -175,6 +176,36 @@ const SUITES: &[Suite] = &[
             Test {
                 name: "chroot into a missing directory is ENOENT",
                 run: chroot::test_chroot_missing_target,
+            },
+        ],
+    },
+    Suite {
+        name: "fakeroot",
+        probe: fakeroot::probe,
+        tests: &[
+            Test {
+                name: "chown of existing targets succeeds",
+                run: fakeroot::test_chown_existing_targets,
+            },
+            Test {
+                name: "chown of a hard-linked file succeeds",
+                run: fakeroot::test_chown_hard_linked_file,
+            },
+            Test {
+                name: "chown of a missing target is ENOENT",
+                run: fakeroot::test_chown_missing_target_is_enoent,
+            },
+            Test {
+                name: "fchown of a closed fd is EBADF",
+                run: fakeroot::test_fchown_closed_fd_is_ebadf,
+            },
+            Test {
+                name: "file owner follows the effective ids",
+                run: fakeroot::test_owner_follows_effective_ids,
+            },
+            Test {
+                name: "blocked linkat keeps the source",
+                run: fakeroot::test_blocked_linkat_keeps_the_source,
             },
         ],
     },
