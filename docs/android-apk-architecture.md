@@ -265,6 +265,41 @@ The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()
 
 `proot-distro.sh` uses colors, progress indicators, and interactive confirmation. Running these in a PTY session and capturing the output gives users a live terminal-like experience in the output view.
 
+### Session lifetime and Back
+
+`TerminalActivity` owns its session: the PTY, the `TerminalEmulator` holding the screen, and the
+reader thread that feeds it. Back runs the `OnBackPressedCallback`, whose `cleanup()` closes the
+PTY; the shell exits, and because pr-cli starts proot with `--kill-on-exit`, every process of that
+session ends with it (`nohup`, `&` or `setsid` inside the container do not help). Until Back was
+routed through `dispatchKeyEvent`, the IME and Compose swallowed the key-down and the callback never
+ran, so Back left the terminal open and the session alive; a lifecycle check that "survived Back"
+was measuring that.
+
+How a session ends today:
+
+| Action | Session |
+|--------|---------|
+| Back (after the keyboard is hidden) | Ends |
+| `exit` in the shell | Ends |
+| Home, or switching apps | Keeps running until Android kills the app's process |
+| Swiping the app away from recents | Ends (the process is killed) |
+
+A long-running program such as the Hermes gateway therefore needs Home, not Back, and still dies
+when Android reclaims the process. Options for keeping a session after leaving the screen:
+
+- **Back acts like Home** (`moveTaskToBack`): trivial, but Back lands on the launcher instead of the
+  distro list.
+- **Sessions owned outside the activity**: an app-wide session manager owns the PTY, the emulator
+  and the reader thread (it must keep draining output with no screen open, or a chatty program
+  blocks once the PTY buffer is full). Opening a distro with a running session reattaches to it, the
+  list shows it as running, and ending a session becomes an explicit action.
+- **User choice** on top of that: a setting ("Back: end session / keep running"), a prompt on Back,
+  or a per-session detach action. The choice itself is small; keeping the session is the work.
+
+Keeping sessions without a foreground service still lets Android kill the process at any time, so
+background sessions are planned together with the foreground service that keeps the process alive;
+that work also needs the session manager.
+
 ---
 
 ## Follow-up Items
@@ -272,6 +307,8 @@ The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()
 - **T5.1**: Verify distro plugin TARBALL_URLs are accessible and audit `distro_setup()` hooks
 - **T5.2-T5.6**: Integration testing on device (Alpine, Debian, Ubuntu, backup/restore, isolated mode)
 - **Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution
+- **Background sessions**: keep a session running after leaving its screen, with a foreground
+  service and a user choice between ending and keeping it on Back (see "Session lifetime and Back")
 - **Compose theme**: Currently uses default Material3 — should adopt app branding (#1a1a2e navy, #e94560 red)
 - ~~**Terminal resize**: TerminalActivity does not yet observe Compose layout size changes to call `session.resize()` + `emulator.resize()` — terminal starts at 24x80 regardless of screen size~~ **Resolved**: `onResize` callback added to `TerminalEmulatorFactory.create()`; forwarded to `session.resize()`.
 
