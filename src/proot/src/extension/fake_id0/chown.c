@@ -1,12 +1,66 @@
 #include <unistd.h>      /* get*id(2),  */
 #include <linux/limits.h>
 #include <errno.h>
+#include <fcntl.h>       /* AT_*,  */
+#include <stdio.h>       /* snprintf,  */
+#include <sys/stat.h>    /* fstatat,  */
 
 #include "syscall/sysnum.h"
+#include "tracee/mem.h"
 #include "extension/fake_id0/chown.h"
 #include "extension/fake_id0/helper_functions.h"
 
 #ifndef USERLAND
+static bool fd_exists(const Tracee *tracee, int fd)
+{
+	char link[64];
+	struct stat statl;
+
+	if (fd < 0 && fd != AT_FDCWD)
+		return false;
+	if (fd == AT_FDCWD)
+		snprintf(link, sizeof(link), "/proc/%d/cwd", tracee->pid);
+	else
+		snprintf(link, sizeof(link), "/proc/%d/fd/%d", tracee->pid, fd);
+	return stat(link, &statl) == 0;
+}
+
+static bool chown_target_exists(const Tracee *tracee)
+{
+	char path[PATH_MAX];
+	struct stat statl;
+	Reg path_sysarg = SYSARG_1;
+	int flags = 0;
+
+	switch (get_sysnum(tracee, ORIGINAL)) {
+	case PR_fchown:
+	case PR_fchown32:
+		return (int) peek_reg(tracee, CURRENT, SYSARG_1) >= 0
+			&& fd_exists(tracee, (int) peek_reg(tracee, CURRENT, SYSARG_1));
+
+	case PR_lchown:
+	case PR_lchown32:
+		flags = AT_SYMLINK_NOFOLLOW;
+		break;
+
+	case PR_fchownat:
+		path_sysarg = SYSARG_2;
+		flags = (int) peek_reg(tracee, CURRENT, SYSARG_5) & AT_SYMLINK_NOFOLLOW;
+		break;
+
+	default:
+		break;
+	}
+
+	if (read_path(tracee, path, peek_reg(tracee, CURRENT, path_sysarg)) < 0)
+		return false;
+	if (path[0] == '\0')
+		return get_sysnum(tracee, ORIGINAL) == PR_fchownat
+			&& (peek_reg(tracee, CURRENT, SYSARG_5) & AT_EMPTY_PATH) != 0
+			&& fd_exists(tracee, (int) peek_reg(tracee, CURRENT, SYSARG_1));
+	return fstatat(AT_FDCWD, path, &statl, flags) == 0;
+}
+
 int handle_chown_enter_end(Tracee *tracee, Config *config, Reg uid_sysarg, Reg gid_sysarg) {
 	uid_t uid;
 	gid_t gid;
@@ -29,8 +83,10 @@ int handle_chown_enter_end(Tracee *tracee, Config *config, Reg uid_sysarg, Reg g
 	 * Fix: replace the syscall with getuid, which fake_id0 will intercept
 	 * in the EXIT phase and fake to return config->ruid (0).  The caller
 	 * therefore sees lchown returning 0 (success) and the kernel never
-	 * attempts the operation at all. */
-	set_sysnum(tracee, PR_getuid);
+	 * attempts the operation at all.  A missing target or a bad fd keeps
+	 * the real syscall, so the caller gets the real error. */
+	if (chown_target_exists(tracee))
+		set_sysnum(tracee, PR_getuid);
 
 	return 0;
 }
