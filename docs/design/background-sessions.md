@@ -155,6 +155,8 @@ foreground (Android 12+ forbids starting foreground services from the background
 
 Requested at runtime (Android 13+) the first time a session starts. If denied, the service still
 runs and sessions still survive; only the notification is hidden. The app does not ask again.
+The running notification is posted again once the permission is granted, whether from the prompt or
+in Settings on returning to the list.
 
 ### Channels
 
