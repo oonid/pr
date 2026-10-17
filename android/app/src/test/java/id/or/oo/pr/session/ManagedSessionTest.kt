@@ -14,14 +14,19 @@ class ManagedSessionTest {
     private val output = StringBuffer()
     private val ended = CopyOnWriteArrayList<ManagedSession>()
 
-    private fun session(endGraceMs: Long = 100) = ManagedSession(
+    private fun session(
+        endGraceMs: Long = 100,
+        sink: (ByteArray, Int, Int) -> Unit = { buf, off, len -> output.append(String(buf, off, len)) },
+        release: () -> Unit = {},
+    ) = ManagedSession(
         alias = "alpine",
         pty = pty,
         emulator = null,
-        output = { buf, off, len -> output.append(String(buf, off, len)) },
+        output = sink,
         onEnded = { ended += it },
         endGraceMs = endGraceMs,
         exitCodeWaitMs = 100,
+        release = release,
     ).also { it.start() }
 
     @Test
@@ -117,5 +122,47 @@ class ManagedSessionTest {
         assertTrue(s.hasScreen)
         s.detach(second)
         assertFalse(s.hasScreen)
+    }
+
+    @Test
+    fun throwingOutputStillEndsTheSession() {
+        val s = session(sink = { _, _, _ -> throw IllegalStateException("boom") })
+        pty.emit("x")
+        eventually { ended.isNotEmpty() }
+        assertTrue(s.exit.value != null)
+        assertTrue(pty.closed)
+    }
+
+    @Test
+    fun throwingReleaseStillRecordsTheExit() {
+        val s = session(release = { throw IllegalStateException("boom") })
+        pty.exit(5)
+        eventually { ended.isNotEmpty() }
+        assertEquals(ManagedSession.Exit(5), s.exit.value)
+    }
+
+    @Test
+    fun endTwiceSendsEofOnce() {
+        pty.ignoresEof = true
+        val s = session()
+        s.end()
+        s.end()
+        eventually { s.exit.value != null }
+        assertEquals(1, pty.eofCount)
+    }
+
+    @Test
+    fun noInputReachesThePtyOnceItIsClosed() {
+        val s = session()
+        pty.onClose = {
+            s.write("late".toByteArray())
+            s.resize(1, 1)
+            s.end()
+        }
+        pty.exit(0)
+        eventually { ended.isNotEmpty() }
+        assertEquals(0, pty.writesAfterClose)
+        assertEquals(0, pty.resizesAfterClose)
+        assertEquals(0, pty.eofCount)
     }
 }
