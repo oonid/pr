@@ -204,6 +204,10 @@ const SUITES: &[Suite] = &[
                 run: fakeroot::test_owner_follows_effective_ids,
             },
             Test {
+                name: "a new file in /tmp has the fake owner and group",
+                run: fakeroot::test_tmp_file_has_the_fake_group,
+            },
+            Test {
                 name: "blocked linkat keeps the source",
                 run: fakeroot::test_blocked_linkat_keeps_the_source,
             },
