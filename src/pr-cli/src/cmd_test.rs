@@ -314,6 +314,7 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
 
     let suites = [
         "distro", "clone", "readlink", "gcc", "rust", "git", "pipe", "general", "ssh", "chroot",
+        "fakeroot",
     ];
     let target_suites: Vec<&str> = match suite {
         Some(s) => {
