@@ -1,6 +1,7 @@
 package id.or.oo.pr
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -61,10 +62,14 @@ fun SessionBanners(app: App) {
                 text = "Deep sleep will pause background sessions until battery optimization is turned off for this app.",
                 action = "Allow",
                 onAction = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                            .setData(Uri.parse("package:${context.packageName}"))
-                    )
+                    try {
+                        context.startActivity(
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                .setData(Uri.parse("package:${context.packageName}"))
+                        )
+                    } catch (e: ActivityNotFoundException) {
+                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
                 },
             )
         }

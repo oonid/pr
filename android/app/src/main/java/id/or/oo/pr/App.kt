@@ -57,8 +57,6 @@ class App : Application(), ProotHost {
         )
     }
 
-
-
     val nativeLibDir: File
         get() = File(applicationInfo.nativeLibraryDir)
 
