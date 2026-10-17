@@ -265,8 +265,14 @@ fun DistroListScreen(app: App) {
                             scope.launch {
                                 if (distro.alias in app.sessions.running.value) {
                                     app.sessions.end(distro.alias)
-                                    withTimeoutOrNull(5_000) {
+                                    val stopped = withTimeoutOrNull(10_000) {
                                         app.sessions.running.first { distro.alias !in it }
+                                    }
+                                    if (stopped == null) {
+                                        outputLines = outputLines +
+                                            "Couldn't stop the ${distro.displayName} session; removal cancelled."
+                                        loadingDistro = null
+                                        return@launch
                                     }
                                 }
                                 runDistroCommand(app, listOf("remove", distro.alias)) { line ->
