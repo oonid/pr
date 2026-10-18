@@ -8,6 +8,7 @@ interface ProcFs {
     fun stat(pid: Int): String?
     fun taskIds(pid: Int): List<Int>?
     fun children(pid: Int, tid: Int): String?
+    fun exists(pid: Int): Boolean
 }
 
 object SystemProcFs : ProcFs {
@@ -21,6 +22,8 @@ object SystemProcFs : ProcFs {
         File("/proc/$pid/task").listFiles()?.mapNotNull { it.name.toIntOrNull() }
 
     override fun children(pid: Int, tid: Int): String? = read("/proc/$pid/task/$tid/children")
+
+    override fun exists(pid: Int): Boolean = File("/proc/$pid").exists()
 
     private fun read(path: String): String? = runCatching { File(path).readText() }.getOrNull()
 }
@@ -71,7 +74,7 @@ class ProotProcesses(private val proc: ProcFs = SystemProcFs) {
     private fun statuses(): Map<Int, String?> = buildMap {
         for (pid in proc.pids()) {
             val status = proc.status(pid)
-            if (status != null || proc.stat(pid) != null) put(pid, status)
+            if (status != null || proc.exists(pid)) put(pid, status)
         }
     }
 

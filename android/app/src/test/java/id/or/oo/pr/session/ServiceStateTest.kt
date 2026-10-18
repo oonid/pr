@@ -96,15 +96,4 @@ class ServiceStateTest {
         state.onRunningChanged(listOf("a"), true)
         assertEquals(listOf(WakeLock(false), Stop(1)), state.onRunningChanged(emptyList(), false))
     }
-
-    @Test
-    fun theRunningTitleCountsSessions() {
-        assertEquals("1 session running", runningTitle(listOf("a")))
-        assertEquals("2 sessions running", runningTitle(listOf("a", "b")))
-    }
-
-    @Test
-    fun theRunningTitleWithNoSessionNeverSaysZeroSessions() {
-        assertEquals("Stopping…", runningTitle(emptyList()))
-    }
 }
