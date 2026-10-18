@@ -92,9 +92,9 @@ class ManagedSession(
     private fun awaitEndOrExit(pids: Set<Int>): Boolean {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(signalWaitMs)
         while (true) {
-            val left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            val left = deadline - System.nanoTime()
             if (left <= 0) return false
-            if (ended.await(minOf(left, POLL_MS), TimeUnit.MILLISECONDS)) return true
+            if (ended.await(minOf(left, TimeUnit.MILLISECONDS.toNanos(POLL_MS)), TimeUnit.NANOSECONDS)) return true
             if (!pty.alive(pids)) return ended.count == 0L
         }
     }
