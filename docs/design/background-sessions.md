@@ -252,6 +252,11 @@ Risks that remain for a 24/7 session, outside the app's control:
 - concurrent open and end for one container never produce two sessions;
 - output keeps being drained with no screen attached.
 
+`ProotProcesses`, End's process scan behind `ProotPty`, reads `/proc` through a small `ProcFs`
+interface (the real `/proc` by default); a fake process table covers tracee selection, another
+proot's tracees, a daemon reparented to init, the descendant-walk fallback, a pid vanishing
+mid-scan, zombies counted as exited, and the force-kill order ending with proot.
+
 ### Existing suites
 
 proot-engine instrumented tests (8), `pr-cli test alpine` and `pr-cli test ubuntu`, the full
