@@ -238,7 +238,7 @@ class TerminalActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        session?.let { (application as App).sessions.setVisible(it, screen, false) }
+        if (!isChangingConfigurations) session?.let { (application as App).sessions.setVisible(it, screen, false) }
         super.onStop()
     }
 

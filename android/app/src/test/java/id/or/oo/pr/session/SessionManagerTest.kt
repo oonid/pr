@@ -195,7 +195,7 @@ class SessionManagerTest {
     }
 
     @Test
-    fun aRetainedEndedSessionIsReturnedOnlyOnce() {
+    fun aRetainedEndedSessionIsReturnedUntilAScreenAttaches() {
         val session = open("alpine")
         val screen = ManagedSession.Screen {}
         manager.attach(session, screen)
@@ -203,6 +203,28 @@ class SessionManagerTest {
         eventually { session.exit.value != null }
         manager.detach(session, screen, retainEnded = true)
         assertSame(session, open("alpine"))
+        assertSame(session, open("alpine"))
+        val recreated = ManagedSession.Screen {}
+        manager.attach(session, recreated)
+        manager.detach(session, recreated)
+        assertNotSame(session, open("alpine"))
+    }
+
+    @Test
+    fun aRetainedSessionEndingBetweenOpenAndAttachIsKept() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        manager.detach(session, screen, retainEnded = true)
+        assertSame(session, open("alpine"))
+        ptys.getValue("alpine").exit(4)
+        eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
+        Thread.sleep(50)
+        assertTrue(endedNotices.isEmpty())
+        val recreated = ManagedSession.Screen {}
+        manager.attach(session, recreated)
+        manager.detach(session, recreated)
         assertNotSame(session, open("alpine"))
     }
 
