@@ -26,6 +26,7 @@ class FakePty : Pty {
     @Volatile var eofBlocksUntilExit = false
     private val exited = CountDownLatch(1)
     @Volatile var ignoresKill = false
+    @Volatile var forceKillLeavesNoExitCode = false
     @Volatile var eofSent = false
     @Volatile var killed = false
     @Volatile var forceKilled = false
@@ -104,7 +105,7 @@ class FakePty : Pty {
     override fun forceKill() {
         record("forceKill")
         forceKilled = true
-        exit(137)
+        if (forceKillLeavesNoExitCode) chunks.put(end) else exit(137)
     }
 
     override fun close() {

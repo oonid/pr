@@ -135,15 +135,15 @@ banners described in sections 5 and 6.
 |-------|-----------|
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
 | Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
-| Open a container whose session is ending | Any other screen still on that session closes. The screen shows "Ending the previous session…", waits for that session's exit, then, once the screen is started (not while the app is in the background), opens again and starts a fresh session. If the session has not ended after 10 s, the screen shows "Couldn't stop the previous session."; Back returns to the list in either state |
+| Open a container whose session is ending | Any other screen still on that session closes. The screen shows "Ending the previous session…", waits for that session's exit, then, once the screen is started (not while the app is in the background), opens again and starts a fresh session. If the session has not ended within End's timeout (`ManagedSession.END_TIMEOUT_MS`, 20 s), the screen shows "Couldn't stop the previous session."; Back returns to the list in either state |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
-| End (prompt, "End all", Remove) | SIGTERM and SIGCONT to every process in the session except the login shell (including daemons that left the shell's tree), found as the processes proot traces (`TracerPid:` in `/proc/<pid>/status`; if that cannot be read, the login shell's descendants found by walking `/proc`); if any was signalled, up to 3 s for them to exit or for the session to end. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more, every process proot traces (the login shell included; if that cannot be read, every descendant of proot) is SIGKILLed, then proot. Killing proot alone would detach tracees that cannot die yet (a shell in D state) and leave them holding the PTY open. A background program such as the gateway gets SIGTERM to shut down cleanly first. At worst about 9 s, with the 2 s wait for the exit code |
+| End (prompt, "End all", Remove) | SIGTERM and SIGCONT to every process in the session except the login shell (including daemons that left the shell's tree), found as the processes proot traces (`TracerPid:` in `/proc/<pid>/status`; if that cannot be read, the login shell's descendants found by walking `/proc`); if any was signalled, up to 10 s for them to exit or for the session to end, stopping as soon as they have. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more, every process proot traces (the login shell included; if that cannot be read, every descendant of proot) is SIGKILLed, then proot. Killing proot alone would detach tracees that cannot die yet (a shell in D state) and leave them holding the PTY open. A background program such as the gateway gets SIGTERM to shut down cleanly first. At worst 17.5 s (`ManagedSession.endWorstCaseMs()`): 10 s signal wait + 2 s EOF grace + 2 s kill grace + 2 s wait for the exit code + 0.5 s after killing a shell that left no exit code + 1 s for the `/proc` scans. Remove's wait and the "Ending…" give-up use End's timeout, that worst case plus 2.5 s (20 s) |
 | Home, or switching apps | No prompt; the session keeps running; the screen stays attached but is not visible |
 | A configuration change recreates the screen (dark mode, theme) | The new screen reattaches to the same session; an ended one still shows "Session ended (exit N)" |
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
 | The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
-| Remove a container whose session runs | The session is ended first and removal waits up to 10 s for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." |
+| Remove a container whose session runs | The session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
 | Phone reboot | Nothing restarts (start-at-boot is out of scope) |
@@ -256,6 +256,10 @@ Risks that remain for a 24/7 session, outside the app's control:
 interface (the real `/proc` by default); a fake process table covers tracee selection, another
 proot's tracees, a daemon reparented to init, the descendant-walk fallback, a pid vanishing
 mid-scan, zombies counted as exited, and the force-kill order ending with proot.
+
+`ManagedSession` with a fake PTY: End's drain window outlasts 3 s and stops as soon as the
+signalled programs exit; the slowest End (every step ignored, no exit code) finishes within
+`endWorstCaseMs()`; `END_TIMEOUT_MS` exceeds the default worst case.
 
 ### Existing suites
 

@@ -96,7 +96,9 @@ class TerminalActivity : ComponentActivity() {
                 sessions.detach(result.session, screen)
                 setContent { Message("Ending the previous session…") }
                 lifecycleScope.launch {
-                    val stopped = withTimeoutOrNull(ENDING_WAIT_MS) { result.session.exit.first { it != null } }
+                    val stopped = withTimeoutOrNull(ManagedSession.END_TIMEOUT_MS) {
+                        result.session.exit.first { it != null }
+                    }
                     if (isFinishing) return@launch
                     if (stopped == null) {
                         setContent { Message("Couldn't stop the previous session.") }
@@ -258,10 +260,6 @@ class TerminalActivity : ComponentActivity() {
     override fun onDestroy() {
         session?.let { (application as App).sessions.detach(it, screen, retainEnded = isChangingConfigurations) }
         super.onDestroy()
-    }
-
-    private companion object {
-        const val ENDING_WAIT_MS = 10_000L
     }
 }
 

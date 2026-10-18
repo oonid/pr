@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import id.or.oo.pr.session.ManagedSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -266,7 +267,7 @@ fun DistroListScreen(app: App) {
                                 scope.launch {
                                     if (distro.alias in app.sessions.running.value) {
                                         app.sessions.end(distro.alias)
-                                        val stopped = withTimeoutOrNull(10_000) {
+                                        val stopped = withTimeoutOrNull(ManagedSession.END_TIMEOUT_MS) {
                                             app.sessions.running.first { distro.alias !in it }
                                         }
                                         if (stopped == null) {
