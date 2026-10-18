@@ -64,4 +64,9 @@ class ProcStatTest {
         assertEquals('S', processState("1804 (sh) S 1794 1804 1794 34816 1804 4194560 900"))
         assertNull(processState("garbage"))
     }
+
+    @Test
+    fun endSendsSigtermThenSigcontAndNoSighup() {
+        assertEquals(listOf(15, 18), END_SIGNALS)
+    }
 }
