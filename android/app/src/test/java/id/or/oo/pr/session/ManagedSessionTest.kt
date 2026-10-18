@@ -48,6 +48,22 @@ class ManagedSessionTest {
     }
 
     @Test
+    fun aReaderFailureWithNoExitCodeForceKillsBeforeClosing() {
+        session()
+        pty.failRead()
+        eventually { ended.isNotEmpty() }
+        assertEquals(listOf("forceKill", "close"), pty.calls)
+    }
+
+    @Test
+    fun aProgramExitDoesNotForceKill() {
+        session()
+        pty.exit(0)
+        eventually { ended.isNotEmpty() }
+        assertEquals(listOf("close"), pty.calls)
+    }
+
+    @Test
     fun endSendsEofAndMarksTheEndRequested() {
         val s = session()
         s.end()
