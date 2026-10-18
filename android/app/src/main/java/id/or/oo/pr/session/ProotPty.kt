@@ -19,7 +19,7 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         val shells = childrenOf(session.pid)
         val targets = traceesOf(session.pid, statuses(), exclude = shells.toSet() + session.pid)
             ?: descendantsOf(shells).toSet()
-        targets.forEach { pid -> GENTLE_SIGNALS.forEach { Process.sendSignal(pid, it) } }
+        targets.forEach { pid -> END_SIGNALS.forEach { Process.sendSignal(pid, it) } }
         return targets
     }
 
@@ -90,10 +90,9 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
             }
             .groupBy({ it.first }, { it.second })
 
-    private companion object {
-        val GENTLE_SIGNALS = listOf(1, 18, 15)
-    }
 }
+
+val END_SIGNALS = listOf(15, 18)
 
 fun parentPid(stat: String): Int? {
     val afterName = stat.substringAfterLast(')', missingDelimiterValue = "").trim()
