@@ -139,6 +139,7 @@ banners described in sections 5 and 6.
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
 | The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
+| Remove a container whose session runs | The session is ended first and removal waits up to 10 s for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
 | Phone reboot | Nothing restarts (start-at-boot is out of scope) |
@@ -208,6 +209,14 @@ So the 24/7 gateway needs the toggle, and the exemption guards against vendor ba
   Android 12+ blocks starting activities from notification actions routed through a service.
   Once the exemption is granted, returning to the list restarts the service so the notification
   drops the battery note.
+
+Risks that remain for a 24/7 session, outside the app's control:
+
+- **Phantom process limit (Android 12+).** The system kills child processes of apps beyond 32
+  across all apps, so a gateway that spawns many processes can lose some of them. The developer
+  option "Disable child process restrictions" lifts the limit.
+- **Task Manager "Stop" (Android 14+).** Stopping the app from the notification shade's active-apps
+  list kills the process, and every session with it.
 
 ## 7. Error Handling
 
