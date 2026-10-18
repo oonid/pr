@@ -206,13 +206,16 @@ So the 24/7 gateway needs the toggle, and the exemption guards against vendor ba
   can still stop background sessions. Allow PR to run unrestricted.") with **Allow**, which opens the
   system's ignore-battery-optimizations dialog. The dialog opens from the app screen, because
   Android 12+ blocks starting activities from notification actions routed through a service.
+  Once the exemption is granted, returning to the list restarts the service so the notification
+  drops the battery note.
 
 ## 7. Error Handling
 
 | Failure | Behaviour |
 |---------|-----------|
 | Session cannot start (pr-cli missing, PTY fork fails) | The terminal screen shows "Couldn't start alias: reason"; nothing is recorded; the service is not started |
-| The foreground service cannot start | The session runs while the app is open but is not protected; the list shows "Background running unavailable: reason"; no crash |
+| The foreground service cannot start | The session runs while the app is open but is not protected; the list shows "Background running unavailable: reason" until a later `startForeground` succeeds; no crash |
+| Reader thread error with no exit code | proot is killed before the PTY closes, so nothing is left running untracked |
 | Notification permission denied | Everything works; the notification is hidden; no repeated requests |
 | Reader thread error or PTY hangup | Treated as the session ending; the exit code comes from the reaper |
 | Input or resize for an ended session | Ignored |

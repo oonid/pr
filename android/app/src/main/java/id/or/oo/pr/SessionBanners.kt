@@ -42,13 +42,17 @@ fun SessionBanners(app: App) {
     val backgroundError by app.sessions.backgroundError.collectAsState()
     val resumes = remember { mutableIntStateOf(0) }
     val notificationsGranted = remember { booleanArrayOf(context.canPostNotifications()) }
+    val exemptGranted = remember { booleanArrayOf(context.isIgnoringBatteryOptimizations()) }
     LifecycleResumeEffect(Unit) {
         resumes.intValue++
         val granted = context.canPostNotifications()
-        if (granted && !notificationsGranted[0] && app.sessions.running.value.isNotEmpty()) {
+        val nowExempt = context.isIgnoringBatteryOptimizations()
+        val newlyGranted = (granted && !notificationsGranted[0]) || (nowExempt && !exemptGranted[0])
+        if (newlyGranted && app.sessions.running.value.isNotEmpty()) {
             ContextCompat.startForegroundService(context, Intent(context, SessionService::class.java))
         }
         notificationsGranted[0] = granted
+        exemptGranted[0] = nowExempt
         onPauseOrDispose {}
     }
     val exempt = remember(resumes.intValue, keepAwake) { context.isIgnoringBatteryOptimizations() }
@@ -80,7 +84,10 @@ fun SessionBanners(app: App) {
                                 .setData(Uri.parse("package:${context.packageName}"))
                         )
                     } catch (e: ActivityNotFoundException) {
-                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        } catch (missing: ActivityNotFoundException) {
+                        }
                     }
                 },
             )

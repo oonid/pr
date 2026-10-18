@@ -1,5 +1,6 @@
 package id.or.oo.pr.session
 
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
@@ -7,6 +8,7 @@ import java.util.concurrent.LinkedBlockingQueue
 class FakePty : Pty {
     private val chunks = LinkedBlockingQueue<ByteArray>()
     private val end = ByteArray(0)
+    private val broken = ByteArray(0)
 
     val written = CopyOnWriteArrayList<String>()
     val resizes = CopyOnWriteArrayList<Pair<Int, Int>>()
@@ -40,6 +42,8 @@ class FakePty : Pty {
         calls += call
     }
 
+    fun failRead() = chunks.put(broken)
+
     fun exit(code: Int) {
         exitCode = code
         chunks.put(end)
@@ -48,6 +52,7 @@ class FakePty : Pty {
     override fun read(buf: ByteArray): Int {
         val chunk = chunks.take()
         if (chunk === end) return -1
+        if (chunk === broken) throw IOException("read failed")
         System.arraycopy(chunk, 0, buf, 0, chunk.size)
         return chunk.size
     }

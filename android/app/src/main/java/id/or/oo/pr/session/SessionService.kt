@@ -58,6 +58,7 @@ class SessionService : Service() {
             if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
         )
         foreground = true
+        sessions.foregroundStarted()
         when (intent?.action) {
             ACTION_END_ALL -> sessions.endAll()
             ACTION_TOGGLE_WAKE -> sessions.setKeepCpuAwake(!sessions.keepCpuAwake.value)

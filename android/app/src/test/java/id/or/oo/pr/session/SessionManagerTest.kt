@@ -101,7 +101,7 @@ class SessionManagerTest {
     @Test
     fun keepCpuAwakeResetsWhenTheLastSessionEnds() {
         open("alpine")
-        manager.keepCpuAwake.value = true
+        manager.setKeepCpuAwake(true)
         manager.endAll()
         eventually { manager.running.value.isEmpty() }
         assertEquals(false, manager.keepCpuAwake.value)
@@ -247,6 +247,15 @@ class SessionManagerTest {
     }
 
     @Test
+    fun aStartedForegroundClearsTheBackgroundError() {
+        foregroundFails = true
+        open("alpine")
+        assertEquals("not allowed", manager.backgroundError.value)
+        manager.foregroundStarted()
+        assertNull(manager.backgroundError.value)
+    }
+
+    @Test
     fun concurrentOpensCreateOneSession() {
         val start = CountDownLatch(1)
         val opened = CopyOnWriteArrayList<ManagedSession>()
@@ -280,7 +289,7 @@ class SessionManagerTest {
     @Test
     fun theLastSessionEndingEmptiesRunningWithoutCallingTheForeground() {
         open("alpine")
-        manager.keepCpuAwake.value = true
+        manager.setKeepCpuAwake(true)
         manager.endAll()
         eventually { manager.running.value.isEmpty() }
         assertEquals(false, manager.keepCpuAwake.value)
@@ -331,7 +340,7 @@ class SessionManagerTest {
         beforeEnded = { session -> manager.detach(session, screen) }
         val session = open("alpine")
         manager.attach(session, screen)
-        manager.keepCpuAwake.value = true
+        manager.setKeepCpuAwake(true)
         ptys.getValue("alpine").exit(0)
         eventually { session.exit.value != null }
         eventually { manager.running.value.isEmpty() }

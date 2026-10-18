@@ -33,11 +33,12 @@ class SessionManager(
     private val _running = MutableStateFlow<List<String>>(emptyList())
     val running: StateFlow<List<String>> = _running
 
-    val keepCpuAwake = MutableStateFlow(false)
+    private val _keepCpuAwake = MutableStateFlow(false)
+    val keepCpuAwake: StateFlow<Boolean> = _keepCpuAwake
 
     fun setKeepCpuAwake(on: Boolean) {
         synchronized(lock) {
-            if (_running.value.isNotEmpty()) keepCpuAwake.value = on
+            if (_running.value.isNotEmpty()) _keepCpuAwake.value = on
         }
     }
 
@@ -64,6 +65,10 @@ class SessionManager(
         }
         session.start()
         return OpenResult.Opened(session)
+    }
+
+    fun foregroundStarted() {
+        synchronized(lock) { _backgroundError.value = null }
     }
 
     fun attach(session: ManagedSession, screen: ManagedSession.Screen) {
@@ -116,7 +121,7 @@ class SessionManager(
             return
         }
         if (before > 0 && now.isEmpty()) {
-            keepCpuAwake.value = false
+            _keepCpuAwake.value = false
             _backgroundError.value = null
         }
         _running.value = now

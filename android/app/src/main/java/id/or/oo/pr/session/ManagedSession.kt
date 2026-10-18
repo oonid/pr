@@ -105,6 +105,7 @@ class ManagedSession(
         runCatching {
             val deadline = System.currentTimeMillis() + exitCodeWaitMs
             while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
+            if (pty.exitCode == null) pty.forceKill()
         }
         synchronized(ptyLock) {
             closed = true
