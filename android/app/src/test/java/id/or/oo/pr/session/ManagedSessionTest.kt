@@ -110,7 +110,7 @@ class ManagedSessionTest {
         pty.signalled = setOf(42)
         pty.ignoresEof = true
         pty.ignoresKill = true
-        val s = session(signalWaitMs = 300)
+        val s = session(endGraceMs = 1_000, signalWaitMs = 300)
         s.end()
         eventually { s.exit.value != null }
         assertEquals(listOf("signal", "eof", "kill", "forceKill", "close"), pty.calls)
@@ -144,7 +144,7 @@ class ManagedSessionTest {
     @Test
     fun aBlockedEofDoesNotDelayTheKill() {
         pty.eofBlocksUntilExit = true
-        val s = session()
+        val s = session(endGraceMs = 1_000)
         s.end()
         eventually { s.exit.value != null }
         assertEquals(listOf("signal", "eof", "kill", "close"), pty.calls)
