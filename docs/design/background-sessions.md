@@ -132,9 +132,9 @@ banners described in sections 5 and 6.
 |-------|-----------|
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
 | Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
-| Open a container whose session is ending | Any other screen still on that session closes. The screen shows "Ending the previous session…", waits for that session's exit, then opens again and starts a fresh session. If the session has not ended after 10 s, the screen shows "Couldn't stop the previous session."; Back returns to the list in either state |
+| Open a container whose session is ending | Any other screen still on that session closes. The screen shows "Ending the previous session…", waits for that session's exit, then, once the screen is started (not while the app is in the background), opens again and starts a fresh session. If the session has not ended after 10 s, the screen shows "Couldn't stop the previous session."; Back returns to the list in either state |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
-| End (prompt, "End all", Remove) | SIGTERM and SIGCONT to every process in the session except the login shell (including daemons that left the shell's tree), found as the processes proot traces (`TracerPid:` in `/proc/<pid>/status`; if that cannot be read, the login shell's descendants found by walking `/proc`); if any was signalled, up to 3 s for them to exit or for the session to end. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more proot is killed. A background program such as the gateway gets SIGTERM to shut down cleanly first. At worst about 9 s, with the 2 s wait for the exit code |
+| End (prompt, "End all", Remove) | SIGTERM and SIGCONT to every process in the session except the login shell (including daemons that left the shell's tree), found as the processes proot traces (`TracerPid:` in `/proc/<pid>/status`; if that cannot be read, the login shell's descendants found by walking `/proc`); if any was signalled, up to 3 s for them to exit or for the session to end. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more, every process proot traces (the login shell included; if that cannot be read, every descendant of proot) is SIGKILLed, then proot. Killing proot alone would detach tracees that cannot die yet (a shell in D state) and leave them holding the PTY open. A background program such as the gateway gets SIGTERM to shut down cleanly first. At worst about 9 s, with the 2 s wait for the exit code |
 | Home, or switching apps | No prompt; the session keeps running; the screen stays attached but is not visible |
 | A configuration change recreates the screen (dark mode, theme) | The new screen reattaches to the same session; an ended one still shows "Session ended (exit N)" |
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
@@ -227,7 +227,7 @@ Risks that remain for a 24/7 session, outside the app's control:
 |---------|-----------|
 | Session cannot start (pr-cli missing, PTY fork fails) | The terminal screen shows "Couldn't start alias: reason"; nothing is recorded; the service is not started |
 | The foreground service cannot start | The session runs while the app is open but is not protected; the list shows "Background running unavailable: reason" until a later `startForeground` succeeds; no crash |
-| Reader thread error with no exit code | Before the PTY closes, the login shell is killed so that proot's `--kill-on-exit` takes the rest; if proot has not exited 0.5 s later, it is killed too |
+| Reader thread error with no exit code | Before the PTY closes, the reader waits up to 2 s for the exit code; if none arrives, the login shell is killed so that proot's `--kill-on-exit` takes the rest; if proot has not exited 0.5 s later, every tracee is SIGKILLed and then proot |
 | Notification permission denied | Everything works; the notification is hidden; no repeated requests |
 | Reader thread error or PTY hangup | Treated as the session ending; the exit code comes from the reaper |
 | Input or resize for an ended session | Ignored |
@@ -242,7 +242,7 @@ Risks that remain for a 24/7 session, outside the app's control:
 `SessionManager` with fake seams:
 
 - one session per container; `open` on a running container returns the same session;
-- the service starts at 0 to 1 and stops at 1 to 0, through End, End all and program exit;
+- the manager starts the service at 0 to 1, and the service stops itself when the running list empties, through End, End all and program exit;
 - the "session ended" notification fires only when no screen is visible, and never after End;
 - a recreated screen gets its session back, even one that has ended;
 - concurrent open and end for one container never produce two sessions;
