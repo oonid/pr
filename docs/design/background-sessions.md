@@ -120,10 +120,28 @@ keeps its current order: the first press hides the keyboard if it is up, the nex
 selection if one is active, and after that it shows the End session / Keep running / Cancel
 prompt. If the session has ended, Back returns to the list without a prompt.
 
+### `DistroOperations` (new, app module)
+
+Owned by `App` like `SessionManager`, so an install, remove or test started from the list survives
+the list being recreated (rotation, dark mode). It runs one `pr-cli` operation at a time on its own
+scope, through a `DistroCommand` seam (real: `PrCliCommand`, the former `runDistroCommand`), and
+exposes it as `operation: StateFlow<Operation?>`: kind, alias, display name, output lines, running
+or finished, exit code.
+
+- `install`, `installCustom`, `remove` and `test` return `false` while an operation runs;
+  `dismiss()` clears a finished operation and is refused while one runs.
+- The output ends with "Done.", "Exit code: N" or "ERROR: …"; an invalid custom alias becomes a
+  finished operation with the two error lines, and nothing runs.
+- `remove` ends the container's running session first, as described in section 4.
+
 ### `MainActivity` (changed)
 
 Containers with a running session show a "running" mark; tapping one reattaches. It shows the
-banners described in sections 5 and 6.
+banners described in sections 5 and 6. The output sheet, its busy state and the row spinner render
+`DistroOperations.operation`; the sheet shows while there is an operation, Close and swipe-down
+(only once it has finished) call `dismiss()`, and the list refreshes when an operation starts or
+finishes and when the sheet closes. Only the custom image fields are kept by the screen
+(`rememberSaveable`).
 
 ### Unchanged
 
@@ -143,7 +161,7 @@ banners described in sections 5 and 6.
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
 | The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
-| Remove a container whose session runs | The session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." |
+| Remove a container whose session runs | The output shows "Stopping the <name> session…"; the session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." The wait runs in `DistroOperations`, so recreating the list does not lose it |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
 | Phone reboot | Nothing restarts (start-at-boot is out of scope) |
@@ -256,6 +274,12 @@ Risks that remain for a 24/7 session, outside the app's control:
 interface (the real `/proc` by default); a fake process table covers tracee selection, another
 proot's tracees, a daemon reparented to init, the descendant-walk fallback, a pid vanishing
 mid-scan, zombies counted as exited, and the force-kill order ending with proot.
+
+`DistroOperations` with a fake command and a `SessionManager` on fake PTYs: output streams into
+the state in order and ends with "Done.", "Exit code: N" or "ERROR: …"; a second operation and
+`dismiss()` are refused while one runs; Remove without a session runs `remove`, with one ends it
+first, and cancels with the exact text, never running `remove`, when it does not stop in time; the
+custom install's arguments and its invalid-alias error.
 
 `ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
 exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s
