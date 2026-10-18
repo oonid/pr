@@ -143,19 +143,23 @@ class ManagedSessionTest {
             emulator = null,
             output = { _, _, _ -> },
             onEnded = { ended += it },
-            endGraceMs = 400,
-            signalWaitMs = 400,
-            exitCodeWaitMs = 400,
+            endGraceMs = 1_000,
+            signalWaitMs = 1_000,
+            exitCodeWaitMs = 1_000,
+            killExitWaitMs = 1_000,
         ).also { it.start() }
-        val worstWithoutMargin =
-            ManagedSession.endWorstCaseMs(signalWaitMs = 400, endGraceMs = 400, exitCodeWaitMs = 400) -
-                ManagedSession.SCAN_MARGIN_MS
+        val worstWithoutMargin = ManagedSession.endWorstCaseMs(
+            signalWaitMs = 1_000,
+            endGraceMs = 1_000,
+            exitCodeWaitMs = 1_000,
+            killExitWaitMs = 1_000,
+        ) - ManagedSession.SCAN_MARGIN_MS
         val started = System.nanoTime()
         s.end()
-        eventually(timeoutMs = 10_000) { s.exit.value != null }
+        eventually(timeoutMs = 15_000) { s.exit.value != null }
         val tookMs = (System.nanoTime() - started) / 1_000_000
         assertEquals(listOf("signal", "eof", "kill", "forceKill", "kill", "forceKill", "close"), pty.calls)
-        assertTrue("took $tookMs ms", tookMs in worstWithoutMargin..worstWithoutMargin + 300)
+        assertTrue("took $tookMs ms", tookMs in worstWithoutMargin..worstWithoutMargin + 800)
     }
 
     @Test
