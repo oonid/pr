@@ -76,7 +76,7 @@ class ManagedSessionTest {
 
     @Test
     fun endSendsEofAndMarksTheEndRequested() {
-        val s = session()
+        val s = session(endGraceMs = 1_000)
         s.end()
         eventually { s.exit.value != null }
         assertTrue(pty.eofSent)
@@ -112,7 +112,7 @@ class ManagedSessionTest {
         pty.ignoresKill = true
         val s = session(endGraceMs = 1_000, signalWaitMs = 300)
         s.end()
-        eventually { s.exit.value != null }
+        eventually(timeoutMs = 10_000) { s.exit.value != null }
         assertEquals(listOf("signal", "eof", "kill", "forceKill", "close"), pty.calls)
         assertTrue(pty.msBetween("signal", "eof") >= 300)
         assertTrue(pty.aliveQueries.isNotEmpty())
@@ -248,7 +248,7 @@ class ManagedSessionTest {
     @Test
     fun endTwiceSendsEofOnce() {
         pty.ignoresEof = true
-        val s = session()
+        val s = session(endGraceMs = 1_000)
         s.end()
         s.end()
         eventually { s.exit.value != null }

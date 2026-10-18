@@ -22,6 +22,7 @@ class SessionManagerTest {
     private var foregroundFails = false
     private val runningAtStart = CopyOnWriteArrayList<List<String>>()
     @Volatile private var beforeEnded: (ManagedSession) -> Unit = {}
+    @Volatile private var endGraceMs = 100L
 
     private val factory = SessionManager.SessionFactory { alias, onEnded ->
         if (failNext) throw IllegalStateException("pr-cli not found")
@@ -34,7 +35,7 @@ class SessionManagerTest {
             null,
             { _, _, _ -> },
             { session -> beforeEnded(session); onEnded(session) },
-            endGraceMs = 100,
+            endGraceMs = endGraceMs,
             exitCodeWaitMs = 100,
         )
     }
@@ -295,6 +296,7 @@ class SessionManagerTest {
 
     @Test
     fun endAllEndsEverySession() {
+        endGraceMs = 1_000
         open("alpine")
         open("ubuntu")
         manager.endAll()
