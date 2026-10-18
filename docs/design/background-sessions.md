@@ -30,7 +30,7 @@ contents, and ends only when the user ends it or its program exits.
 | Back | Prompt every time: End session / Keep running / Cancel | Keep running plus a setting; End plus a separate Detach action |
 | CPU in deep sleep | "Keep CPU awake" toggle in the notification and in the container list, off by default, not remembered; the battery-optimization exemption, which the app offers, guards against vendor battery savers | Always hold a wake lock; no wake lock |
 | Service type | `specialUse` | `dataSync` (Android 15 limits it to 6 hours a day) |
-| Session ended while away | Post a "session ended (exit N)" notification | Silent |
+| Session ended while away | Post a "session ended (exit N)" notification. Away means no visible screen: Home, switching apps, swiping the app away, or no screen at all | Silent |
 
 Approach B follows Android's "Guide to app architecture": activities and services are entry points
 the system can destroy, and state lives in a layer they use. Reliability is the same as A, since
@@ -47,7 +47,10 @@ alias.
 - `open(alias): OpenResult` returns `Opened(session)` with the running session for the container,
   or starts one through `ProotLauncher.startSession`. A failure to start is returned as
   `Failed(reason)`, not thrown past the caller.
-- `attach(session, screen)` and `detach(session, screen)` connect a screen to a session.
+- `attach(session, screen)` and `detach(session, screen)` connect a screen to a session;
+  `setVisible(session, screen, visible)` records whether that screen is on screen.
+  `detach(session, screen, retainEnded = true)` is for an activity being recreated: the session stays
+  in the map even if it has ended, and the next `open` returns it once.
 - `end(alias)` and `endAll()` close sessions.
 - `running: StateFlow<List<String>>` (the aliases of running sessions) for the list screen and the
   notification; `keepCpuAwake` and `backgroundError` are state flows too.
@@ -81,10 +84,12 @@ What `TerminalActivity` holds today, moved out of it:
 
 termlib keeps at most 1000 scrollback lines, so a long-lived emulator's memory is bounded.
 
-It exposes `write`, `resize`, `attached` (whether a screen shows it) and the exit state. When the
-child exits it records the exit code and notifies the manager. The manager stops counting it as
-running at once, and drops it when no screen shows it: immediately if none is attached, otherwise
-when that screen closes, so the screen can still show the exit code.
+It exposes `write`, `resize`, `hasScreen` (whether a screen is attached), `screenVisible` (whether
+that screen is visible; a screen is visible when attached until it says otherwise) and the exit
+state. When the child exits it records the exit code and notifies the manager. The manager stops
+counting it as running at once, and drops it when no screen is attached: immediately if none is,
+otherwise when that screen closes, so the screen can still show the exit code. The "session ended"
+notification is posted when the user did not end it and no screen is visible.
 
 ### `SessionService` (new foreground service, type `specialUse`)
 
@@ -100,7 +105,10 @@ Holds no session state.
 ### `TerminalActivity` (changed)
 
 A view onto a session. It calls `SessionManager.open(alias)`, draws the session's emulator, and
-forwards keyboard input and resizes. Closing the screen detaches; it never ends the session. A
+forwards keyboard input and resizes. It marks its screen visible in `onStart` and hidden in
+`onStop`. Closing the screen detaches; it never ends the session. When the activity is recreated by a
+configuration change it does not handle (dark mode, for example), `onDestroy` detaches with
+`retainEnded`, and the new activity reattaches to the same session, ended or not. A
 session is shown by at most one screen: opening a container whose session another screen shows
 attaches it to the new screen, and the old screen closes. Back
 keeps its current order: the first press hides the keyboard if it is up, the next clears a text
@@ -123,9 +131,10 @@ banners described in sections 5 and 6.
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
 | Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
-| Home, or switching apps | No prompt; the session keeps running |
+| Home, or switching apps | No prompt; the session keeps running; the screen stays attached but is not visible |
+| A configuration change recreates the screen (dark mode, theme) | The new screen reattaches to the same session; an ended one still shows "Session ended (exit N)" |
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
-| The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once and a "session ended" notification is posted |
+| The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
@@ -216,7 +225,8 @@ So the 24/7 gateway needs the toggle, and the exemption guards against vendor ba
 
 - one session per container; `open` on a running container returns the same session;
 - the service starts at 0 to 1 and stops at 1 to 0, through End, End all and program exit;
-- the "session ended" notification fires only when no screen is attached;
+- the "session ended" notification fires only when no screen is visible, and never after End;
+- a recreated screen gets its session back, even one that has ended;
 - concurrent open and end for one container never produce two sessions;
 - output keeps being drained with no screen attached.
 
@@ -234,8 +244,12 @@ integration suite from an in-app terminal, and the 169 host tests stay green.
    `dumpsys deviceidle force-idle`: the counter and the network continue, with and without the
    exemption (a foreground-service process keeps its wake lock and network in Doze).
 5. `exit` with no screen attached posts the "session ended" notification.
+   Home, then `exit 3` in the shell before leaving (type `sleep 5; exit 3`, then press Home) posts
+   the notice; returning to the terminal shows "Session ended (exit 3)".
 6. End all ends every session and removes the ongoing notification.
 7. With the notification permission denied, sessions still survive.
+8. After `exit 2`, switching dark mode keeps the screen on the ended session ("Session ended
+   (exit 2)"), not a fresh login.
 
 ### Target check
 

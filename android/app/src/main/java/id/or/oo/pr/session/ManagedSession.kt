@@ -35,9 +35,19 @@ class ManagedSession(
     private val ended = CountDownLatch(1)
     private val screenLock = Any()
     private var screen: Screen? = null
+    private var visible = false
 
     val hasScreen: Boolean
         get() = synchronized(screenLock) { screen != null }
+
+    val screenVisible: Boolean
+        get() = synchronized(screenLock) { screen != null && visible }
+
+    fun setVisible(screen: Screen, visible: Boolean) {
+        synchronized(screenLock) {
+            if (this.screen === screen) this.visible = visible
+        }
+    }
 
     fun start() {
         thread(isDaemon = true, name = "pty-reader-$alias") { readLoop() }
@@ -54,6 +64,7 @@ class ManagedSession(
     fun attach(screen: Screen): Screen? = synchronized(screenLock) {
         val previous = this.screen
         this.screen = screen
+        visible = true
         previous?.takeIf { it !== screen }
     }
 
