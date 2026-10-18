@@ -161,6 +161,7 @@ class TerminalActivity : ComponentActivity() {
                             },
                             onKeep = {
                                 showLeavePrompt.value = false
+                                sessions.setVisible(current, screen, false)
                                 finish()
                             },
                             onCancel = { showLeavePrompt.value = false },
