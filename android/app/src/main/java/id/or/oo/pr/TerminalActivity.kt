@@ -215,8 +215,18 @@ class TerminalActivity : ComponentActivity() {
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    override fun onStart() {
+        super.onStart()
+        session?.let { (application as App).sessions.setVisible(it, screen, true) }
+    }
+
+    override fun onStop() {
+        session?.let { (application as App).sessions.setVisible(it, screen, false) }
+        super.onStop()
+    }
+
     override fun onDestroy() {
-        session?.let { (application as App).sessions.detach(it, screen) }
+        session?.let { (application as App).sessions.detach(it, screen, retainEnded = isChangingConfigurations) }
         super.onDestroy()
     }
 }

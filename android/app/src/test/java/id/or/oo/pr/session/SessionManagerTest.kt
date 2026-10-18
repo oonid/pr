@@ -129,6 +129,87 @@ class SessionManagerTest {
     }
 
     @Test
+    fun programExitWhileTheScreenIsHiddenPostsTheNotice() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        manager.setVisible(session, screen, false)
+        ptys.getValue("alpine").exit(3)
+        eventually { endedNotices.isNotEmpty() }
+        assertEquals(listOf("alpine" to 3), endedNotices)
+        assertTrue(session.hasScreen)
+    }
+
+    @Test
+    fun aScreenShownAgainBeforeTheExitPostsNoNotice() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        manager.setVisible(session, screen, false)
+        manager.setVisible(session, screen, true)
+        ptys.getValue("alpine").exit(3)
+        eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
+        Thread.sleep(50)
+        assertTrue(endedNotices.isEmpty())
+    }
+
+    @Test
+    fun endingWhileTheScreenIsHiddenPostsNoNotice() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        manager.setVisible(session, screen, false)
+        manager.end("alpine")
+        eventually { manager.running.value.isEmpty() }
+        Thread.sleep(50)
+        assertTrue(endedNotices.isEmpty())
+    }
+
+    @Test
+    fun aRecreatedScreenGetsTheEndedSessionBack() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        ptys.getValue("alpine").exit(2)
+        eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
+        manager.detach(session, screen, retainEnded = true)
+        assertSame(session, open("alpine"))
+        val recreated = ManagedSession.Screen {}
+        manager.attach(session, recreated)
+        manager.detach(session, recreated)
+        assertNotSame(session, open("alpine"))
+        assertEquals(2, created.get())
+    }
+
+    @Test
+    fun aRetainedEndedSessionIsReturnedOnlyOnce() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        ptys.getValue("alpine").exit(2)
+        eventually { session.exit.value != null }
+        manager.detach(session, screen, retainEnded = true)
+        assertSame(session, open("alpine"))
+        assertNotSame(session, open("alpine"))
+    }
+
+    @Test
+    fun aSessionEndingDuringRecreationIsKeptForTheNewScreen() {
+        val session = open("alpine")
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        manager.detach(session, screen, retainEnded = true)
+        ptys.getValue("alpine").exit(4)
+        eventually { session.exit.value != null }
+        eventually { manager.running.value.isEmpty() }
+        Thread.sleep(50)
+        assertTrue(endedNotices.isEmpty())
+        assertSame(session, open("alpine"))
+    }
+
+    @Test
     fun attachingANewScreenClosesThePreviousOne() {
         val session = open("alpine")
         val closed = CountDownLatch(1)

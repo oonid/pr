@@ -123,6 +123,24 @@ class ManagedSessionTest {
     }
 
     @Test
+    fun visibilityFollowsTheAttachedScreenOnly() {
+        val s = session()
+        val first = ManagedSession.Screen {}
+        val second = ManagedSession.Screen {}
+        assertFalse(s.screenVisible)
+        s.attach(first)
+        assertTrue(s.screenVisible)
+        s.setVisible(first, false)
+        assertFalse(s.screenVisible)
+        s.attach(second)
+        assertTrue(s.screenVisible)
+        s.setVisible(first, false)
+        assertTrue(s.screenVisible)
+        s.detach(second)
+        assertFalse(s.screenVisible)
+    }
+
+    @Test
     fun throwingOutputStillEndsTheSession() {
         val s = session(sink = { _, _, _ -> throw IllegalStateException("boom") })
         pty.emit("x")

@@ -27,6 +27,7 @@ class SessionManager(
 
     private val lock = Any()
     private val sessions = LinkedHashMap<String, ManagedSession>()
+    private val retained = HashSet<ManagedSession>()
 
     private val _running = MutableStateFlow<List<String>>(emptyList())
     val running: StateFlow<List<String>> = _running
@@ -45,8 +46,11 @@ class SessionManager(
     fun open(alias: String): OpenResult {
         val session = synchronized(lock) {
             val existing = sessions[alias]
-            if (existing != null && existing.exit.value == null) return OpenResult.Opened(existing)
-            if (existing != null) sessions.remove(alias)
+            if (existing != null) {
+                val wasRetained = retained.remove(existing)
+                if (existing.exit.value == null || wasRetained) return OpenResult.Opened(existing)
+                sessions.remove(alias)
+            }
             val created = try {
                 factory.create(alias, ::onEnded)
             } catch (e: Exception) {
@@ -64,10 +68,17 @@ class SessionManager(
         session.attach(screen)?.close()
     }
 
-    fun detach(session: ManagedSession, screen: ManagedSession.Screen) {
+    fun setVisible(session: ManagedSession, screen: ManagedSession.Screen, visible: Boolean) {
+        session.setVisible(screen, visible)
+    }
+
+    fun detach(session: ManagedSession, screen: ManagedSession.Screen, retainEnded: Boolean = false) {
         synchronized(lock) {
             session.detach(screen)
-            if (session.exit.value != null && !session.hasScreen && sessions[session.alias] === session) {
+            if (session.hasScreen || sessions[session.alias] !== session) return
+            if (retainEnded) {
+                retained += session
+            } else if (session.exit.value != null) {
                 sessions.remove(session.alias)
                 updateRunning()
             }
@@ -86,10 +97,9 @@ class SessionManager(
         var notify = false
         synchronized(lock) {
             if (sessions[session.alias] !== session) return
-            if (!session.hasScreen) {
-                sessions.remove(session.alias)
-                notify = !session.endRequested
-            }
+            val awaited = session in retained
+            if (!session.hasScreen && !awaited) sessions.remove(session.alias)
+            notify = !session.endRequested && !awaited && !session.screenVisible
             updateRunning()
         }
         if (notify) notifier.sessionEnded(session.alias, session.exit.value?.code)
