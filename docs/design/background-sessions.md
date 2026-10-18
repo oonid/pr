@@ -214,10 +214,12 @@ So the 24/7 gateway needs the toggle, and the exemption guards against vendor ba
 Risks that remain for a 24/7 session, outside the app's control:
 
 - **Phantom process limit (Android 12+).** The system kills child processes of apps beyond 32
-  across all apps, so a gateway that spawns many processes can lose some of them. The developer
-  option "Disable child process restrictions" lifts the limit.
-- **Task Manager "Stop" (Android 14+).** Stopping the app from the notification shade's active-apps
-  list kills the process, and every session with it.
+  across all apps, so a gateway that spawns many processes can lose some of them. On Android 14+
+  the developer option "Disable child process restrictions" lifts the limit; on 12L and 13,
+  `adb shell settings put global settings_enable_monitor_phantom_procs false` does; on 12 it takes
+  `adb shell device_config put activity_manager max_phantom_processes 2147483647`.
+- **Task Manager "Stop" (Android 13+).** Stopping the app from the notification shade's active-apps
+  list (shown for apps with a foreground service) kills the process, and every session with it.
 
 ## 7. Error Handling
 

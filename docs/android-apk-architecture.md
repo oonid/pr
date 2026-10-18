@@ -290,9 +290,10 @@ savers can still stop an app that is not exempt from battery optimization, so th
 offers the exemption.
 
 Two limits remain for a 24/7 session: Android 12+ kills app child processes beyond 32 system-wide
-(the phantom process limit; the developer option "Disable child process restrictions" lifts it), so a
-gateway that spawns many processes can lose some; and Android 14+ Task Manager "Stop" kills the
-process and every session.
+(the phantom process limit; the developer option "Disable child process restrictions" lifts it on
+Android 14+, `settings_enable_monitor_phantom_procs` on 12L and 13, and `device_config` on 12), so a
+gateway that spawns many processes can lose some; and Android 13+ Task Manager "Stop" in the
+notification shade kills the process and every session.
 
 ---
 
