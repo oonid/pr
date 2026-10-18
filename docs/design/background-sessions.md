@@ -100,6 +100,9 @@ Holds no session state.
   `onStartCommand` calls `startForeground` first, then stops the service if no session runs. When
   `running` empties after that, it removes its notification (`stopForeground`) and calls
   `stopSelfResult` with the last start id, so a start that arrives while it stops is not lost.
+  These decisions live in `ServiceState`, a plain class that takes the start and running-list events
+  and returns the actions (start foreground, notify, wake lock, stop); the service only carries them
+  out, so they run in JVM tests.
 - Owns the ongoing notification and its actions.
 - Holds the partial wake lock while "Keep CPU awake" is on.
 
@@ -174,9 +177,10 @@ in Settings on returning to the list.
 
 ### Channels
 
-1. **Running sessions**: low importance, silent, ongoing. Title "N sessions running", text the
-   container names, plus "CPU kept awake" when the toggle is on. Tapping opens the list. Actions:
-   **End all**, and **Keep CPU awake** / **Let CPU sleep**.
+1. **Running sessions**: low importance, silent, ongoing. Title "N sessions running" ("Stopping…"
+   for a start that finds no session and stops at once), text the container names, plus "CPU kept
+   awake" when the toggle is on. Tapping opens the list. Actions: **End all**, and **Keep CPU
+   awake** / **Let CPU sleep**.
 2. **Session ended**: default importance. "alias: session ended (exit N)"; tapping opens the list.
 
 Tapping either returns to the one existing list (`CLEAR_TOP | SINGLE_TOP`): a terminal on top of it

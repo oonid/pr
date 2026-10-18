@@ -26,9 +26,9 @@ object SessionNotifications {
     }
 
     fun running(context: Context, aliases: List<String>, keepAwake: Boolean, exempt: Boolean): Notification {
-        val title = if (aliases.size == 1) "1 session running" else "${aliases.size} sessions running"
+        val title = runningTitle(aliases)
         val details = buildList {
-            add(aliases.joinToString(", "))
+            if (aliases.isNotEmpty()) add(aliases.joinToString(", "))
             if (keepAwake) add("CPU kept awake")
             if (keepAwake && !exempt) add("Battery saver may stop sessions; allow in the app")
         }.joinToString(" · ")
@@ -73,4 +73,10 @@ object SessionNotifications {
         Intent(context, SessionService::class.java).setAction(action),
         PendingIntent.FLAG_IMMUTABLE,
     )
+}
+
+fun runningTitle(aliases: List<String>): String = when (aliases.size) {
+    0 -> "Stopping…"
+    1 -> "1 session running"
+    else -> "${aliases.size} sessions running"
 }
