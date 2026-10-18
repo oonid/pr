@@ -75,6 +75,17 @@ class SessionManagerTest {
     }
 
     @Test
+    fun openingAnEndingSessionWaitsThenStartsAFreshOne() {
+        val session = open("alpine")
+        ptys.getValue("alpine").ignoresEof = true
+        manager.end("alpine")
+        assertEquals(SessionManager.OpenResult.Ending(session), manager.open("alpine"))
+        eventually { session.exit.value != null }
+        assertNotSame(session, open("alpine"))
+        assertEquals(2, created.get())
+    }
+
+    @Test
     fun foregroundStartsWithTheFirstSessionOnly() {
         open("alpine")
         open("ubuntu")

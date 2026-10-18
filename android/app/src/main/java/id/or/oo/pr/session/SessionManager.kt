@@ -22,6 +22,7 @@ class SessionManager(
 
     sealed interface OpenResult {
         data class Opened(val session: ManagedSession) : OpenResult
+        data class Ending(val session: ManagedSession) : OpenResult
         data class Failed(val reason: String) : OpenResult
     }
 
@@ -48,6 +49,7 @@ class SessionManager(
             val existing = sessions[alias]
             if (existing != null) {
                 val wasRetained = retained.remove(existing)
+                if (existing.exit.value == null && existing.endRequested) return OpenResult.Ending(existing)
                 if (existing.exit.value == null || wasRetained) return OpenResult.Opened(existing)
                 sessions.remove(alias)
             }
