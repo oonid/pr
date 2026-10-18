@@ -141,7 +141,7 @@ class ManagedSession(
         const val EXIT_CODE_WAIT_MS = 2_000L
         private const val POLL_MS = 50L
         private const val KILL_EXIT_WAIT_MS = 500L
-        private const val SCAN_MARGIN_MS = 1_000L
+        internal const val SCAN_MARGIN_MS = 1_000L
         private const val TIMEOUT_HEADROOM_MS = 2_500L
 
         fun endWorstCaseMs(

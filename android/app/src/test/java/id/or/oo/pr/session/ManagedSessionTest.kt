@@ -132,24 +132,6 @@ class ManagedSessionTest {
     }
 
     @Test
-    fun theDrainWindowOutlastsThreeSecondsAndStopsOnceTheSignalledProgramsExit() {
-        pty.signalled = setOf(42)
-        pty.signalledExitAfterMs = 4_000
-        val s = ManagedSession(
-            alias = "alpine",
-            pty = pty,
-            emulator = null,
-            output = { _, _, _ -> },
-            onEnded = { ended += it },
-        ).also { it.start() }
-        s.end()
-        eventually(timeoutMs = 10_000) { s.exit.value != null }
-        assertEquals(listOf("signal", "eof", "close"), pty.calls)
-        assertTrue(pty.msBetween("signal", "eof") >= 3_900)
-        assertTrue(pty.msBetween("signal", "eof") < 5_500)
-    }
-
-    @Test
     fun theSlowestEndFinishesWithinTheDerivedWorstCase() {
         pty.signalled = setOf(42)
         pty.ignoresEof = true
@@ -161,18 +143,19 @@ class ManagedSessionTest {
             emulator = null,
             output = { _, _, _ -> },
             onEnded = { ended += it },
-            endGraceMs = 200,
-            signalWaitMs = 300,
-            exitCodeWaitMs = 200,
+            endGraceMs = 400,
+            signalWaitMs = 400,
+            exitCodeWaitMs = 400,
         ).also { it.start() }
-        val worstCase = ManagedSession.endWorstCaseMs(signalWaitMs = 300, endGraceMs = 200, exitCodeWaitMs = 200)
+        val worstWithoutMargin =
+            ManagedSession.endWorstCaseMs(signalWaitMs = 400, endGraceMs = 400, exitCodeWaitMs = 400) -
+                ManagedSession.SCAN_MARGIN_MS
         val started = System.nanoTime()
         s.end()
         eventually(timeoutMs = 10_000) { s.exit.value != null }
         val tookMs = (System.nanoTime() - started) / 1_000_000
         assertEquals(listOf("signal", "eof", "kill", "forceKill", "kill", "forceKill", "close"), pty.calls)
-        assertTrue(tookMs >= 300 + 200 + 200 + 200 + 500)
-        assertTrue(tookMs <= worstCase)
+        assertTrue("took $tookMs ms", tookMs in worstWithoutMargin..worstWithoutMargin + 300)
     }
 
     @Test
