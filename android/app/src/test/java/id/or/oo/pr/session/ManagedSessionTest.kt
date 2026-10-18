@@ -50,11 +50,20 @@ class ManagedSessionTest {
     }
 
     @Test
-    fun aReaderFailureWithNoExitCodeForceKillsBeforeClosing() {
+    fun aReaderFailureWithNoExitCodeKillsTheShellBeforeClosing() {
         session()
         pty.failRead()
         eventually { ended.isNotEmpty() }
-        assertEquals(listOf("forceKill", "close"), pty.calls)
+        assertEquals(listOf("kill", "close"), pty.calls)
+    }
+
+    @Test
+    fun aReaderFailureForceKillsWhenTheKillDoesNotEndIt() {
+        pty.ignoresKill = true
+        session()
+        pty.failRead()
+        eventually { ended.isNotEmpty() }
+        assertEquals(listOf("kill", "forceKill", "close"), pty.calls)
     }
 
     @Test
@@ -130,6 +139,16 @@ class ManagedSessionTest {
         assertEquals(listOf("signal", "eof", "close"), pty.calls)
         assertTrue(pty.msBetween("signal", "eof") < 500)
         assertTrue(pty.aliveQueries.isEmpty())
+    }
+
+    @Test
+    fun aBlockedEofDoesNotDelayTheKill() {
+        pty.eofBlocksUntilExit = true
+        val s = session()
+        s.end()
+        eventually { s.exit.value != null }
+        assertEquals(listOf("signal", "eof", "kill", "close"), pty.calls)
+        assertEquals(ManagedSession.Exit(137), s.exit.value)
     }
 
     @Test

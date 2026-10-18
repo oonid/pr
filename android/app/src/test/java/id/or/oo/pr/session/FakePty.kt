@@ -3,6 +3,7 @@ package id.or.oo.pr.session
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 
 class FakePty : Pty {
@@ -22,6 +23,8 @@ class FakePty : Pty {
     @Volatile private var signalledAt = 0L
 
     @Volatile var ignoresEof = false
+    @Volatile var eofBlocksUntilExit = false
+    private val exited = CountDownLatch(1)
     @Volatile var ignoresKill = false
     @Volatile var eofSent = false
     @Volatile var killed = false
@@ -49,6 +52,7 @@ class FakePty : Pty {
 
     fun exit(code: Int) {
         exitCode = code
+        exited.countDown()
         chunks.put(end)
     }
 
@@ -88,7 +92,7 @@ class FakePty : Pty {
         record("eof")
         eofSent = true
         eofCount++
-        if (!ignoresEof) exit(0)
+        if (eofBlocksUntilExit) exited.await() else if (!ignoresEof) exit(0)
     }
 
     override fun kill() {
