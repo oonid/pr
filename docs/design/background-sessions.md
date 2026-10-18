@@ -257,9 +257,9 @@ interface (the real `/proc` by default); a fake process table covers tracee sele
 proot's tracees, a daemon reparented to init, the descendant-walk fallback, a pid vanishing
 mid-scan, zombies counted as exited, and the force-kill order ending with proot.
 
-`ManagedSession` with a fake PTY: End's drain window outlasts 3 s and stops as soon as the
-signalled programs exit; the slowest End (every step ignored, no exit code) finishes within
-`endWorstCaseMs()`; `END_TIMEOUT_MS` exceeds the default worst case.
+`ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
+exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s
+steps, so a missing step fails; `END_TIMEOUT_MS` exceeds the default worst case.
 
 ### Existing suites
 
