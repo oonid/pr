@@ -14,9 +14,9 @@ class ManagedSession(
     val emulator: TerminalEmulator?,
     private val output: (ByteArray, Int, Int) -> Unit,
     private val onEnded: (ManagedSession) -> Unit,
-    private val endGraceMs: Long = 2_000,
-    private val signalWaitMs: Long = 3_000,
-    private val exitCodeWaitMs: Long = 2_000,
+    private val endGraceMs: Long = END_GRACE_MS,
+    private val signalWaitMs: Long = SIGNAL_WAIT_MS,
+    private val exitCodeWaitMs: Long = EXIT_CODE_WAIT_MS,
 ) {
     fun interface Screen {
         fun close()
@@ -135,8 +135,21 @@ class ManagedSession(
         onEnded(this)
     }
 
-    private companion object {
-        const val POLL_MS = 50L
-        const val KILL_EXIT_WAIT_MS = 500L
+    companion object {
+        const val END_GRACE_MS = 2_000L
+        const val SIGNAL_WAIT_MS = 10_000L
+        const val EXIT_CODE_WAIT_MS = 2_000L
+        private const val POLL_MS = 50L
+        private const val KILL_EXIT_WAIT_MS = 500L
+        private const val SCAN_MARGIN_MS = 1_000L
+        private const val TIMEOUT_HEADROOM_MS = 2_500L
+
+        fun endWorstCaseMs(
+            signalWaitMs: Long = SIGNAL_WAIT_MS,
+            endGraceMs: Long = END_GRACE_MS,
+            exitCodeWaitMs: Long = EXIT_CODE_WAIT_MS,
+        ): Long = signalWaitMs + endGraceMs + endGraceMs + exitCodeWaitMs + KILL_EXIT_WAIT_MS + SCAN_MARGIN_MS
+
+        val END_TIMEOUT_MS: Long = endWorstCaseMs() + TIMEOUT_HEADROOM_MS
     }
 }
