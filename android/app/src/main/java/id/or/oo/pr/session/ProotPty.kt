@@ -50,7 +50,7 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
     private fun descendantsOf(roots: List<Int>): List<Int> {
         if (roots.isEmpty()) return emptyList()
         val byParent = if (listedChildren(roots.first()) == null) childrenByParent() else null
-        fun children(pid: Int) = byParent?.get(pid) ?: listedChildren(pid).orEmpty()
+        fun children(pid: Int) = if (byParent != null) byParent[pid].orEmpty() else listedChildren(pid).orEmpty()
         val found = LinkedHashSet<Int>()
         val pending = ArrayDeque(roots.flatMap { children(it) })
         while (pending.isNotEmpty()) {
@@ -60,12 +60,12 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         return found.toList()
     }
 
-    private fun listedChildren(pid: Int): List<Int>? =
-        runCatching { File("/proc/$pid/task/$pid/children").readText() }
-            .getOrNull()
-            ?.trim()
-            ?.split(' ')
-            ?.mapNotNull { it.toIntOrNull() }
+    private fun listedChildren(pid: Int): List<Int>? {
+        val tasks = File("/proc/$pid/task").listFiles() ?: return null
+        val lists = tasks.mapNotNull { task -> runCatching { File(task, "children").readText() }.getOrNull() }
+        if (lists.isEmpty()) return null
+        return lists.flatMap { text -> text.trim().split(' ').mapNotNull { it.toIntOrNull() } }
+    }
 
     private fun childrenByParent(): Map<Int, List<Int>> =
         File("/proc").listFiles().orEmpty()
