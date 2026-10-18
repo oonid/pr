@@ -30,6 +30,8 @@ android/                                    # Android project root
 │       ├── java/id/or/oo/pr/
 │       │   ├── App.kt                      # Application: bootstrap on first launch (188 lines)
 │       │   ├── MainActivity.kt             # Compose: distro list, install/remove (270 lines)
+│       │   ├── DistroOperations.kt         # App-scoped install/remove/test runner
+│       │   ├── PrCliCommand.kt             # Runs pr-cli for DistroOperations
 │       │   ├── TerminalActivity.kt         # Compose: terminal emulator (115 lines)
 │       │   ├── ProotLauncher.kt            # PTY session manager (132 lines)
 │       │   └── PtyNative.kt                # JNI declarations for PTY (43 lines)
@@ -283,6 +285,13 @@ all, Keep CPU awake). Design: `docs/design/background-sessions.md`.
 | Dark mode or theme change while the terminal is open | The recreated terminal reattaches to the same session, ended or not |
 | End session, or End all in the notification | Ends: SIGTERM and SIGCONT to every process in the session except the login shell (including daemons that left the shell's tree), up to 10 s for them to exit (less once they have), then EOF, then the login shell is killed (proot's `--kill-on-exit` takes the rest); if proot must be killed, every tracee is SIGKILLed first, then proot. At worst about 17.5 s; Remove and "Ending the previous session…" wait up to 20 s for it |
 | Android kills the process | Every session ends; nothing is restored; a terminal restored from recents starts a fresh session |
+
+Install, remove and test from the list run in `DistroOperations`, also owned by `App`: one
+operation at a time, its output and state in a `StateFlow` that the list only renders, so rotating
+or switching dark mode keeps the output sheet, the busy state and Remove's wait. Remove of a
+container whose session runs shows "Stopping the <name> session…", ends the session and waits up
+to 20 s for it; if it still runs, removal is cancelled with "Couldn't stop the <name> session;
+removal cancelled." The list refreshes when an operation finishes.
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery
