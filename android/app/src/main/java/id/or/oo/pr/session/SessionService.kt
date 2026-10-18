@@ -25,8 +25,7 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var wakeLock: PowerManager.WakeLock? = null
-    private var foreground = false
-    private var lastStartId = 0
+    private val state = ServiceState()
     private val sessions: SessionManager get() = (application as App).sessions
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -36,41 +35,40 @@ class SessionService : Service() {
         SessionNotifications.createChannels(this)
         scope.launch {
             combine(sessions.running, sessions.keepCpuAwake) { running, awake -> running to awake }
-                .collect { (running, awake) ->
-                    setWakeLock(awake && running.isNotEmpty())
-                    if (running.isNotEmpty()) {
-                        getSystemService(NotificationManager::class.java)
-                            .notify(SessionNotifications.RUNNING_ID, notification(running, awake))
-                    } else if (foreground) {
-                        stopRunning(lastStartId)
-                    }
-                }
+                .collect { (running, awake) -> execute(state.onRunningChanged(running, awake)) }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lastStartId = startId
-        val running = sessions.running.value
-        ServiceCompat.startForeground(
-            this,
-            SessionNotifications.RUNNING_ID,
-            notification(running, sessions.keepCpuAwake.value),
-            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
-        )
-        foreground = true
-        sessions.foregroundStarted()
+        execute(state.onStartCommand(startId, sessions.running.value, sessions.keepCpuAwake.value))
         when (intent?.action) {
             ACTION_END_ALL -> sessions.endAll()
             ACTION_TOGGLE_WAKE -> sessions.setKeepCpuAwake(!sessions.keepCpuAwake.value)
         }
-        if (sessions.running.value.isEmpty()) stopRunning(startId)
         return START_NOT_STICKY
     }
 
-    private fun stopRunning(startId: Int) {
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        foreground = false
-        stopSelfResult(startId)
+    private fun execute(actions: List<ServiceState.Action>) {
+        for (action in actions) {
+            when (action) {
+                is ServiceState.Action.StartForeground -> {
+                    ServiceCompat.startForeground(
+                        this,
+                        SessionNotifications.RUNNING_ID,
+                        notification(action.running, action.awake),
+                        if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
+                    )
+                    sessions.foregroundStarted()
+                }
+                is ServiceState.Action.Notify -> getSystemService(NotificationManager::class.java)
+                    .notify(SessionNotifications.RUNNING_ID, notification(action.running, action.awake))
+                is ServiceState.Action.WakeLock -> setWakeLock(action.on)
+                is ServiceState.Action.Stop -> {
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                    stopSelfResult(action.startId)
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
