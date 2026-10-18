@@ -39,9 +39,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
 import id.or.oo.pr.session.SessionService
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.connectbot.terminal.SelectionController
 import org.connectbot.terminal.Terminal
 
@@ -69,29 +73,42 @@ class TerminalActivity : ComponentActivity() {
             finish()
             return
         }
-        val sessions = (application as App).sessions
-
-        when (val result = sessions.open(alias)) {
-            is SessionManager.OpenResult.Failed -> {
-                setContent { StartFailed(alias, result.reason) }
-                onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-                    override fun handleOnBackPressed() = finish()
-                })
-                return
-            }
-            is SessionManager.OpenResult.Opened -> {
-                session = result.session
-                sessions.attach(result.session, screen)
-            }
-        }
-        val current = session!!
-        requestNotificationPermissionOnce()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (current.exit.value != null) finish() else showLeavePrompt.value = true
+                val current = session
+                if (current == null || current.exit.value != null) finish() else showLeavePrompt.value = true
             }
         })
+
+        if (open(alias) !is SessionManager.OpenResult.Failed) requestNotificationPermissionOnce()
+    }
+
+    private fun open(alias: String): SessionManager.OpenResult {
+        val result = (application as App).sessions.open(alias)
+        when (result) {
+            is SessionManager.OpenResult.Failed -> setContent { Message("Couldn't start $alias: ${result.reason}") }
+            is SessionManager.OpenResult.Ending -> {
+                setContent { Message("Ending the previous session…") }
+                lifecycleScope.launch {
+                    result.session.exit.first { it != null }
+                    if (!isFinishing) open(alias)
+                }
+            }
+            is SessionManager.OpenResult.Opened -> show(result.session)
+        }
+        return result
+    }
+
+    private fun show(current: ManagedSession) {
+        val sessions = (application as App).sessions
+        session = current
+        sessions.attach(current, screen)
+        sessions.setVisible(current, screen, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        if (hasWindowFocus() && !initialImeRequested) {
+            initialImeRequested = true
+            ensureInitialKeyboard(attempt = 0)
+        }
 
         setContent {
             val exit by current.exit.collectAsState()
@@ -248,11 +265,11 @@ private fun LeavePrompt(onEnd: () -> Unit, onKeep: () -> Unit, onCancel: () -> U
 }
 
 @Composable
-private fun StartFailed(alias: String, reason: String) {
+private fun Message(text: String) {
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF1a1a2e)) {
             Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text("Couldn't start $alias: $reason", color = Color.White)
+                Text(text, color = Color.White)
             }
         }
     }

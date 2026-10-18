@@ -46,7 +46,8 @@ alias.
 
 - `open(alias): OpenResult` returns `Opened(session)` with the running session for the container,
   or starts one through `ProotLauncher.startSession`. A failure to start is returned as
-  `Failed(reason)`, not thrown past the caller.
+  `Failed(reason)`, not thrown past the caller. A session that is ending is returned as
+  `Ending(session)`; `open` never blocks, since it runs on the main thread.
 - `attach(session, screen)` and `detach(session, screen)` connect a screen to a session;
   `setVisible(session, screen, visible)` records whether that screen is on screen.
   `detach(session, screen, retainEnded = true)` is for an activity being recreated: the session stays
@@ -130,6 +131,7 @@ banners described in sections 5 and 6.
 |-------|-----------|
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
 | Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
+| Open a container whose session is ending | The screen shows "Ending the previous session…", waits for that session's exit, then opens again and starts a fresh session |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
 | End (prompt, "End all", Remove) | SIGHUP to every process started from the login shell (not the shell, not proot), found by walking `/proc`; if any was signalled, up to 2 s for the session to end. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more proot is killed. A background program such as the gateway gets SIGHUP to clean up first. At worst about 8 s, with the 2 s wait for the exit code |
 | Home, or switching apps | No prompt; the session keeps running; the screen stays attached but is not visible |
