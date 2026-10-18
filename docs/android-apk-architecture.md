@@ -289,6 +289,11 @@ off). A process with a foreground service keeps its wake lock and network in Doz
 savers can still stop an app that is not exempt from battery optimization, so the container list
 offers the exemption.
 
+Two limits remain for a 24/7 session: Android 12+ kills app child processes beyond 32 system-wide
+(the phantom process limit; the developer option "Disable child process restrictions" lifts it), so a
+gateway that spawns many processes can lose some; and Android 14+ Task Manager "Stop" kills the
+process and every session.
+
 ---
 
 ## Follow-up Items
