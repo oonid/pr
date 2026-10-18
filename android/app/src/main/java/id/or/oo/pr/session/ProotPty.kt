@@ -14,11 +14,18 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         session.resize(rows, cols)
     }
 
-    override fun hangUp(): Boolean {
-        if (session.exitCode != null || session.pid <= 0) return false
-        val targets = descendantsOf(childrenOf(session.pid))
-        targets.forEach { Process.sendSignal(it, SIGHUP) }
-        return targets.isNotEmpty()
+    override fun signalTracees(): Set<Int> {
+        if (session.exitCode != null || session.pid <= 0) return emptySet()
+        val shells = childrenOf(session.pid)
+        val targets = traceesOf(session.pid, statuses(), exclude = shells.toSet() + session.pid)
+            ?: descendantsOf(shells).toSet()
+        targets.forEach { pid -> GENTLE_SIGNALS.forEach { Process.sendSignal(pid, it) } }
+        return targets
+    }
+
+    override fun alive(pids: Set<Int>): Boolean = pids.any { pid ->
+        val state = runCatching { File("/proc/$pid/stat").readText() }.getOrNull()?.let(::processState)
+        state != null && state != 'Z' && state != 'X'
     }
 
     override fun sendEof() {
@@ -67,20 +74,43 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         return lists.flatMap { text -> text.trim().split(' ').mapNotNull { it.toIntOrNull() } }
     }
 
+    private fun procPids(): List<Int> = File("/proc").listFiles().orEmpty().mapNotNull { it.name.toIntOrNull() }
+
+    private fun statuses(): Map<Int, String?> = buildMap {
+        for (pid in procPids()) {
+            val status = runCatching { File("/proc/$pid/status").readText() }.getOrNull()
+            if (status != null || File("/proc/$pid").exists()) put(pid, status)
+        }
+    }
+
     private fun childrenByParent(): Map<Int, List<Int>> =
-        File("/proc").listFiles().orEmpty()
-            .mapNotNull { it.name.toIntOrNull() }
+        procPids()
             .mapNotNull { child ->
                 runCatching { parentPid(File("/proc/$child/stat").readText()) }.getOrNull()?.let { it to child }
             }
             .groupBy({ it.first }, { it.second })
 
     private companion object {
-        const val SIGHUP = 1
+        val GENTLE_SIGNALS = listOf(1, 18, 15)
     }
 }
 
 fun parentPid(stat: String): Int? {
     val afterName = stat.substringAfterLast(')', missingDelimiterValue = "").trim()
     return afterName.split(' ').getOrNull(1)?.toIntOrNull()
+}
+
+fun processState(stat: String): Char? =
+    stat.substringAfterLast(')', missingDelimiterValue = "").trim().split(' ').firstOrNull()?.singleOrNull()
+
+fun tracerPid(status: String): Int? =
+    status.lineSequence().firstOrNull { it.startsWith("TracerPid:") }?.substringAfter(':')?.trim()?.toIntOrNull()
+
+fun traceesOf(tracer: Int, statuses: Map<Int, String?>, exclude: Set<Int>): Set<Int>? {
+    val tracees = LinkedHashSet<Int>()
+    for ((pid, status) in statuses) {
+        val tracedBy = status?.let(::tracerPid) ?: return null
+        if (tracedBy == tracer && pid !in exclude) tracees += pid
+    }
+    return tracees
 }
