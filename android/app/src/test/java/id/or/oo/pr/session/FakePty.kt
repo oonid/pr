@@ -1,5 +1,6 @@
 package id.or.oo.pr.session
 
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 
@@ -9,6 +10,11 @@ class FakePty : Pty {
 
     val written = CopyOnWriteArrayList<String>()
     val resizes = CopyOnWriteArrayList<Pair<Int, Int>>()
+    val calls = CopyOnWriteArrayList<String>()
+    private val callTimes = ConcurrentHashMap<String, Long>()
+
+    @Volatile var hangUpSignals = false
+    @Volatile var exitsOnHangUp = false
 
     @Volatile var ignoresEof = false
     @Volatile var ignoresKill = false
@@ -25,6 +31,14 @@ class FakePty : Pty {
     override var exitCode: Int? = null
 
     fun emit(text: String) = chunks.put(text.toByteArray())
+
+    fun msBetween(first: String, second: String): Long =
+        (callTimes.getValue(second) - callTimes.getValue(first)) / 1_000_000
+
+    private fun record(call: String) {
+        callTimes[call] = System.nanoTime()
+        calls += call
+    }
 
     fun exit(code: Int) {
         exitCode = code
@@ -49,23 +63,33 @@ class FakePty : Pty {
         resizes += rows to cols
     }
 
+    override fun hangUp(): Boolean {
+        record("hangUp")
+        if (exitsOnHangUp) exit(129)
+        return hangUpSignals
+    }
+
     override fun sendEof() {
+        record("eof")
         eofSent = true
         eofCount++
         if (!ignoresEof) exit(0)
     }
 
     override fun kill() {
+        record("kill")
         killed = true
         if (!ignoresKill) exit(137)
     }
 
     override fun forceKill() {
+        record("forceKill")
         forceKilled = true
         exit(137)
     }
 
     override fun close() {
+        record("close")
         closed = true
         onClose()
     }

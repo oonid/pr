@@ -14,6 +14,13 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         session.resize(rows, cols)
     }
 
+    override fun hangUp(): Boolean {
+        if (session.exitCode != null || session.pid <= 0) return false
+        val targets = descendantsOf(childrenOf(session.pid))
+        targets.forEach { Process.sendSignal(it, SIGHUP) }
+        return targets.isNotEmpty()
+    }
+
     override fun sendEof() {
         session.write(byteArrayOf(0x04))
     }
@@ -35,15 +42,41 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
         get() = session.exitCode
 
     private fun childrenOf(pid: Int): List<Int> {
-        val listed = runCatching { File("/proc/$pid/task/$pid/children").readText() }
+        val listed = listedChildren(pid)
+        if (!listed.isNullOrEmpty()) return listed
+        return childrenByParent()[pid].orEmpty()
+    }
+
+    private fun descendantsOf(roots: List<Int>): List<Int> {
+        if (roots.isEmpty()) return emptyList()
+        val byParent = if (listedChildren(roots.first()) == null) childrenByParent() else null
+        fun children(pid: Int) = byParent?.get(pid) ?: listedChildren(pid).orEmpty()
+        val found = LinkedHashSet<Int>()
+        val pending = ArrayDeque(roots.flatMap { children(it) })
+        while (pending.isNotEmpty()) {
+            val pid = pending.removeFirst()
+            if (pid !in roots && found.add(pid)) pending.addAll(children(pid))
+        }
+        return found.toList()
+    }
+
+    private fun listedChildren(pid: Int): List<Int>? =
+        runCatching { File("/proc/$pid/task/$pid/children").readText() }
             .getOrNull()
             ?.trim()
             ?.split(' ')
             ?.mapNotNull { it.toIntOrNull() }
-        if (!listed.isNullOrEmpty()) return listed
-        return File("/proc").listFiles().orEmpty()
+
+    private fun childrenByParent(): Map<Int, List<Int>> =
+        File("/proc").listFiles().orEmpty()
             .mapNotNull { it.name.toIntOrNull() }
-            .filter { child -> runCatching { parentPid(File("/proc/$child/stat").readText()) }.getOrNull() == pid }
+            .mapNotNull { child ->
+                runCatching { parentPid(File("/proc/$child/stat").readText()) }.getOrNull()?.let { it to child }
+            }
+            .groupBy({ it.first }, { it.second })
+
+    private companion object {
+        const val SIGHUP = 1
     }
 }
 

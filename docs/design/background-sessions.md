@@ -131,6 +131,7 @@ banners described in sections 5 and 6.
 | Open a container with no session | `SessionManager.open` starts the shell; 0 to 1 starts the service and its notification; the screen attaches |
 | Open a container whose session runs | The screen reattaches, shows the current contents, and resizes the session; a screen that showed it before closes |
 | Back | Keyboard, then selection, then the prompt. End closes the session; Keep running returns to the list; Cancel stays |
+| End (prompt, "End all", Remove) | SIGHUP to every process started from the login shell (not the shell, not proot), found by walking `/proc`; if any was signalled, up to 2 s for the session to end. Then EOF to the shell; after 2 s the login shell is killed (proot's `--kill-on-exit` takes the rest); after 2 s more proot is killed. A background program such as the gateway gets SIGHUP to clean up first. At worst about 8 s, with the 2 s wait for the exit code |
 | Home, or switching apps | No prompt; the session keeps running; the screen stays attached but is not visible |
 | A configuration change recreates the screen (dark mode, theme) | The new screen reattaches to the same session; an ended one still shows "Session ended (exit N)" |
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
