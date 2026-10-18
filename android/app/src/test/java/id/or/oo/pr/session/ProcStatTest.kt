@@ -66,6 +66,25 @@ class ProcStatTest {
     }
 
     @Test
+    fun forceKillTargetsEveryTraceeIncludingTheLoginShellBeforeProot() {
+        val statuses = mapOf(
+            1790 to status(1790, 0),
+            1804 to status(1804, 1790),
+            1811 to status(1811, 1790),
+            1900 to status(1900, 1790),
+            2000 to status(2000, 0),
+            2100 to status(2100, 3000),
+        )
+        assertEquals(listOf(1804, 1811, 1900, 1790), forceKillTargets(1790, statuses) { listOf(5000) })
+    }
+
+    @Test
+    fun forceKillFallsBackToTheWalkWhenTraceesAreUnknown() {
+        val statuses = mapOf(1804 to status(1804, 1790), 1900 to null)
+        assertEquals(listOf(1804, 1900, 1790), forceKillTargets(1790, statuses) { listOf(1804, 1790, 1900) })
+    }
+
+    @Test
     fun endSendsSigtermThenSigcontAndNoSighup() {
         assertEquals(listOf(15, 18), END_SIGNALS)
     }

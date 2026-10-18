@@ -38,7 +38,9 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
     }
 
     override fun forceKill() {
-        if (session.exitCode == null && session.pid > 0) Process.sendSignal(session.pid, Process.SIGNAL_KILL)
+        if (session.exitCode != null || session.pid <= 0) return
+        forceKillTargets(session.pid, statuses()) { descendantsOf(listOf(session.pid)) }
+            .forEach { Process.sendSignal(it, Process.SIGNAL_KILL) }
     }
 
     override fun close() {
@@ -112,4 +114,9 @@ fun traceesOf(tracer: Int, statuses: Map<Int, String?>, exclude: Set<Int>): Set<
         if (tracedBy == tracer && pid !in exclude) tracees += pid
     }
     return tracees
+}
+
+fun forceKillTargets(proot: Int, statuses: Map<Int, String?>, walk: () -> List<Int>): List<Int> {
+    val tracees = traceesOf(proot, statuses, exclude = setOf(proot)) ?: walk()
+    return tracees.filter { it != proot }.distinct() + proot
 }
