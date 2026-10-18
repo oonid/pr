@@ -49,7 +49,7 @@ class SessionManager(
         val session = synchronized(lock) {
             val existing = sessions[alias]
             if (existing != null) {
-                val wasRetained = retained.remove(existing)
+                val wasRetained = existing in retained
                 if (existing.exit.value == null && existing.endRequested) return OpenResult.Ending(existing)
                 if (existing.exit.value == null || wasRetained) return OpenResult.Opened(existing)
                 sessions.remove(alias)
@@ -72,7 +72,11 @@ class SessionManager(
     }
 
     fun attach(session: ManagedSession, screen: ManagedSession.Screen) {
-        session.attach(screen)?.close()
+        val previous = synchronized(lock) {
+            retained.remove(session)
+            session.attach(screen)
+        }
+        previous?.close()
     }
 
     fun setVisible(session: ManagedSession, screen: ManagedSession.Screen, visible: Boolean) {

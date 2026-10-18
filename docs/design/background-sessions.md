@@ -107,9 +107,10 @@ Holds no session state.
 
 A view onto a session. It calls `SessionManager.open(alias)`, draws the session's emulator, and
 forwards keyboard input and resizes. It marks its screen visible in `onStart` and hidden in
-`onStop`. Closing the screen detaches; it never ends the session. When the activity is recreated by a
-configuration change it does not handle (dark mode, for example), `onDestroy` detaches with
-`retainEnded`, and the new activity reattaches to the same session, ended or not. A
+`onStop`, except when it stops for a configuration change. Closing the screen detaches; it never ends
+the session. When the activity is recreated by a configuration change it does not handle (dark mode,
+for example), `onDestroy` detaches with `retainEnded`, and the new activity reattaches to the same
+session, ended or not; the session stays retained until a screen attaches to it. A
 session is shown by at most one screen: opening a container whose session another screen shows
 attaches it to the new screen, and the old screen closes. Back
 keeps its current order: the first press hides the keyboard if it is up, the next clears a text
