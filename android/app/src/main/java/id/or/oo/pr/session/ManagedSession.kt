@@ -77,8 +77,9 @@ class ManagedSession(
     fun end() {
         if (_exit.value != null) return
         if (!endFlag.compareAndSet(false, true)) return
-        synchronized(ptyLock) { if (!closed) pty.sendEof() }
         thread(isDaemon = true, name = "pty-end-$alias") {
+            if (pty.hangUp() && ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
+            synchronized(ptyLock) { if (!closed) pty.sendEof() }
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.kill()
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread

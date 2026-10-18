@@ -79,6 +79,49 @@ class ManagedSessionTest {
     }
 
     @Test
+    fun endHangsUpThenWaitsThenSendsEofThenKills() {
+        pty.hangUpSignals = true
+        pty.ignoresEof = true
+        pty.ignoresKill = true
+        val s = session()
+        s.end()
+        eventually { s.exit.value != null }
+        assertEquals(listOf("hangUp", "eof", "kill", "forceKill", "close"), pty.calls)
+        assertTrue(pty.msBetween("hangUp", "eof") >= 100)
+    }
+
+    @Test
+    fun endSendsEofAtOnceWhenTheHangUpSignalledNothing() {
+        val s = session(endGraceMs = 1_000)
+        s.end()
+        eventually { s.exit.value != null }
+        assertEquals(listOf("hangUp", "eof", "close"), pty.calls)
+        assertTrue(pty.msBetween("hangUp", "eof") < 500)
+    }
+
+    @Test
+    fun endStopsWhenTheHangUpEndsTheSession() {
+        pty.hangUpSignals = true
+        pty.exitsOnHangUp = true
+        val s = session()
+        s.end()
+        eventually { s.exit.value != null }
+        Thread.sleep(300)
+        assertEquals(listOf("hangUp", "close"), pty.calls)
+        assertEquals(ManagedSession.Exit(129), s.exit.value)
+    }
+
+    @Test
+    fun endStopsWhenTheEofEndsTheSession() {
+        pty.hangUpSignals = true
+        val s = session()
+        s.end()
+        eventually { s.exit.value != null }
+        Thread.sleep(300)
+        assertEquals(listOf("hangUp", "eof", "close"), pty.calls)
+    }
+
+    @Test
     fun inputAndResizeAfterExitAreIgnored() {
         val s = session()
         pty.exit(0)
