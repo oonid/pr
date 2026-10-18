@@ -1,5 +1,7 @@
 # Background Sessions Implementation Plan
 
+Historical implementation plan; where it differs, docs/design/background-sessions.md and the code are authoritative (see PR #16).
+
 > Work through the tasks in order. Each step is a checkbox (`- [ ]`); each task ends with a commit.
 
 **Goal:** Keep a container's terminal session running after its screen closes, under a foreground service, so the Hermes gateway can run 24/7 (design: `docs/design/background-sessions.md`).
