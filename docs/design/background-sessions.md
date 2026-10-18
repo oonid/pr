@@ -51,7 +51,7 @@ alias.
 - `attach(session, screen)` and `detach(session, screen)` connect a screen to a session;
   `setVisible(session, screen, visible)` records whether that screen is on screen.
   `detach(session, screen, retainEnded = true)` is for an activity being recreated: the session stays
-  in the map even if it has ended, and the next `open` returns it once.
+  in the map even if it has ended, and `open` returns it until a screen attaches to it.
 - `end(alias)` and `endAll()` close sessions.
 - `running: StateFlow<List<String>>` (the aliases of running sessions) for the list screen and the
   notification; `keepCpuAwake` and `backgroundError` are state flows too.

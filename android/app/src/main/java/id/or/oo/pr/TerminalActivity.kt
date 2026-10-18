@@ -109,7 +109,9 @@ class TerminalActivity : ComponentActivity() {
         val sessions = (application as App).sessions
         session = current
         sessions.attach(current, screen)
-        sessions.setVisible(current, screen, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        if (lifecycle.currentState != Lifecycle.State.INITIALIZED) {
+            sessions.setVisible(current, screen, lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        }
         if (hasWindowFocus() && !initialImeRequested) {
             initialImeRequested = true
             ensureInitialKeyboard(attempt = 0)
