@@ -46,6 +46,7 @@ import id.or.oo.pr.session.SessionManager
 import id.or.oo.pr.session.SessionService
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.connectbot.terminal.SelectionController
 import org.connectbot.terminal.Terminal
 
@@ -85,14 +86,18 @@ class TerminalActivity : ComponentActivity() {
     }
 
     private fun open(alias: String): SessionManager.OpenResult {
-        val result = (application as App).sessions.open(alias)
+        val sessions = (application as App).sessions
+        val result = sessions.open(alias)
         when (result) {
             is SessionManager.OpenResult.Failed -> setContent { Message("Couldn't start $alias: ${result.reason}") }
             is SessionManager.OpenResult.Ending -> {
+                sessions.attach(result.session, screen)
+                sessions.detach(result.session, screen)
                 setContent { Message("Ending the previous session…") }
                 lifecycleScope.launch {
-                    result.session.exit.first { it != null }
-                    if (!isFinishing) open(alias)
+                    val stopped = withTimeoutOrNull(ENDING_WAIT_MS) { result.session.exit.first { it != null } }
+                    if (isFinishing) return@launch
+                    if (stopped == null) setContent { Message("Couldn't stop the previous session.") } else open(alias)
                 }
             }
             is SessionManager.OpenResult.Opened -> show(result.session)
@@ -245,6 +250,10 @@ class TerminalActivity : ComponentActivity() {
     override fun onDestroy() {
         session?.let { (application as App).sessions.detach(it, screen, retainEnded = isChangingConfigurations) }
         super.onDestroy()
+    }
+
+    private companion object {
+        const val ENDING_WAIT_MS = 10_000L
     }
 }
 
