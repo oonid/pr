@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,12 +28,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import id.or.oo.pr.session.ManagedSession
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.withContext
 import java.io.File
 
 data class DistroInfo(
@@ -118,17 +113,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DistroListScreen(app: App) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var distros by remember { mutableStateOf<List<DistroInfo>>(emptyList()) }
-    var loadingDistro by remember { mutableStateOf<String?>(null) }
-    var outputLines by remember { mutableStateOf(listOf<String>()) }
-    var showOutput by remember { mutableStateOf(false) }
-    var operationLabel by remember { mutableStateOf("") }
-    var operationDistroName by remember { mutableStateOf("") }
-    var customImageRef by remember { mutableStateOf("") }
-    var customAlias by remember { mutableStateOf("") }
+    var customImageRef by rememberSaveable { mutableStateOf("") }
+    var customAlias by rememberSaveable { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val running by app.sessions.running.collectAsState()
+    val operation by app.operations.operation.collectAsState()
+    val busy = operation?.running == true
 
     fun refreshDistros() {
         val legacyRootfsDir = File(app.prefixDir, "var/lib/pr/installed-rootfs")
@@ -164,7 +155,11 @@ fun DistroListScreen(app: App) {
         distros = (catalogDistros + runtimeOnlyDistros).sortedBy { it.displayName.lowercase() }
     }
 
-    LaunchedEffect(Unit) { refreshDistros() }
+    fun dismissOutput() {
+        if (app.operations.dismiss()) refreshDistros()
+    }
+
+    LaunchedEffect(busy) { refreshDistros() }
 
     Scaffold(
         topBar = {
@@ -188,117 +183,29 @@ fun DistroListScreen(app: App) {
                     CustomImageInstallCard(
                         imageRef = customImageRef,
                         alias = customAlias,
-                        isLoading = loadingDistro != null,
+                        isLoading = busy,
                         onImageRefChange = { customImageRef = it },
                         onAliasChange = { customAlias = it },
-                        onInstall = {
-                            if (loadingDistro != null) return@CustomImageInstallCard
-                            val source = customImageRef.trim()
-                            if (source.isEmpty()) return@CustomImageInstallCard
-                            val alias = customAlias.trim()
-                            if (alias.isNotEmpty() && !isValidOverrideAlias(alias)) {
-                                showOutput = true
-                                outputLines = listOf(
-                                    "ERROR: Invalid alias '$alias'.",
-                                    "Alias must start with an alphanumeric character and use only [A-Za-z0-9_.+-]."
-                                )
-                                return@CustomImageInstallCard
-                            }
-                            val args = mutableListOf("install", source)
-                            if (alias.isNotEmpty()) {
-                                args += listOf("--override-alias", alias)
-                            }
-                            loadingDistro = "__custom__"
-                            operationLabel = "Installing"
-                            operationDistroName = source
-                            showOutput = true
-                            outputLines = listOf("Installing $source…")
-                            scope.launch {
-                                runDistroCommand(app, args) { line ->
-                                    outputLines = outputLines + line
-                                }
-                                loadingDistro = null
-                            }
-                        }
+                        onInstall = { app.operations.installCustom(customImageRef, customAlias) }
                     )
                 }
                 items(distros) { distro ->
                     DistroCard(
                         distro = distro,
-                        isLoading = loadingDistro == distro.alias,
+                        isLoading = busy && operation?.custom == false && operation?.alias == distro.alias,
                         isRunning = distro.alias in running,
                         onInstall = {
-                            if (loadingDistro == null) {
-                                loadingDistro = distro.alias
-                                operationLabel = "Installing"
-                                operationDistroName = distro.displayName
-                                showOutput = true
-                                outputLines = listOf("Installing ${distro.displayName}…")
-                                scope.launch {
-                                    runDistroCommand(
-                                        app,
-                                        listOf(
-                                            "install",
-                                            distro.installSource,
-                                            "--override-alias",
-                                            distro.alias
-                                        )
-                                    ) { line ->
-                                        outputLines = outputLines + line
-                                    }
-                                    loadingDistro = null
-                                }
-                            }
+                            app.operations.install(distro.alias, distro.displayName, distro.installSource)
                         },
                         onLogin = {
-                            if (loadingDistro == null) {
+                            if (!busy) {
                                 val intent = Intent(context, TerminalActivity::class.java)
                                 intent.putExtra("distro", distro.alias)
                                 context.startActivity(intent)
                             }
                         },
-                        onRemove = {
-                            if (loadingDistro == null) {
-                                loadingDistro = distro.alias
-                                operationLabel = "Removing"
-                                operationDistroName = distro.displayName
-                                showOutput = true
-                                outputLines = listOf("Removing ${distro.displayName}…")
-                                scope.launch {
-                                    if (distro.alias in app.sessions.running.value) {
-                                        app.sessions.end(distro.alias)
-                                        val stopped = withTimeoutOrNull(ManagedSession.END_TIMEOUT_MS) {
-                                            app.sessions.running.first { distro.alias !in it }
-                                        }
-                                        if (stopped == null) {
-                                            outputLines = outputLines +
-                                                "Couldn't stop the ${distro.displayName} session; removal cancelled."
-                                            loadingDistro = null
-                                            return@launch
-                                        }
-                                    }
-                                    runDistroCommand(app, listOf("remove", distro.alias)) { line ->
-                                        outputLines = outputLines + line
-                                    }
-                                    loadingDistro = null
-                                }
-                            }
-                        },
-                        onTest = {
-                            if (loadingDistro == null) {
-                                loadingDistro = distro.alias
-                                operationLabel = "Testing"
-                                operationDistroName = distro.displayName
-                                showOutput = true
-                                outputLines = listOf("Testing ${distro.displayName}…")
-                                scope.launch {
-                                    runDistroCommand(app, listOf("test", distro.alias)) { line ->
-                                        outputLines = outputLines + line
-                                    }
-                                    loadingDistro = null
-                                }
-                            }
-                        },
+                        onRemove = { app.operations.remove(distro.alias, distro.displayName) },
+                        onTest = { app.operations.test(distro.alias, distro.displayName) },
                     )
                 }
             }
@@ -307,28 +214,17 @@ fun DistroListScreen(app: App) {
         // Output console as a bottom sheet overlay.
         // ModalBottomSheet renders as a popup window so it sits above the list
         // and handles IME insets automatically — text never hides behind the keyboard.
-        if (showOutput) {
+        operation?.let { current ->
             ModalBottomSheet(
-                onDismissRequest = {
-                    // Prevent swipe-dismiss while an operation is still running
-                    if (loadingDistro == null) {
-                        showOutput = false
-                        outputLines = emptyList()
-                        refreshDistros()
-                    }
-                },
+                onDismissRequest = ::dismissOutput,
                 sheetState = sheetState,
             ) {
                 OutputConsoleContent(
-                    operationLabel = operationLabel,
-                    distroName = operationDistroName,
-                    isRunning = loadingDistro != null,
-                    outputLines = outputLines,
-                    onClose = {
-                        showOutput = false
-                        outputLines = emptyList()
-                        refreshDistros()
-                    }
+                    operationLabel = current.kind.label,
+                    distroName = current.displayName,
+                    isRunning = current.running,
+                    outputLines = current.lines,
+                    onClose = ::dismissOutput
                 )
             }
         }
@@ -663,77 +559,4 @@ fun OutputConsoleContent(
 
         Spacer(Modifier.height(8.dp))
     }
-}
-
-private suspend fun runDistroCommand(
-    app: App,
-    args: List<String>,
-    onLine: (String) -> Unit
-) = withContext(Dispatchers.IO) {
-    val binDir = File(app.prefixDir, "bin")
-
-    val env = mapOf(
-        "APP_PREFIX" to app.prefixDir.absolutePath,
-        "APP_HOME" to app.homeDir.absolutePath,
-        "APP_PACKAGE" to app.packageName,
-        "PATH" to "${binDir.absolutePath}:/system/bin:/system/xbin",
-        "PROOT_NO_SECCOMP" to "1",
-        "PROOT_TMP_DIR" to app.cacheDir.absolutePath,
-        "HOME" to app.homeDir.absolutePath,
-        "TERM" to "xterm-256color",
-        "TMPDIR" to app.cacheDir.absolutePath,
-        "APP_DNS_SERVERS" to app.dnsServers.joinToString(","),
-    )
-
-    val prCli = File(binDir, "pr-cli").absolutePath
-    val cmd = arrayOf(prCli, *args.toTypedArray())
-
-    android.util.Log.d("PR", "Running: ${cmd.joinToString(" ")}")
-    val pb = ProcessBuilder(*cmd)
-    pb.environment().putAll(env)
-    pb.redirectErrorStream(true)
-
-    try {
-        val proc = pb.start()
-        val reader = proc.inputStream.bufferedReader()
-        var line: String? = reader.readLine()
-        while (line != null) {
-            val cleaned = line
-                .replace(Regex("\\x1B\\[[0-9;]*[mGKHJ]"), "")
-                .replace(Regex("\\x1B\\]\\d+;.*?\\x07"), "")
-                .replace(Regex("\r"), "")
-                .trim()
-            if (cleaned.isNotEmpty()) {
-                val finalLine = cleaned
-                android.util.Log.d("PR", finalLine)
-                withContext(Dispatchers.Main) { onLine(finalLine) }
-            }
-            line = reader.readLine()
-        }
-        val exitCode = proc.waitFor()
-        android.util.Log.d("PR", "Exit code: $exitCode")
-        withContext(Dispatchers.Main) {
-            if (exitCode != 0) {
-                onLine("Exit code: $exitCode")
-            } else {
-                onLine("Done.")
-            }
-        }
-    } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onLine("ERROR: ${e.message}") }
-    }
-}
-
-private fun isValidOverrideAlias(alias: String): Boolean {
-    if (alias.isEmpty() || alias.endsWith(".sh")) {
-        return false
-    }
-    if (alias.contains('/') || alias.contains('\\') || alias.contains("..")) {
-        return false
-    }
-    val first = alias.firstOrNull() ?: return false
-    if (!first.isLetterOrDigit()) {
-        return false
-    }
-    return alias.all { it.isLetterOrDigit() || it == '_' || it == '.' || it == '+' || it == '-' }
 }
