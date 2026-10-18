@@ -116,7 +116,10 @@ fun DistroListScreen(app: App) {
     var distros by remember { mutableStateOf<List<DistroInfo>>(emptyList()) }
     var customImageRef by rememberSaveable { mutableStateOf("") }
     var customAlias by rememberSaveable { mutableStateOf("") }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { it != SheetValue.Hidden || app.operations.operation.value?.running != true },
+    )
     val running by app.sessions.running.collectAsState()
     val operation by app.operations.operation.collectAsState()
     val busy = operation?.running == true

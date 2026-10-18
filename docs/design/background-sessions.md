@@ -138,9 +138,10 @@ or finished, exit code.
 
 Containers with a running session show a "running" mark; tapping one reattaches. It shows the
 banners described in sections 5 and 6. The output sheet, its busy state and the row spinner render
-`DistroOperations.operation`; the sheet shows while there is an operation, Close and swipe-down
-(only once it has finished) call `dismiss()`, and the list refreshes when an operation starts or
-finishes and when the sheet closes. Only the custom image fields are kept by the screen
+`DistroOperations.operation`; the sheet shows while there is an operation. While it runs the
+sheet refuses to hide (`confirmValueChange`), so swipe-down, a scrim tap and Back do nothing and
+Close is disabled; once it has finished, each of them calls `dismiss()`. The list refreshes when an
+operation starts or finishes and when the sheet closes. Only the custom image fields are kept by the screen
 (`rememberSaveable`).
 
 ### Unchanged
