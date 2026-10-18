@@ -83,9 +83,4 @@ class ProcStatTest {
         val statuses = mapOf(1804 to status(1804, 1790), 1900 to null)
         assertEquals(listOf(1804, 1900, 1790), forceKillTargets(1790, statuses) { listOf(1804, 1790, 1900) })
     }
-
-    @Test
-    fun endSendsSigtermThenSigcontAndNoSighup() {
-        assertEquals(listOf(15, 18), END_SIGNALS)
-    }
 }

@@ -94,7 +94,7 @@ class ProotPty(private val session: ProotLauncher.Session) : Pty {
 
 }
 
-val END_SIGNALS = listOf(15, 18)
+private val END_SIGNALS = listOf(15, 18)
 
 fun parentPid(stat: String): Int? {
     val afterName = stat.substringAfterLast(')', missingDelimiterValue = "").trim()
