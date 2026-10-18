@@ -12,6 +12,9 @@ import id.or.oo.pr.session.NotificationEndedNotifier
 import id.or.oo.pr.session.ProotSessionFactory
 import id.or.oo.pr.session.ServiceForegroundController
 import id.or.oo.pr.session.SessionManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -55,6 +58,10 @@ class App : Application(), ProotHost {
             ServiceForegroundController(this),
             NotificationEndedNotifier(this),
         )
+    }
+
+    val operations: DistroOperations by lazy {
+        DistroOperations(PrCliCommand(this), sessions, CoroutineScope(SupervisorJob() + Dispatchers.Default))
     }
 
     val nativeLibDir: File
