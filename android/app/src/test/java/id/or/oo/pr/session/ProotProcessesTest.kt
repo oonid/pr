@@ -57,6 +57,15 @@ class ProotProcessesTest {
     }
 
     @Test
+    fun aStatusUnreadableWhileTheProcessStillExistsForcesTheWalk() {
+        val proc = session().apply {
+            add(1820, ppid = shell, tracer = proot, statusReadable = false, statReadable = false)
+            add(1900, ppid = 1, tracer = proot)
+        }
+        assertEquals(setOf(1810, 1811), ProotProcesses(proc).endTargets(proot))
+    }
+
+    @Test
     fun theFallbackWalkReadsTheChildrenFilesOfEveryTask() {
         val proc = session(childrenFiles = true).apply {
             add(1810, ppid = shell, tracer = proot, threads = listOf(1812), statusReadable = false)
@@ -66,13 +75,14 @@ class ProotProcessesTest {
     }
 
     @Test
-    fun aPidVanishingMidScanIsSkippedWithoutFallingBack() {
+    fun aPidVanishingBetweenTheStatusListingAndItsReadIsSkippedWithoutFallingBack() {
         val proc = session().apply {
             add(1820, ppid = shell, tracer = proot)
             add(1900, ppid = 1, tracer = proot)
-            vanishAfterListing(1820)
+            vanishAfterListing(1820, listing = 2)
         }
         assertEquals(setOf(1810, 1811, 1900), ProotProcesses(proc).endTargets(proot))
+        assertEquals(listOf("status 1820", "exists 1820"), proc.readsAfterVanishing)
     }
 
     @Test
@@ -80,9 +90,10 @@ class ProotProcessesTest {
         val proc = session().apply {
             add(1820, ppid = shell, tracer = proot, statusReadable = false)
             add(1821, ppid = shell, tracer = proot)
-            vanishAfterListing(1821)
+            vanishAfterListing(1821, listing = 3)
         }
         assertEquals(setOf(1810, 1811, 1820), ProotProcesses(proc).endTargets(proot))
+        assertEquals(listOf("stat 1821"), proc.readsAfterVanishing)
     }
 
     @Test
