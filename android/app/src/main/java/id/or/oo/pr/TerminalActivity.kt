@@ -41,6 +41,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
 import id.or.oo.pr.session.SessionService
@@ -97,7 +98,11 @@ class TerminalActivity : ComponentActivity() {
                 lifecycleScope.launch {
                     val stopped = withTimeoutOrNull(ENDING_WAIT_MS) { result.session.exit.first { it != null } }
                     if (isFinishing) return@launch
-                    if (stopped == null) setContent { Message("Couldn't stop the previous session.") } else open(alias)
+                    if (stopped == null) {
+                        setContent { Message("Couldn't stop the previous session.") }
+                    } else {
+                        lifecycle.withStarted { if (!isFinishing) open(alias) }
+                    }
                 }
             }
             is SessionManager.OpenResult.Opened -> show(result.session)
