@@ -16,6 +16,7 @@ class ManagedSessionTest {
 
     private fun session(
         endGraceMs: Long = 100,
+        signalWaitMs: Long = 100,
         sink: (ByteArray, Int, Int) -> Unit = { buf, off, len -> output.append(String(buf, off, len)) },
     ) = ManagedSession(
         alias = "alpine",
@@ -24,6 +25,7 @@ class ManagedSessionTest {
         output = sink,
         onEnded = { ended += it },
         endGraceMs = endGraceMs,
+        signalWaitMs = signalWaitMs,
         exitCodeWaitMs = 100,
     ).also { it.start() }
 
@@ -95,46 +97,62 @@ class ManagedSessionTest {
     }
 
     @Test
-    fun endHangsUpThenWaitsThenSendsEofThenKills() {
-        pty.hangUpSignals = true
+    fun endSignalsThenWaitsThenSendsEofThenKills() {
+        pty.signalled = setOf(42)
         pty.ignoresEof = true
         pty.ignoresKill = true
-        val s = session()
+        val s = session(signalWaitMs = 300)
         s.end()
         eventually { s.exit.value != null }
-        assertEquals(listOf("hangUp", "eof", "kill", "forceKill", "close"), pty.calls)
-        assertTrue(pty.msBetween("hangUp", "eof") >= 100)
+        assertEquals(listOf("signal", "eof", "kill", "forceKill", "close"), pty.calls)
+        assertTrue(pty.msBetween("signal", "eof") >= 300)
+        assertTrue(pty.aliveQueries.isNotEmpty())
+        assertTrue(pty.aliveQueries.all { it == setOf(42) })
     }
 
     @Test
-    fun endSendsEofAtOnceWhenTheHangUpSignalledNothing() {
-        val s = session(endGraceMs = 1_000)
+    fun endSendsEofOnceTheSignalledProgramsHaveExited() {
+        pty.signalled = setOf(42)
+        pty.signalledExitAfterMs = 200
+        val s = session(endGraceMs = 2_000, signalWaitMs = 3_000)
         s.end()
         eventually { s.exit.value != null }
-        assertEquals(listOf("hangUp", "eof", "close"), pty.calls)
-        assertTrue(pty.msBetween("hangUp", "eof") < 500)
+        assertEquals(listOf("signal", "eof", "close"), pty.calls)
+        assertTrue(pty.msBetween("signal", "eof") >= 150)
+        assertTrue(pty.msBetween("signal", "eof") < 1_500)
     }
 
     @Test
-    fun endStopsWhenTheHangUpEndsTheSession() {
-        pty.hangUpSignals = true
-        pty.exitsOnHangUp = true
-        val s = session()
+    fun endSendsEofAtOnceWhenNothingWasSignalled() {
+        val s = session(endGraceMs = 2_000, signalWaitMs = 3_000)
+        s.end()
+        eventually { s.exit.value != null }
+        assertEquals(listOf("signal", "eof", "close"), pty.calls)
+        assertTrue(pty.msBetween("signal", "eof") < 500)
+        assertTrue(pty.aliveQueries.isEmpty())
+    }
+
+    @Test
+    fun endStopsWhenTheSignalEndsTheSession() {
+        pty.signalled = setOf(42)
+        pty.exitsOnSignal = true
+        val s = session(endGraceMs = 2_000, signalWaitMs = 2_000)
         s.end()
         eventually { s.exit.value != null }
         Thread.sleep(300)
-        assertEquals(listOf("hangUp", "close"), pty.calls)
+        assertEquals(listOf("signal", "close"), pty.calls)
         assertEquals(ManagedSession.Exit(129), s.exit.value)
     }
 
     @Test
     fun endStopsWhenTheEofEndsTheSession() {
-        pty.hangUpSignals = true
-        val s = session()
+        pty.signalled = setOf(42)
+        pty.signalledExitAfterMs = 0
+        val s = session(endGraceMs = 2_000)
         s.end()
         eventually { s.exit.value != null }
         Thread.sleep(300)
-        assertEquals(listOf("hangUp", "eof", "close"), pty.calls)
+        assertEquals(listOf("signal", "eof", "close"), pty.calls)
     }
 
     @Test

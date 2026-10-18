@@ -15,8 +15,11 @@ class FakePty : Pty {
     val calls = CopyOnWriteArrayList<String>()
     private val callTimes = ConcurrentHashMap<String, Long>()
 
-    @Volatile var hangUpSignals = false
-    @Volatile var exitsOnHangUp = false
+    @Volatile var signalled: Set<Int> = emptySet()
+    @Volatile var exitsOnSignal = false
+    @Volatile var signalledExitAfterMs: Long? = null
+    val aliveQueries = CopyOnWriteArrayList<Set<Int>>()
+    @Volatile private var signalledAt = 0L
 
     @Volatile var ignoresEof = false
     @Volatile var ignoresKill = false
@@ -68,10 +71,17 @@ class FakePty : Pty {
         resizes += rows to cols
     }
 
-    override fun hangUp(): Boolean {
-        record("hangUp")
-        if (exitsOnHangUp) exit(129)
-        return hangUpSignals
+    override fun signalTracees(): Set<Int> {
+        record("signal")
+        signalledAt = System.nanoTime()
+        if (exitsOnSignal) exit(129)
+        return signalled
+    }
+
+    override fun alive(pids: Set<Int>): Boolean {
+        aliveQueries += pids
+        val exitAfter = signalledExitAfterMs ?: return true
+        return (System.nanoTime() - signalledAt) / 1_000_000 < exitAfter
     }
 
     override fun sendEof() {

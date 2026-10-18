@@ -281,7 +281,7 @@ all, Keep CPU awake). Design: `docs/design/background-sessions.md`.
 | Home, switching apps, swiping the app away | Keeps running |
 | `exit` in the shell, or the program ends | Ends; with no visible screen (none attached, or hidden by Home), a "session ended" notification is posted |
 | Dark mode or theme change while the terminal is open | The recreated terminal reattaches to the same session, ended or not |
-| End session, or End all in the notification | Ends: SIGHUP to the login shell's descendants (up to 2 s to exit), then EOF, then the login shell is killed (proot's `--kill-on-exit` takes the rest), then proot |
+| End session, or End all in the notification | Ends: SIGHUP, SIGCONT and SIGTERM to every process in the session except the login shell (including daemons that left the shell's tree), up to 3 s for them to exit, then EOF, then the login shell is killed (proot's `--kill-on-exit` takes the rest), then proot |
 | Android kills the process | Every session ends; nothing is restored; a terminal restored from recents starts a fresh session |
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen

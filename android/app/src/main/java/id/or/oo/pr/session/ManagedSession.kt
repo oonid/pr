@@ -15,6 +15,7 @@ class ManagedSession(
     private val output: (ByteArray, Int, Int) -> Unit,
     private val onEnded: (ManagedSession) -> Unit,
     private val endGraceMs: Long = 2_000,
+    private val signalWaitMs: Long = 3_000,
     private val exitCodeWaitMs: Long = 2_000,
 ) {
     fun interface Screen {
@@ -78,12 +79,23 @@ class ManagedSession(
         if (_exit.value != null) return
         if (!endFlag.compareAndSet(false, true)) return
         thread(isDaemon = true, name = "pty-end-$alias") {
-            if (pty.hangUp() && ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
+            val signalled = pty.signalTracees()
+            if (signalled.isNotEmpty() && awaitEndOrExit(signalled)) return@thread
             synchronized(ptyLock) { if (!closed) pty.sendEof() }
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.kill()
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.forceKill()
+        }
+    }
+
+    private fun awaitEndOrExit(pids: Set<Int>): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(signalWaitMs)
+        while (true) {
+            val left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            if (left <= 0) return false
+            if (ended.await(minOf(left, POLL_MS), TimeUnit.MILLISECONDS)) return true
+            if (!pty.alive(pids)) return ended.count == 0L
         }
     }
 
@@ -114,5 +126,9 @@ class ManagedSession(
         _exit.value = Exit(pty.exitCode)
         ended.countDown()
         onEnded(this)
+    }
+
+    private companion object {
+        const val POLL_MS = 50L
     }
 }
