@@ -81,7 +81,7 @@ class ManagedSession(
         thread(isDaemon = true, name = "pty-end-$alias") {
             val signalled = pty.signalTracees()
             if (signalled.isNotEmpty() && awaitEndOrExit(signalled)) return@thread
-            synchronized(ptyLock) { if (!closed) pty.sendEof() }
+            thread(isDaemon = true, name = "pty-eof-$alias") { synchronized(ptyLock) { if (!closed) pty.sendEof() } }
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.kill()
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
@@ -113,11 +113,18 @@ class ManagedSession(
         }
     }
 
+    private fun awaitExitCode(ms: Long): Boolean {
+        val deadline = System.currentTimeMillis() + ms
+        while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        return pty.exitCode != null
+    }
+
     private fun finish() {
         runCatching {
-            val deadline = System.currentTimeMillis() + exitCodeWaitMs
-            while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
-            if (pty.exitCode == null) pty.forceKill()
+            if (!awaitExitCode(exitCodeWaitMs)) {
+                pty.kill()
+                if (!awaitExitCode(KILL_EXIT_WAIT_MS)) pty.forceKill()
+            }
         }
         synchronized(ptyLock) {
             closed = true
@@ -130,5 +137,6 @@ class ManagedSession(
 
     private companion object {
         const val POLL_MS = 50L
+        const val KILL_EXIT_WAIT_MS = 500L
     }
 }

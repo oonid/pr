@@ -224,7 +224,7 @@ Risks that remain for a 24/7 session, outside the app's control:
 |---------|-----------|
 | Session cannot start (pr-cli missing, PTY fork fails) | The terminal screen shows "Couldn't start alias: reason"; nothing is recorded; the service is not started |
 | The foreground service cannot start | The session runs while the app is open but is not protected; the list shows "Background running unavailable: reason" until a later `startForeground` succeeds; no crash |
-| Reader thread error with no exit code | proot is killed before the PTY closes, so nothing is left running untracked |
+| Reader thread error with no exit code | Before the PTY closes, the login shell is killed so that proot's `--kill-on-exit` takes the rest; if proot has not exited 0.5 s later, it is killed too |
 | Notification permission denied | Everything works; the notification is hidden; no repeated requests |
 | Reader thread error or PTY hangup | Treated as the session ending; the exit code comes from the reaper |
 | Input or resize for an ended session | Ignored |
