@@ -291,7 +291,8 @@ operation at a time, its output and state in a `StateFlow` that the list only re
 or switching dark mode keeps the output sheet, the busy state and Remove's wait. Remove of a
 container whose session runs shows "Stopping the <name> session…", ends the session and waits up
 to 20 s for it; if it still runs, removal is cancelled with "Couldn't stop the <name> session;
-removal cancelled." The list refreshes when an operation finishes.
+removal cancelled." The list refreshes when an operation finishes. An operation does not survive
+the process being killed: no foreground service covers it.
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery
