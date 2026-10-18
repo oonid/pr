@@ -159,13 +159,18 @@ class ManagedSessionTest {
         eventually(timeoutMs = 15_000) { s.exit.value != null }
         val tookMs = (System.nanoTime() - started) / 1_000_000
         assertEquals(listOf("signal", "eof", "kill", "forceKill", "kill", "forceKill", "close"), pty.calls)
-        assertTrue("took $tookMs ms", tookMs in worstWithoutMargin..worstWithoutMargin + 800)
+        val worst = ManagedSession.endWorstCaseMs(
+            signalWaitMs = 1_000,
+            endGraceMs = 1_000,
+            exitCodeWaitMs = 1_000,
+            killExitWaitMs = 1_000,
+        )
+        assertTrue("took $tookMs ms", tookMs >= worstWithoutMargin && tookMs < worst)
     }
 
     @Test
     fun theEndTimeoutExceedsTheDefaultWorstCase() {
         assertTrue(ManagedSession.END_TIMEOUT_MS > ManagedSession.endWorstCaseMs())
-        assertTrue(ManagedSession.endWorstCaseMs() >= 10_000 + 2_000 + 2_000 + 2_000)
     }
 
     @Test

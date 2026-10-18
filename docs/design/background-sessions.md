@@ -126,7 +126,9 @@ Owned by `App` like `SessionManager`, so an install, remove or test started from
 the list being recreated (rotation, dark mode). It runs one `pr-cli` operation at a time on its own
 scope, through a `DistroCommand` seam (real: `PrCliCommand`, the former `runDistroCommand`), and
 exposes it as `operation: StateFlow<Operation?>`: kind, alias, display name, output lines, running
-or finished, exit code.
+or finished, exit code. An operation does not survive the process being killed: no foreground
+service covers it, so Android may kill the process (and the `pr-cli` child) once the app is in the
+background with no session running.
 
 - `install`, `installCustom`, `remove` and `test` return `false` while an operation runs;
   `dismiss()` clears a finished operation and is refused while one runs.

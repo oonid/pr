@@ -32,19 +32,20 @@ class PrCliCommand(private val app: App) : DistroCommand {
         pb.redirectErrorStream(true)
 
         val proc = pb.start()
-        val reader = proc.inputStream.bufferedReader()
-        var line: String? = reader.readLine()
-        while (line != null) {
-            val cleaned = line
-                .replace(ANSI_CSI, "")
-                .replace(ANSI_OSC, "")
-                .replace("\r", "")
-                .trim()
-            if (cleaned.isNotEmpty()) {
-                Log.d(TAG, cleaned)
-                onLine(cleaned)
+        proc.inputStream.bufferedReader().use { reader ->
+            var line: String? = reader.readLine()
+            while (line != null) {
+                val cleaned = line
+                    .replace(ANSI_CSI, "")
+                    .replace(ANSI_OSC, "")
+                    .replace("\r", "")
+                    .trim()
+                if (cleaned.isNotEmpty()) {
+                    Log.d(TAG, cleaned)
+                    onLine(cleaned)
+                }
+                line = reader.readLine()
             }
-            line = reader.readLine()
         }
         val exitCode = proc.waitFor()
         Log.d(TAG, "Exit code: $exitCode")
