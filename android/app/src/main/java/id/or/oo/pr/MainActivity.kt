@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import kotlinx.coroutines.launch
 import java.io.File
 
 data class DistroInfo(
@@ -123,6 +124,7 @@ fun DistroListScreen(app: App) {
     val running by app.sessions.running.collectAsState()
     val operation by app.operations.operation.collectAsState()
     val busy = operation?.running == true
+    val scope = rememberCoroutineScope()
 
     fun refreshDistros() {
         val legacyRootfsDir = File(app.prefixDir, "var/lib/pr/installed-rootfs")
@@ -159,7 +161,7 @@ fun DistroListScreen(app: App) {
     }
 
     fun dismissOutput() {
-        if (app.operations.dismiss()) refreshDistros()
+        if (app.operations.dismiss()) refreshDistros() else scope.launch { sheetState.show() }
     }
 
     LaunchedEffect(busy) { refreshDistros() }
@@ -221,6 +223,7 @@ fun DistroListScreen(app: App) {
             ModalBottomSheet(
                 onDismissRequest = ::dismissOutput,
                 sheetState = sheetState,
+                properties = ModalBottomSheetProperties(shouldDismissOnBackPress = !current.running),
             ) {
                 OutputConsoleContent(
                     operationLabel = current.kind.label,
