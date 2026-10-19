@@ -139,7 +139,7 @@ background with no session running.
   "Cancelled.", with no exit code, and a new operation can start. While `pr-cli` runs,
   `PrCliCommand` stops it and everything it started: `ProcessRunner` finds `pr-cli` among the
   app process's children by its exact command line in `/proc` (`android.os.Process.myPid()` is the
-  parent; `java.lang.Process` has no pid accessor below API 33) and its descendants through the
+  parent; `java.lang.Process` has no public pid accessor) and its descendants through the
   same `/proc` parent links as End's fallback walk (`ProotProcesses`), sends them SIGTERM and
   destroys `pr-cli`, waits up to 2 s, then SIGKILLs whatever is left and destroys `pr-cli`
   forcibly. During Remove's wait for a session, cancelling stops the wait and `remove` never runs;
@@ -188,7 +188,7 @@ sheet closes. Only the custom image fields are kept by the screen (`rememberSave
 | Swipe the app away from recents | Screens are destroyed; the foreground service keeps the process, so sessions keep running |
 | The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
-| Remove a container whose session runs | The output shows "Stopping the <name> session…"; the session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." The wait runs in `DistroOperations`, so recreating the list does not lose it |
+| Remove a container whose session runs | The output shows "Stopping the <name> session…"; the session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." Cancel during the wait stops it and ends with "Cancelled." without removing anything; the session's End continues. The wait runs in `DistroOperations`, so recreating the list does not lose it |
 | Cancel during an install, remove or test | `pr-cli` and every process it started are stopped (SIGTERM, up to 2 s, then SIGKILL) and the output ends with "Cancelled.". A cancelled install whose container is new and whose alias is known runs `pr-cli remove <alias>` first; a custom install without an alias leaves its partial container for the user to remove. A cancelled remove may leave a half-removed container: run Remove again |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
