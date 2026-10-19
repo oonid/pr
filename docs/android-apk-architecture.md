@@ -300,8 +300,12 @@ and a scrim tap leave the sheet up). Cancel stops `pr-cli` and every process it 
 through `/proc`: `pr-cli` by its command line among the app's children, then its descendants by
 parent links): SIGTERM, up to 2 s, then SIGKILL. The output ends with "Cancelled." During
 Remove's wait for a session, Cancel stops the wait and nothing is removed; the session's End
-continues. A cancelled install may leave a partial container; a later install of the same alias
-or a remove replaces it.
+continues. `pr-cli` creates the container directory first and has no SIGTERM handler, so a
+cancelled install whose alias is known (every catalog install; a custom install with an alias)
+and whose container did not exist before runs `pr-cli remove <alias>` in the same operation
+before "Cancelled.". A custom install without an alias is not cleaned up: remove its partial
+container before installing it again. A cancel during `pr-cli remove` may leave a half-removed
+container: run Remove again.
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery

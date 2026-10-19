@@ -5,6 +5,7 @@ import id.or.oo.pr.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 fun interface DistroCommand {
@@ -22,6 +24,7 @@ class DistroOperations(
     private val command: DistroCommand,
     private val sessions: SessionManager,
     private val scope: CoroutineScope,
+    private val isInstalled: (String) -> Boolean,
     private val endTimeoutMs: Long = ManagedSession.END_TIMEOUT_MS,
 ) {
     enum class Kind(val label: String) { Install("Installing"), Remove("Removing"), Test("Testing") }
@@ -43,7 +46,7 @@ class DistroOperations(
 
     fun install(alias: String, displayName: String, source: String): Boolean =
         start(Operation(Kind.Install, alias, displayName, emptyList(), true)) {
-            execute(listOf("install", source, "--override-alias", alias))
+            installing(alias, listOf("install", source, "--override-alias", alias))
         }
 
     fun installCustom(source: String, alias: String): Boolean {
@@ -58,7 +61,9 @@ class DistroOperations(
             return post(Operation(Kind.Install, override, ref, lines, running = false, custom = true))
         }
         val args = listOf("install", ref) + if (override.isEmpty()) emptyList() else listOf("--override-alias", override)
-        return start(Operation(Kind.Install, override, ref, emptyList(), true, custom = true)) { execute(args) }
+        return start(Operation(Kind.Install, override, ref, emptyList(), true, custom = true)) {
+            installing(override, args)
+        }
     }
 
     fun remove(alias: String, displayName: String): Boolean =
@@ -108,6 +113,25 @@ class DistroOperations(
     private fun finish(cause: Throwable?) {
         val closing = if (cause is CancellationException) listOf("Cancelled.") else emptyList()
         _operation.update { it?.copy(lines = it.lines + closing, running = false) }
+    }
+
+    private suspend fun installing(alias: String, args: List<String>) {
+        val isNew = alias.isNotEmpty() && !isInstalled(alias)
+        try {
+            execute(args)
+        } catch (e: CancellationException) {
+            if (isNew && isInstalled(alias)) withContext(NonCancellable) { cleanUp(listOf("remove", alias)) }
+            throw e
+        }
+    }
+
+    private suspend fun cleanUp(args: List<String>) {
+        try {
+            val code = command.run(args, ::append)
+            if (code != 0) append("Exit code: $code")
+        } catch (e: Exception) {
+            append("ERROR: ${e.message}")
+        }
     }
 
     private suspend fun execute(args: List<String>) {

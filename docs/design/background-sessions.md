@@ -143,8 +143,18 @@ background with no session running.
   same `/proc` parent links as End's fallback walk (`ProotProcesses`), sends them SIGTERM and
   destroys `pr-cli`, waits up to 2 s, then SIGKILLs whatever is left and destroys `pr-cli`
   forcibly. During Remove's wait for a session, cancelling stops the wait and `remove` never runs;
-  the session's End keeps going on its own. A cancelled install may leave a partial container,
-  which a later install of the same alias or a remove replaces.
+  the session's End keeps going on its own.
+- A cancelled install cleans up after itself when its alias is known (catalog installs always
+  pass `--override-alias`; custom installs when an alias was given): if the container did not
+  exist before the install started and exists once `pr-cli` has stopped, the same operation runs
+  `pr-cli remove <alias>`, appends its output (and "Exit code: N" or "ERROR: …" if it fails), then
+  "Cancelled.". `pr-cli` creates the container's `rootfs` directory first and has no SIGTERM
+  handler, so without this the list would show a broken container as installed and a new install
+  of the alias would fail with "already installed". "Exists" is the list's own test
+  (`InstalledContainers`: the OCI container's `rootfs` directory or the legacy `installed-rootfs`
+  entry). A custom install without an alias is not cleaned up: remove its partial container before
+  installing it again. A cancel during `pr-cli remove` may leave a half-removed container: run
+  Remove again.
 
 ### `MainActivity` (changed)
 
@@ -154,9 +164,10 @@ banners described in sections 5 and 6. The output sheet, its busy state and the 
 sheet state refuses to hide on a swipe-down or a scrim tap (`confirmValueChange`), Back does
 nothing (`shouldDismissOnBackPress` is off: Material3's Back path hides the sheet without asking
 the sheet state), Close is disabled and a Cancel button calls `cancel()`; if the sheet is hidden
-anyway, the refused `dismiss()` shows it again. Once the operation has finished, swipe-down, a scrim tap, Back and Close each call
-`dismiss()`. The list refreshes when an operation starts or finishes and when the sheet closes.
-Only the custom image fields are kept by the screen (`rememberSaveable`).
+anyway, the refused `dismiss()` shows it again. Once the operation has finished, swipe-down, a
+scrim tap, Back and Close each call `dismiss()`. The list refreshes when an operation starts or
+finishes and when the sheet closes. Only the custom image fields are kept by the screen
+(`rememberSaveable`).
 
 ### Unchanged
 
@@ -177,6 +188,7 @@ Only the custom image fields are kept by the screen (`rememberSaveable`).
 | The program exits (`exit`, crash) | The session is marked ended with its exit code and no longer counts as running. An attached screen shows "Session ended (exit N)", Back returns without a prompt, and the session is dropped when the screen closes; with no screen attached it is dropped at once. With no visible screen (no screen, or one hidden by Home) a "session ended" notification is posted |
 | "End all" in the notification | Every session ends as with End |
 | Remove a container whose session runs | The output shows "Stopping the <name> session…"; the session is ended first and removal waits up to End's timeout (20 s) for it to stop; if it still runs, removal is cancelled with "Couldn't stop the <name> session; removal cancelled." The wait runs in `DistroOperations`, so recreating the list does not lose it |
+| Cancel during an install, remove or test | `pr-cli` and every process it started are stopped (SIGTERM, up to 2 s, then SIGKILL) and the output ends with "Cancelled.". A cancelled install whose container is new and whose alias is known runs `pr-cli remove <alias>` first; a custom install without an alias leaves its partial container for the user to remove. A cancelled remove may leave a half-removed container: run Remove again |
 | Last running session ends | The wake lock is released, the service stops, the ongoing notification goes away (even if a screen still shows an ended session) |
 | The process is killed (memory, crash, app update) | All sessions end with it; nothing is restored and the service is not restarted |
 | Phone reboot | Nothing restarts (start-at-boot is out of scope) |
@@ -297,7 +309,12 @@ first, and cancels with the exact text, never running `remove`, when it does not
 custom install's arguments and its invalid-alias error. Cancel during a run ends with "Cancelled.",
 no exit code, the command seeing the cancellation and a next operation able to start, also when
 the command fails as it is cancelled or the cancel lands before the work has started; cancel
-during Remove's wait never runs `remove`; cancel with nothing running does nothing.
+during Remove's wait never runs `remove`; cancel with nothing running does nothing. A cancelled
+install runs `remove <alias>` for a container it created (catalog, or custom with an alias), and
+nothing for a container that existed before, one that was never created, a custom install without
+an alias, or a cancelled test. `InstalledContainers` against a temporary prefix: the OCI `rootfs`
+directory or the legacy directory marks a container installed; a container directory without
+`rootfs`, a file and a blank alias do not.
 
 `ProcessRunner`, which runs `pr-cli` for `PrCliCommand`, against real `/bin/sh` processes on the
 host: output lines in order and the exit code, the environment, standard input closed (so a reader
