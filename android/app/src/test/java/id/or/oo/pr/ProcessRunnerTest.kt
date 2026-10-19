@@ -125,7 +125,7 @@ class ProcessRunnerTest {
         }
         withTimeout(10_000) { while (lines.isEmpty()) delay(5) }
         val shell = lines.first().toInt()
-        withTimeout(10_000) { while (alive(shell)) delay(5) }
+        withTimeout(10_000) { while (SystemProcFs.stat(shell) != null) delay(5) }
 
         withTimeout(10_000) { job.cancelAndJoin() }
 
