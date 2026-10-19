@@ -1,5 +1,6 @@
 package id.or.oo.pr
 
+import android.os.Process
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -7,7 +8,7 @@ import java.io.File
 
 class PrCliCommand(
     private val app: App,
-    private val runner: ProcessRunner = ProcessRunner(),
+    private val runner: ProcessRunner = ProcessRunner(Process.myPid(), Process::sendSignal),
 ) : DistroCommand {
 
     override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int = withContext(Dispatchers.IO) {

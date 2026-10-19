@@ -10,6 +10,7 @@ class FakeProcFs(private val childrenFiles: Boolean) : ProcFs {
         val threads: List<Int>,
         val statusReadable: Boolean,
         val statReadable: Boolean,
+        val cmdline: List<String>,
     )
 
     private val procs = LinkedHashMap<Int, Proc>()
@@ -27,8 +28,9 @@ class FakeProcFs(private val childrenFiles: Boolean) : ProcFs {
         threads: List<Int> = emptyList(),
         statusReadable: Boolean = true,
         statReadable: Boolean = true,
+        cmdline: List<String> = listOf("sh"),
     ) {
-        procs[pid] = Proc(ppid, tracer, state, forkedBy, threads, statusReadable, statReadable)
+        procs[pid] = Proc(ppid, tracer, state, forkedBy, threads, statusReadable, statReadable, cmdline)
     }
 
     fun vanishAfterListing(pid: Int, listing: Int) {
@@ -66,6 +68,10 @@ class FakeProcFs(private val childrenFiles: Boolean) : ProcFs {
         return read("children", pid) { _ ->
             procs.filterValues { it.ppid == pid && it.forkedBy == tid }.keys.joinToString("") { "$it " }
         }
+    }
+
+    override fun cmdline(pid: Int): String? = read("cmdline", pid) { proc ->
+        if (proc.state == 'Z') "" else proc.cmdline.joinToString("") { "$it\u0000" }
     }
 
     override fun exists(pid: Int): Boolean = read("exists", pid) { true } ?: false

@@ -114,6 +114,36 @@ class ProotProcessesTest {
     }
 
     @Test
+    fun aChildIsFoundByItsExactCommandLine() {
+        val prCli = "/data/user/0/id.or.oo.pr/files/usr/bin/pr-cli"
+        val test = listOf(prCli, "test", "alpine")
+        listOf(false, true).forEach { childrenFiles ->
+            val proc = session(childrenFiles).apply {
+                add(2000, ppid = app, cmdline = test)
+                add(2001, ppid = app, cmdline = listOf(prCli, "login", "alpine", "--user", "root"))
+                add(2002, ppid = app, cmdline = listOf(prCli, "test", "alpine", "extra"))
+                add(2003, ppid = app, state = 'Z', cmdline = test)
+                add(2004, ppid = 2000, cmdline = test)
+            }
+            assertEquals(listOf(2000), ProotProcesses(proc).children(app, test))
+        }
+    }
+
+    @Test
+    fun descendantsAreEveryProcessBelowTheRoots() {
+        listOf(false, true).forEach { childrenFiles ->
+            val proc = session(childrenFiles).apply {
+                add(2000, ppid = app)
+                add(2010, ppid = 2000)
+                add(2011, ppid = 2010)
+                add(2012, ppid = 2000)
+            }
+            assertEquals(setOf(2010, 2011, 2012), ProotProcesses(proc).descendants(listOf(2000)).toSet())
+            assertEquals(emptyList<Int>(), ProotProcesses(proc).descendants(emptyList()))
+        }
+    }
+
+    @Test
     fun forceKillTargetsEveryTraceeIncludingTheLoginShellEndingWithProot() {
         val proc = session().apply {
             add(1900, ppid = 1, tracer = proot)

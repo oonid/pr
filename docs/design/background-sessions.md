@@ -135,6 +135,16 @@ background with no session running.
 - The output ends with "Done.", "Exit code: N" or "ERROR: …"; an invalid custom alias becomes a
   finished operation with the two error lines, and nothing runs.
 - `remove` ends the container's running session first, as described in section 4.
+- `cancel()` cancels the running operation and does nothing when none runs. The output ends with
+  "Cancelled.", with no exit code, and a new operation can start. While `pr-cli` runs,
+  `PrCliCommand` stops it and everything it started: `ProcessRunner` finds `pr-cli` among the
+  app process's children by its exact command line in `/proc` (`android.os.Process.myPid()` is the
+  parent; `java.lang.Process` has no pid accessor below API 33) and its descendants through the
+  same `/proc` parent links as End's fallback walk (`ProotProcesses`), sends them SIGTERM and
+  destroys `pr-cli`, waits up to 2 s, then SIGKILLs whatever is left and destroys `pr-cli`
+  forcibly. During Remove's wait for a session, cancelling stops the wait and `remove` never runs;
+  the session's End keeps going on its own. A cancelled install may leave a partial container,
+  which a later install of the same alias or a remove replaces.
 
 ### `MainActivity` (changed)
 
@@ -143,8 +153,8 @@ banners described in sections 5 and 6. The output sheet, its busy state and the 
 `DistroOperations.operation`; the sheet shows while there is an operation. While it runs, the
 sheet state refuses to hide on a swipe-down or a scrim tap (`confirmValueChange`), Back does
 nothing (`shouldDismissOnBackPress` is off: Material3's Back path hides the sheet without asking
-the sheet state), and Close is disabled; if the sheet is hidden anyway, the refused `dismiss()`
-shows it again. Once the operation has finished, swipe-down, a scrim tap, Back and Close each call
+the sheet state), Close is disabled and a Cancel button calls `cancel()`; if the sheet is hidden
+anyway, the refused `dismiss()` shows it again. Once the operation has finished, swipe-down, a scrim tap, Back and Close each call
 `dismiss()`. The list refreshes when an operation starts or finishes and when the sheet closes.
 Only the custom image fields are kept by the screen (`rememberSaveable`).
 
@@ -284,11 +294,17 @@ mid-scan, zombies counted as exited, and the force-kill order ending with proot.
 the state in order and ends with "Done.", "Exit code: N" or "ERROR: …"; a second operation and
 `dismiss()` are refused while one runs; Remove without a session runs `remove`, with one ends it
 first, and cancels with the exact text, never running `remove`, when it does not stop in time; the
-custom install's arguments and its invalid-alias error.
+custom install's arguments and its invalid-alias error. Cancel during a run ends with "Cancelled.",
+no exit code, the command seeing the cancellation and a next operation able to start, also when
+the command fails as it is cancelled or the cancel lands before the work has started; cancel
+during Remove's wait never runs `remove`; cancel with nothing running does nothing.
 
 `ProcessRunner`, which runs `pr-cli` for `PrCliCommand`, against real `/bin/sh` processes on the
 host: output lines in order and the exit code, the environment, standard input closed (so a reader
-of it does not block), and a failing read that stops the process before the error is rethrown.
+of it does not block), a failing read that stops the process before the error is rethrown, and
+cancellation stopping the process and its descendants, with SIGKILL after the wait for a tree that
+ignores SIGTERM. `ProotProcesses` finds a child by its exact command line (not a zombie, not
+another `pr-cli` command) and lists every descendant, with and without `children` files.
 
 `ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
 exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s

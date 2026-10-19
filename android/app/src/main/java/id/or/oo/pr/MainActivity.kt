@@ -230,7 +230,8 @@ fun DistroListScreen(app: App) {
                     distroName = current.displayName,
                     isRunning = current.running,
                     outputLines = current.lines,
-                    onClose = ::dismissOutput
+                    onClose = ::dismissOutput,
+                    onCancel = app.operations::cancel,
                 )
             }
         }
@@ -487,6 +488,7 @@ fun OutputConsoleContent(
     isRunning: Boolean,
     outputLines: List<String>,
     onClose: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     val scrollState = rememberScrollState()
     // Auto-scroll to latest output as new lines arrive
@@ -555,12 +557,22 @@ fun OutputConsoleContent(
         Spacer(Modifier.height(12.dp))
 
         // Close button — disabled while the operation is still running
-        Button(
-            onClick = onClose,
-            enabled = !isRunning,
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(if (isRunning) "Running…" else "Close")
+            if (isRunning) {
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Text("Cancel")
+                }
+            }
+            Button(
+                onClick = onClose,
+                enabled = !isRunning,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(if (isRunning) "Running…" else "Close")
+            }
         }
 
         Spacer(Modifier.height(8.dp))
