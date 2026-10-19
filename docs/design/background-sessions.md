@@ -166,9 +166,9 @@ sheet state refuses to hide on a swipe-down or a scrim tap (`confirmValueChange`
 nothing (`shouldDismissOnBackPress` is off: Material3's Back path hides the sheet without asking
 the sheet state), Close is disabled and a Cancel button calls `cancel()`; if the sheet is hidden
 anyway, the refused `dismiss()` shows it again. Once the operation has finished, swipe-down, a
-scrim tap, Back and Close each call `dismiss()`. The list refreshes when an operation starts or
-finishes and when the sheet closes. Only the custom image fields are kept by the screen
-(`rememberSaveable`).
+scrim tap, Back and Close each call `dismiss()`; the sheet's header then reads "Completed", or
+"Cancelled" after a cancel. The list refreshes when an operation starts or finishes and when the
+sheet closes. Only the custom image fields are kept by the screen (`rememberSaveable`).
 
 ### Unchanged
 

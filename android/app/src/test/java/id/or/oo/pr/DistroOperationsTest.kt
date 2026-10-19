@@ -118,6 +118,7 @@ class DistroOperationsTest {
             done.lines,
         )
         assertEquals(0, done.exitCode)
+        assertFalse(done.cancelled)
         assertEquals(
             listOf(listOf("install", "docker.io/library/alpine:latest", "--override-alias", "alpine")),
             command.calls,
@@ -269,6 +270,7 @@ class DistroOperationsTest {
         val done = ops.awaitFinished()
         assertEquals(listOf("Testing alpine:latest…", "Running suite distro", "Cancelled."), done.lines)
         assertNull(done.exitCode)
+        assertTrue(done.cancelled)
         assertTrue(command.sawCancellation)
         command.gate = null
         assertTrue(ops.install("ubuntu", "ubuntu:latest", "docker.io/library/ubuntu:latest"))
@@ -290,6 +292,7 @@ class DistroOperationsTest {
         val done = ops.awaitFinished()
         assertEquals(listOf("Installing alpine:latest…", "All tests passed", "Done."), done.lines)
         assertEquals(0, done.exitCode)
+        assertFalse(done.cancelled)
         assertEquals(1, command.calls.size)
     }
 
@@ -357,6 +360,7 @@ class DistroOperationsTest {
 
         val done = ops.awaitFinished()
         assertEquals(listOf("Testing alpine:latest…", "Cancelled."), done.lines)
+        assertTrue(done.cancelled)
         assertTrue(command.calls.isEmpty())
         assertTrue(ops.test("alpine", "alpine:latest"))
         held.cancel()
@@ -394,6 +398,7 @@ class DistroOperationsTest {
         )
         assertEquals(listOf("Installing alpine:latest…", "Wiping the rootfs", "Cancelled."), done.lines)
         assertNull(done.exitCode)
+        assertTrue(done.cancelled)
     }
 
     @Test

@@ -37,6 +37,7 @@ class DistroOperations(
         val running: Boolean,
         val custom: Boolean = false,
         val exitCode: Int? = null,
+        val cancelled: Boolean = false,
     )
 
     private val lock = Any()
@@ -113,7 +114,11 @@ class DistroOperations(
     private fun finish(cause: Throwable?) {
         _operation.update {
             val cancelled = cause is CancellationException && it?.exitCode == null
-            it?.copy(lines = if (cancelled) it.lines + "Cancelled." else it.lines, running = false)
+            it?.copy(
+                lines = if (cancelled) it.lines + "Cancelled." else it.lines,
+                running = false,
+                cancelled = cancelled,
+            )
         }
     }
 
