@@ -4,6 +4,8 @@ Phase 4 builds the Android application that wraps the proot-distro infrastructur
 
 Status: **Complete** (commits `f71d547..f2eb29d`)
 
+The T4.x sections below are the Phase 4 record; for current behaviour see "Session lifetime and Back" and "OCI Container Paths vs Legacy Plugin Paths".
+
 ---
 
 ## Architecture
@@ -13,39 +15,41 @@ android/                                    # Android project root
 ├── build.gradle.kts                        # Root: AGP 8.7.3, Kotlin 2.1.0, Compose plugin
 ├── settings.gradle.kts                     # Includes :app, :proot-engine and :termlib modules
 ├── app/
-│   ├── build.gradle.kts                    # App module: Compose BOM 2024.12.01, CMake, termlib dep
-│   └── src/main/
-│       ├── AndroidManifest.xml             # Permissions, activities, extractNativeLibs
-│       ├── cpp/
-│       │   ├── CMakeLists.txt              # Builds libptyjni.so
-│       │   └── ptyjni.c                    # PTY JNI: fork/exec with /dev/ptmx (183 lines)
-│       ├── jniLibs/arm64-v8a/
-│       │   └── libproot.so                 # Patched proot binary (2.5MB, from Phase 1)
-│       ├── assets/
-│       │   ├── bin/busybox                 # Static busybox (1.1MB, from Phase 3)
-│       │   ├── bin/bash                    # Static bash (2.3MB, from Phase 3)
-│       │   ├── scripts/proot-distro.sh     # With @APP_PREFIX@ template (3051 lines)
-│       │   ├── scripts/bootstrap.sh        # POSIX sh setup (184 lines)
-│       │   └── plugins/                    # 17 distro plugins
-│       ├── java/id/or/oo/pr/
-│       │   ├── App.kt                      # Application: bootstrap on first launch (188 lines)
-│       │   ├── MainActivity.kt             # Compose: container list, output sheet of DistroOperations
-│       │   ├── DistroOperations.kt         # App-scoped install/remove/test runner
-│       │   ├── PrCliCommand.kt             # Runs pr-cli for DistroOperations
-│       │   ├── ProcessRunner.kt            # Child process: stdin closed, lines out, stopped on failure
-│       │   ├── TerminalActivity.kt         # Compose: a view onto a ManagedSession
-│       │   └── session/                    # SessionManager, ManagedSession, SessionService
-│       └── res/                            # Theme, icons, strings
+│   ├── build.gradle.kts                    # App module: Compose BOM 2025.05.00, :proot-engine and termlib deps
+│   └── src/
+│       ├── main/
+│       │   ├── AndroidManifest.xml         # Permissions, activities, SessionService, extractNativeLibs
+│       │   ├── assets/
+│       │   │   ├── bin/busybox.applets     # Busybox applets App.kt symlinks at bootstrap
+│       │   │   └── scripts/bootstrap.sh    # POSIX sh setup
+│       │   ├── java/id/or/oo/pr/
+│       │   │   ├── App.kt                  # Application: bootstrap; owns SessionManager and DistroOperations
+│       │   │   ├── MainActivity.kt         # Compose: container list, output sheet of DistroOperations
+│       │   │   ├── SessionBanners.kt       # Keep CPU awake switch, battery and background-error banners
+│       │   │   ├── InstalledContainers.kt  # Which aliases are installed (OCI rootfs or legacy dir)
+│       │   │   ├── DistroOperations.kt     # App-scoped install/remove/test runner
+│       │   │   ├── PrCliCommand.kt         # Runs pr-cli for DistroOperations
+│       │   │   ├── ProcessRunner.kt        # Child process: stdin closed, lines out, stopped on failure
+│       │   │   ├── TerminalActivity.kt     # Compose: a view onto a ManagedSession
+│       │   │   └── session/                # SessionManager, ManagedSession, SessionService
+│       │   └── res/                        # Theme, icons, strings
+│       └── test/                           # JVM unit tests (:app:testDebugUnitTest)
+├── proot-engine/                           # Android library: ProotHost, ProotLauncher, PtyNative
+│   ├── build.gradle.kts                    # CMake for libptyjni.so
+│   └── src/
+│       ├── main/cpp/                       # ptyjni.c: PTY fork/exec with /dev/ptmx
+│       ├── main/jniLibs/arm64-v8a/         # libproot, libproot-loader, libpr-cli, libbusybox (.so)
+│       ├── test/                           # JVM unit tests
+│       └── androidTest/                    # Instrumented tests (PTY bridge, session reaping)
 ├── termlib/
 │   ├── build.gradle.kts                    # Thin wrapper: pulls source from vendor/termlib submodule
 │   └── proguard-rules.pro                  # Empty (required by Android library plugin)
+└── gradle/wrapper/                         # Gradle 8.11.1 wrapper
 vendor/termlib/                             # Git submodule: ConnectBot terminal library
-└── android/gradle/wrapper/                 # Gradle 8.11.1 wrapper
 ```
 
-Current layout: `cpp/` (`ptyjni.c`), `jniLibs/`, `ProotLauncher.kt` and `PtyNative.kt` moved to
-`android/proot-engine/` (`docs/design/proot-engine-library.md`); pr-cli replaced
-`proot-distro.sh`, and the assets hold only `bin/busybox.applets` and `scripts/bootstrap.sh`.
+`cpp/`, `jniLibs/`, `ProotLauncher.kt` and `PtyNative.kt` moved from `app/` to `proot-engine/`
+(`docs/design/proot-engine-library.md`), and pr-cli replaced `proot-distro.sh`.
 
 ---
 
@@ -348,7 +352,7 @@ notification shade kills the process and every session.
 
 - **T5.1**: Verify distro plugin TARBALL_URLs are accessible and audit `distro_setup()` hooks
 - **T5.2-T5.6**: Integration testing on device (Alpine, Debian, Ubuntu, backup/restore, isolated mode)
-- ~~**Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution~~ **Resolved**: CI builds the APK with termlib on every push and pull request.
+- ~~**Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution~~ **Resolved**: CI builds the APK with termlib on pushes to `main` and on pull requests.
 - **Background sessions**: done (`docs/design/background-sessions.md`). Not covered: several sessions
   per container, start at boot, restoring sessions after the process is killed
 - **Compose theme**: Currently uses default Material3 — should adopt app branding (#1a1a2e navy, #e94560 red)
