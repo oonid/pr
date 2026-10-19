@@ -52,13 +52,9 @@ private data class OciImageSuggestion(
 private val DISTRO_CATALOG = listOf(
     DistroCatalogEntry("alpine", "alpine:latest", "docker.io/library/alpine:latest"),
     DistroCatalogEntry("alpine-edge", "alpine:edge", "docker.io/library/alpine:edge"),
-    DistroCatalogEntry("archlinux", "Arch Linux", "docker.io/library/archlinux:latest"),
     DistroCatalogEntry("debian", "debian:stable", "docker.io/library/debian:stable"),
     DistroCatalogEntry("debian-testing", "debian:testing", "docker.io/library/debian:testing"),
     DistroCatalogEntry("fedora", "Fedora", "registry.fedoraproject.org/fedora:latest"),
-    DistroCatalogEntry("manjaro", "Manjaro", "docker.io/manjarolinux/base:latest"),
-    DistroCatalogEntry("opensuse", "openSUSE", "registry.opensuse.org/opensuse/tumbleweed:latest"),
-    DistroCatalogEntry("rockylinux", "Rocky Linux", "docker.io/library/rockylinux:latest"),
     DistroCatalogEntry("ubuntu", "ubuntu:latest", "docker.io/library/ubuntu:latest"),
 )
 
@@ -70,6 +66,9 @@ private val OCI_IMAGE_SUGGESTIONS = listOf(
     OciImageSuggestion("Debian Testing", "docker.io/library/debian:testing", "debian-testing"),
     OciImageSuggestion("Fedora Latest", "registry.fedoraproject.org/fedora:latest", "fedora"),
     OciImageSuggestion("Arch Linux", "docker.io/library/archlinux:latest", "archlinux"),
+    OciImageSuggestion("Manjaro", "docker.io/manjarolinux/base:latest", "manjaro"),
+    OciImageSuggestion("openSUSE Tumbleweed", "registry.opensuse.org/opensuse/tumbleweed:latest", "opensuse"),
+    OciImageSuggestion("Rocky Linux", "docker.io/library/rockylinux:latest", "rockylinux"),
 )
 
 class MainActivity : ComponentActivity() {

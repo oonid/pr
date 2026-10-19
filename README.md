@@ -16,7 +16,7 @@ The core execution environment has been decoupled into a standalone Android Libr
 
 ## Supported distributions
 
-Alpine (latest & edge), Debian (stable & testing), Ubuntu, Arch Linux, Fedora, OpenSUSE, Manjaro, Rocky Linux
+The container list offers Alpine (latest & edge), Debian (stable & testing), Fedora and Ubuntu. Arch Linux, Manjaro, openSUSE and Rocky Linux are one tap away under **Images** on the custom-image card, which installs any OCI image reference.
 
 ## How it works
 
