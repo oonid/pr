@@ -37,13 +37,17 @@ class DistroOperationsTest {
         @Volatile var gate: CountDownLatch? = null
         @Volatile var sawCancellation = false
         @Volatile var failureOnCancel: Exception? = null
+        @Volatile var gatedCommand: String? = null
+        @Volatile var linesFor = mapOf<String, List<String>>()
 
         override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int {
             calls += args
             sessions?.let { runningAtCall += it.running.value }
             before.forEach(onLine)
+            linesFor[args.first()].orEmpty().forEach(onLine)
             try {
-                gate?.let { runInterruptible(Dispatchers.IO) { it.await() } }
+                gate?.takeIf { gatedCommand == null || gatedCommand == args.first() }
+                    ?.let { runInterruptible(Dispatchers.IO) { it.await() } }
             } catch (e: CancellationException) {
                 sawCancellation = true
                 throw failureOnCancel ?: e
@@ -69,10 +73,11 @@ class DistroOperationsTest {
     ) { _, _ -> }
 
     private val command = FakeCommand().also { it.sessions = sessions }
+    private val installed: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun operations(endTimeoutMs: Long = ManagedSession.END_TIMEOUT_MS) =
-        DistroOperations(command, sessions, scope, endTimeoutMs)
+        DistroOperations(command, sessions, scope, { it in installed }, endTimeoutMs)
 
     private fun DistroOperations.awaitFinished(): DistroOperations.Operation {
         eventually { operation.value?.running == false }
@@ -324,7 +329,7 @@ class DistroOperationsTest {
     fun aCancelBeforeTheWorkStartsStillFinishes() {
         val queued = CopyOnWriteArrayList<Runnable>()
         val held = CoroutineScope(SupervisorJob() + Executor { queued += it }.asCoroutineDispatcher())
-        val ops = DistroOperations(command, sessions, held)
+        val ops = DistroOperations(command, sessions, held, { it in installed })
         ops.test("alpine", "alpine:latest")
 
         ops.cancel()
@@ -335,6 +340,88 @@ class DistroOperationsTest {
         assertTrue(command.calls.isEmpty())
         assertTrue(ops.test("alpine", "alpine:latest"))
         held.cancel()
+    }
+
+    private fun cancelInstall(
+        ops: DistroOperations,
+        start: DistroOperations.() -> Boolean,
+        createdAlias: String?,
+        gated: String = "install",
+    ) =
+        run {
+            command.gate = CountDownLatch(1)
+            command.gatedCommand = gated
+            command.linesFor = mapOf("remove" to listOf("Wiping the rootfs"))
+            assertTrue(ops.start())
+            eventually { command.calls.isNotEmpty() }
+            createdAlias?.let { installed += it }
+            ops.cancel()
+            ops.awaitFinished()
+        }
+
+    @Test
+    fun aCancelledInstallOfANewContainerRemovesIt() {
+        val ops = operations()
+
+        val done = cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, "alpine")
+
+        assertEquals(
+            listOf(
+                listOf("install", "docker.io/library/alpine:latest", "--override-alias", "alpine"),
+                listOf("remove", "alpine"),
+            ),
+            command.calls,
+        )
+        assertEquals(listOf("Installing alpine:latest…", "Wiping the rootfs", "Cancelled."), done.lines)
+        assertNull(done.exitCode)
+    }
+
+    @Test
+    fun aCancelledCustomInstallWithAnAliasRemovesIt() {
+        val ops = operations()
+
+        cancelInstall(ops, { installCustom("docker.io/library/debian:stable", "deb") }, "deb")
+
+        assertEquals(listOf("remove", "deb"), command.calls.last())
+    }
+
+    @Test
+    fun aCancelledInstallOverAContainerThatAlreadyExistedRemovesNothing() {
+        installed += "alpine"
+        val ops = operations()
+
+        val done = cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, null)
+
+        assertEquals(1, command.calls.size)
+        assertEquals(listOf("Installing alpine:latest…", "Cancelled."), done.lines)
+    }
+
+    @Test
+    fun aCancelledInstallThatCreatedNothingRemovesNothing() {
+        val ops = operations()
+
+        cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, null)
+
+        assertEquals(1, command.calls.size)
+    }
+
+    @Test
+    fun aCancelledCustomInstallWithoutAnAliasRemovesNothing() {
+        val ops = operations()
+
+        val done = cancelInstall(ops, { installCustom("docker.io/library/debian:stable", "") }, "debian")
+
+        assertEquals(listOf(listOf("install", "docker.io/library/debian:stable")), command.calls)
+        assertEquals("Cancelled.", done.lines.last())
+    }
+
+    @Test
+    fun aCancelledTestRemovesNothing() {
+        val ops = operations()
+
+        cancelInstall(ops, { test("alpine", "alpine:latest") }, "alpine", gated = "test")
+
+        assertEquals(listOf(listOf("test", "alpine")), command.calls)
     }
 
     @Test

@@ -29,7 +29,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.launch
-import java.io.File
 
 data class DistroInfo(
     val alias: String,
@@ -72,13 +71,6 @@ private val OCI_IMAGE_SUGGESTIONS = listOf(
     OciImageSuggestion("Fedora Latest", "registry.fedoraproject.org/fedora:latest", "fedora"),
     OciImageSuggestion("Arch Linux", "docker.io/library/archlinux:latest", "archlinux"),
 )
-
-private fun listDirectories(parent: File): List<String> {
-    return parent.listFiles()
-        ?.filter { it.isDirectory }
-        ?.map { it.name }
-        ?: emptyList()
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,15 +119,7 @@ fun DistroListScreen(app: App) {
     val scope = rememberCoroutineScope()
 
     fun refreshDistros() {
-        val legacyRootfsDir = File(app.prefixDir, "var/lib/pr/installed-rootfs")
-        val ociContainersDir = File(app.prefixDir, "var/lib/pr/containers")
-        val installedAliases = mutableSetOf<String>()
-        installedAliases.addAll(listDirectories(legacyRootfsDir))
-        for (alias in listDirectories(ociContainersDir)) {
-            if (File(ociContainersDir, "$alias/rootfs").isDirectory) {
-                installedAliases.add(alias)
-            }
-        }
+        val installedAliases = app.containers.aliases()
 
         val catalogDistros = DISTRO_CATALOG.map { entry ->
             DistroInfo(

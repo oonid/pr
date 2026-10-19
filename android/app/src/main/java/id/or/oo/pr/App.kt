@@ -60,8 +60,15 @@ class App : Application(), ProotHost {
         )
     }
 
+    val containers: InstalledContainers by lazy { InstalledContainers(prefixDir) }
+
     val operations: DistroOperations by lazy {
-        DistroOperations(PrCliCommand(this), sessions, CoroutineScope(SupervisorJob() + Dispatchers.Default))
+        DistroOperations(
+            PrCliCommand(this),
+            sessions,
+            CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            containers::contains,
+        )
     }
 
     val nativeLibDir: File
