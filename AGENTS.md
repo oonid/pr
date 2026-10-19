@@ -110,12 +110,12 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ```bash
 cd src/pr-cli && cargo test
-# 178 tests: 153 library unit + 2 binary + 23 integration (14 plugin parsers)
+# 178 tests: 153 library unit + 11 binary (9 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
 ```
 
 ### On-device integration tests
 
-Run from app UI via BugReport button on each distro row, or:
+Run from the app UI via Test in the ⋮ menu of an installed distro row, or:
 
 ```bash
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
