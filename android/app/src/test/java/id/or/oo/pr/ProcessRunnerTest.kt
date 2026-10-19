@@ -11,6 +11,8 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
@@ -23,7 +25,12 @@ class ProcessRunnerTest {
 
     private fun sh(script: String) = listOf("/bin/sh", "-c", script)
 
-    private val myPid = File("/proc/self").canonicalFile.name.toInt()
+    private val myPid by lazy { File("/proc/self").canonicalFile.name.toInt() }
+
+    @Before
+    fun needsProc() {
+        assumeTrue(File("/proc/self").exists())
+    }
 
     private fun runner(stopWaitMs: Long = ProcessRunner.STOP_WAIT_MS) =
         ProcessRunner(myPid, { pid, signal -> ProcessBuilder("kill", "-$signal", "$pid").start().waitFor() }, stopWaitMs = stopWaitMs)
