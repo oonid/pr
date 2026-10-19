@@ -5,9 +5,11 @@ import id.or.oo.pr.session.FakePty
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
 import id.or.oo.pr.session.eventually
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runInterruptible
 import org.junit.After
@@ -20,6 +22,7 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 
 class DistroOperationsTest {
 
@@ -32,12 +35,19 @@ class DistroOperationsTest {
         @Volatile var exitCode = 0
         @Volatile var failure: Exception? = null
         @Volatile var gate: CountDownLatch? = null
+        @Volatile var sawCancellation = false
+        @Volatile var failureOnCancel: Exception? = null
 
         override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int {
             calls += args
             sessions?.let { runningAtCall += it.running.value }
             before.forEach(onLine)
-            gate?.let { runInterruptible(Dispatchers.IO) { it.await() } }
+            try {
+                gate?.let { runInterruptible(Dispatchers.IO) { it.await() } }
+            } catch (e: CancellationException) {
+                sawCancellation = true
+                throw failureOnCancel ?: e
+            }
             after.forEach(onLine)
             failure?.let { throw it }
             return exitCode
@@ -236,6 +246,95 @@ class DistroOperationsTest {
         assertTrue(command.calls.isEmpty())
         assertEquals(listOf("alpine"), sessions.running.value)
         assertTrue(ops.test("alpine", "alpine:latest"))
+    }
+
+    @Test
+    fun cancelDuringARunEndsWithCancelledAndFreesTheRunner() {
+        command.gate = CountDownLatch(1)
+        command.before = listOf("Running suite distro")
+        command.after = listOf("never shown")
+        val ops = operations()
+        ops.test("alpine", "alpine:latest")
+        eventually { ops.operation.value?.lines?.size == 2 }
+
+        ops.cancel()
+
+        val done = ops.awaitFinished()
+        assertEquals(listOf("Testing alpine:latest…", "Running suite distro", "Cancelled."), done.lines)
+        assertNull(done.exitCode)
+        assertTrue(command.sawCancellation)
+        command.gate = null
+        assertTrue(ops.install("ubuntu", "ubuntu:latest", "docker.io/library/ubuntu:latest"))
+        assertEquals("Done.", ops.awaitFinished().lines.last())
+    }
+
+    @Test
+    fun aCommandFailingAsItIsCancelledStillEndsWithCancelled() {
+        command.gate = CountDownLatch(1)
+        command.failureOnCancel = IOException("Stream closed")
+        val ops = operations()
+        ops.test("alpine", "alpine:latest")
+        eventually { command.calls.isNotEmpty() }
+
+        ops.cancel()
+
+        assertEquals(listOf("Testing alpine:latest…", "Cancelled."), ops.awaitFinished().lines)
+    }
+
+    @Test
+    fun cancelDuringRemovesWaitNeverRunsRemove() {
+        endGraceMs = 5_000
+        sessions.open("alpine")
+        ptys.getValue("alpine").ignoresEof = true
+        val ops = operations()
+        ops.remove("alpine", "alpine:latest")
+        eventually { ops.operation.value?.lines?.size == 2 }
+
+        val started = System.nanoTime()
+        ops.cancel()
+
+        val done = ops.awaitFinished()
+        assertTrue((System.nanoTime() - started) / 1_000_000 < 3_000)
+        assertEquals(
+            listOf("Removing alpine:latest…", "Stopping the alpine:latest session…", "Cancelled."),
+            done.lines,
+        )
+        assertTrue(command.calls.isEmpty())
+        eventually { ptys.getValue("alpine").eofSent }
+        Thread.sleep(200)
+        assertTrue(command.calls.isEmpty())
+    }
+
+    @Test
+    fun cancelWhenNothingRunsDoesNothing() {
+        val ops = operations()
+        ops.cancel()
+        assertNull(ops.operation.value)
+
+        ops.test("alpine", "alpine:latest")
+        val done = ops.awaitFinished()
+        ops.cancel()
+
+        assertEquals(done, ops.operation.value)
+        assertEquals(listOf("Testing alpine:latest…", "Done."), done.lines)
+        assertTrue(ops.dismiss())
+    }
+
+    @Test
+    fun aCancelBeforeTheWorkStartsStillFinishes() {
+        val queued = CopyOnWriteArrayList<Runnable>()
+        val held = CoroutineScope(SupervisorJob() + Executor { queued += it }.asCoroutineDispatcher())
+        val ops = DistroOperations(command, sessions, held)
+        ops.test("alpine", "alpine:latest")
+
+        ops.cancel()
+        queued.forEach { it.run() }
+
+        val done = ops.awaitFinished()
+        assertEquals(listOf("Testing alpine:latest…", "Cancelled."), done.lines)
+        assertTrue(command.calls.isEmpty())
+        assertTrue(ops.test("alpine", "alpine:latest"))
+        held.cancel()
     }
 
     @Test

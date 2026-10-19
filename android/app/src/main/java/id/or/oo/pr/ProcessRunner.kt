@@ -1,5 +1,6 @@
 package id.or.oo.pr
 
+import id.or.oo.pr.session.ProotProcesses
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -9,7 +10,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-class ProcessRunner(private val stopWaitMs: Long = STOP_WAIT_MS) {
+class ProcessRunner(
+    private val parentPid: Int,
+    private val signal: (pid: Int, signal: Int) -> Unit,
+    private val processes: ProotProcesses = ProotProcesses(),
+    private val stopWaitMs: Long = STOP_WAIT_MS,
+) {
 
     suspend fun run(cmd: List<String>, env: Map<String, String>, onLine: (String) -> Unit): Int =
         withContext(Dispatchers.IO) {
@@ -37,7 +43,7 @@ class ProcessRunner(private val stopWaitMs: Long = STOP_WAIT_MS) {
             try {
                 exit.await()
             } catch (e: Throwable) {
-                stop(proc)
+                stop(proc, cmd)
                 withContext(NonCancellable) {
                     if (withTimeoutOrNull(stopWaitMs) { exit.join() } == null) proc.inputStream.close()
                 }
@@ -46,15 +52,32 @@ class ProcessRunner(private val stopWaitMs: Long = STOP_WAIT_MS) {
             }
         }
 
-    private fun stop(proc: Process) {
+    private fun stop(proc: Process, cmd: List<String>) {
+        val roots = processes.children(parentPid, cmd)
+        val tree = processes.descendants(roots)
+        tree.forEach { signal(it, SIGTERM) }
         proc.destroy()
-        if (!proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)) {
-            proc.destroyForcibly()
-            proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)
+        if (exited(proc, tree)) return
+        (tree + processes.descendants(roots)).distinct()
+            .filter { processes.alive(setOf(it)) }
+            .forEach { signal(it, SIGKILL) }
+        proc.destroyForcibly()
+        proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)
+    }
+
+    private fun exited(proc: Process, tree: List<Int>): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(stopWaitMs)
+        while (proc.isAlive || processes.alive(tree.toSet())) {
+            if (deadline - System.nanoTime() <= 0) return false
+            Thread.sleep(POLL_MS)
         }
+        return true
     }
 
     companion object {
         const val STOP_WAIT_MS = 2_000L
+        private const val POLL_MS = 20L
+        private const val SIGTERM = 15
+        private const val SIGKILL = 9
     }
 }

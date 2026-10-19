@@ -8,6 +8,7 @@ interface ProcFs {
     fun stat(pid: Int): String?
     fun taskIds(pid: Int): List<Int>?
     fun children(pid: Int, tid: Int): String?
+    fun cmdline(pid: Int): String?
     fun exists(pid: Int): Boolean
 }
 
@@ -22,6 +23,8 @@ object SystemProcFs : ProcFs {
         File("/proc/$pid/task").listFiles()?.mapNotNull { it.name.toIntOrNull() }
 
     override fun children(pid: Int, tid: Int): String? = read("/proc/$pid/task/$tid/children")
+
+    override fun cmdline(pid: Int): String? = read("/proc/$pid/cmdline")
 
     override fun exists(pid: Int): Boolean = File("/proc/$pid").exists()
 
@@ -44,6 +47,11 @@ class ProotProcesses(private val proc: ProcFs = SystemProcFs) {
 
     fun forceKillTargets(proot: Int): List<Int> =
         forceKillTargets(proot, statuses()) { descendantsOf(listOf(proot)) }
+
+    fun children(parent: Int, commandLine: List<String>): List<Int> =
+        childrenOf(parent).filter { proc.cmdline(it)?.removeSuffix("\u0000")?.split('\u0000') == commandLine }
+
+    fun descendants(roots: List<Int>): List<Int> = descendantsOf(roots)
 
     private fun childrenOf(pid: Int): List<Int> {
         val listed = listedChildren(pid)

@@ -295,6 +295,14 @@ to 20 s for it; if it still runs, removal is cancelled with "Couldn't stop the <
 removal cancelled." The list refreshes when an operation finishes. An operation does not survive
 the process being killed: no foreground service covers it.
 
+While an operation runs, the output sheet offers Cancel (Close is disabled, and Back, swipe-down
+and a scrim tap leave the sheet up). Cancel stops `pr-cli` and every process it started (found
+through `/proc`: `pr-cli` by its command line among the app's children, then its descendants by
+parent links): SIGTERM, up to 2 s, then SIGKILL. The output ends with "Cancelled." During
+Remove's wait for a session, Cancel stops the wait and nothing is removed; the session's End
+continues. A cancelled install may leave a partial container; a later install of the same alias
+or a remove replaces it.
+
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery
 savers can still stop an app that is not exempt from battery optimization, so the container list

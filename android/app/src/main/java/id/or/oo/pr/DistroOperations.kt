@@ -4,6 +4,9 @@ import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -34,6 +37,7 @@ class DistroOperations(
     )
 
     private val lock = Any()
+    private var job: Job? = null
     private val _operation = MutableStateFlow<Operation?>(null)
     val operation: StateFlow<Operation?> = _operation
 
@@ -76,6 +80,12 @@ class DistroOperations(
             execute(listOf("test", alias))
         }
 
+    fun cancel() {
+        synchronized(lock) {
+            if (_operation.value?.running == true) job?.cancel()
+        }
+    }
+
     fun dismiss(): Boolean = synchronized(lock) {
         if (_operation.value?.running == true) return false
         _operation.value = null
@@ -88,17 +98,16 @@ class DistroOperations(
         true
     }
 
-    private fun start(operation: Operation, work: suspend () -> Unit): Boolean {
+    private fun start(operation: Operation, work: suspend () -> Unit): Boolean = synchronized(lock) {
         val first = "${operation.kind.label} ${operation.displayName}…"
         if (!post(operation.copy(lines = listOf(first)))) return false
-        scope.launch {
-            try {
-                work()
-            } finally {
-                _operation.update { it?.copy(running = false) }
-            }
-        }
-        return true
+        job = scope.launch { work() }.apply { invokeOnCompletion(::finish) }
+        true
+    }
+
+    private fun finish(cause: Throwable?) {
+        val closing = if (cause is CancellationException) listOf("Cancelled.") else emptyList()
+        _operation.update { it?.copy(lines = it.lines + closing, running = false) }
     }
 
     private suspend fun execute(args: List<String>) {
@@ -109,6 +118,7 @@ class DistroOperations(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             append("ERROR: ${e.message}")
         }
     }
