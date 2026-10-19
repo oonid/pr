@@ -5,7 +5,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class PrCliCommand(private val app: App) : DistroCommand {
+class PrCliCommand(
+    private val app: App,
+    private val runner: ProcessRunner = ProcessRunner(),
+) : DistroCommand {
 
     override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         val binDir = File(app.prefixDir, "bin")
@@ -24,30 +27,20 @@ class PrCliCommand(private val app: App) : DistroCommand {
         )
 
         val prCli = File(binDir, "pr-cli").absolutePath
-        val cmd = arrayOf(prCli, *args.toTypedArray())
+        val cmd = listOf(prCli) + args
 
         Log.d(TAG, "Running: ${cmd.joinToString(" ")}")
-        val pb = ProcessBuilder(*cmd)
-        pb.environment().putAll(env)
-        pb.redirectErrorStream(true)
-
-        val proc = pb.start()
-        proc.inputStream.bufferedReader().use { reader ->
-            var line: String? = reader.readLine()
-            while (line != null) {
-                val cleaned = line
-                    .replace(ANSI_CSI, "")
-                    .replace(ANSI_OSC, "")
-                    .replace("\r", "")
-                    .trim()
-                if (cleaned.isNotEmpty()) {
-                    Log.d(TAG, cleaned)
-                    onLine(cleaned)
-                }
-                line = reader.readLine()
+        val exitCode = runner.run(cmd, env) { line ->
+            val cleaned = line
+                .replace(ANSI_CSI, "")
+                .replace(ANSI_OSC, "")
+                .replace("\r", "")
+                .trim()
+            if (cleaned.isNotEmpty()) {
+                Log.d(TAG, cleaned)
+                onLine(cleaned)
             }
         }
-        val exitCode = proc.waitFor()
         Log.d(TAG, "Exit code: $exitCode")
         exitCode
     }
