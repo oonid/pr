@@ -32,6 +32,7 @@ android/                                    # Android project root
 │       │   ├── MainActivity.kt             # Compose: distro list, install/remove (270 lines)
 │       │   ├── DistroOperations.kt         # App-scoped install/remove/test runner
 │       │   ├── PrCliCommand.kt             # Runs pr-cli for DistroOperations
+│       │   ├── ProcessRunner.kt            # Child process: stdin closed, lines out, stopped on failure
 │       │   ├── TerminalActivity.kt         # Compose: terminal emulator (115 lines)
 │       │   ├── ProotLauncher.kt            # PTY session manager (132 lines)
 │       │   └── PtyNative.kt                # JNI declarations for PTY (43 lines)

@@ -286,6 +286,10 @@ the state in order and ends with "Done.", "Exit code: N" or "ERROR: …"; a seco
 first, and cancels with the exact text, never running `remove`, when it does not stop in time; the
 custom install's arguments and its invalid-alias error.
 
+`ProcessRunner`, which runs `pr-cli` for `PrCliCommand`, against real `/bin/sh` processes on the
+host: output lines in order and the exit code, the environment, standard input closed (so a reader
+of it does not block), and a failing read that stops the process before the error is rethrown.
+
 `ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
 exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s
 steps, so a missing step fails; `END_TIMEOUT_MS` exceeds the default worst case.
