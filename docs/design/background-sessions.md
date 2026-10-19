@@ -143,7 +143,8 @@ background with no session running.
   same `/proc` parent links as End's fallback walk (`ProotProcesses`), sends them SIGTERM and
   destroys `pr-cli`, waits up to 2 s, then SIGKILLs whatever is left and destroys `pr-cli`
   forcibly. During Remove's wait for a session, cancelling stops the wait and `remove` never runs;
-  the session's End keeps going on its own.
+  the session's End keeps going on its own. If `pr-cli` has already exited when the cancel
+  arrives, its result stands: the output ends with "Done." or "Exit code: N", not "Cancelled.".
 - A cancelled install cleans up after itself when its alias is known (catalog installs always
   pass `--override-alias`; custom installs when an alias was given): if the container did not
   exist before the install started and exists once `pr-cli` has stopped, the same operation runs
@@ -312,7 +313,8 @@ the command fails as it is cancelled or the cancel lands before the work has sta
 during Remove's wait never runs `remove`; cancel with nothing running does nothing. A cancelled
 install runs `remove <alias>` for a container it created (catalog, or custom with an alias), and
 nothing for a container that existed before, one that was never created, a custom install without
-an alias, or a cancelled test. `InstalledContainers` against a temporary prefix: the OCI `rootfs`
+an alias, or a cancelled test. A command that finishes as it is cancelled keeps "Done." and its
+exit code, with no "Cancelled.". `InstalledContainers` against a temporary prefix: the OCI `rootfs`
 directory or the legacy directory marks a container installed; a container directory without
 `rootfs`, a file and a blank alias do not.
 
@@ -320,8 +322,9 @@ directory or the legacy directory marks a container installed; a container direc
 host: output lines in order and the exit code, the environment, standard input closed (so a reader
 of it does not block), a failing read that stops the process before the error is rethrown, and
 cancellation stopping the process and its descendants, with SIGKILL after the wait for a tree that
-ignores SIGTERM. `ProotProcesses` finds a child by its exact command line (not a zombie, not
-another `pr-cli` command) and lists every descendant, with and without `children` files.
+ignores SIGTERM; an exit code already known when the cancellation arrives is returned, not lost.
+`ProotProcesses` finds a child by its exact command line (not a zombie, not another `pr-cli`
+command) and lists every descendant, with and without `children` files.
 
 `ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
 exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s

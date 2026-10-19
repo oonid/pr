@@ -39,6 +39,7 @@ class DistroOperationsTest {
         @Volatile var failureOnCancel: Exception? = null
         @Volatile var gatedCommand: String? = null
         @Volatile var linesFor = mapOf<String, List<String>>()
+        @Volatile var uninterruptibleGate: CountDownLatch? = null
 
         override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int {
             calls += args
@@ -52,6 +53,7 @@ class DistroOperationsTest {
                 sawCancellation = true
                 throw failureOnCancel ?: e
             }
+            uninterruptibleGate?.await()
             after.forEach(onLine)
             failure?.let { throw it }
             return exitCode
@@ -271,6 +273,24 @@ class DistroOperationsTest {
         command.gate = null
         assertTrue(ops.install("ubuntu", "ubuntu:latest", "docker.io/library/ubuntu:latest"))
         assertEquals("Done.", ops.awaitFinished().lines.last())
+    }
+
+    @Test
+    fun aCommandThatFinishesAsItIsCancelledKeepsItsResult() {
+        val gate = CountDownLatch(1)
+        command.uninterruptibleGate = gate
+        command.after = listOf("All tests passed")
+        val ops = operations()
+        ops.install("alpine", "alpine:latest", "docker.io/library/alpine:latest")
+        eventually { command.calls.isNotEmpty() }
+
+        ops.cancel()
+        gate.countDown()
+
+        val done = ops.awaitFinished()
+        assertEquals(listOf("Installing alpine:latest…", "All tests passed", "Done."), done.lines)
+        assertEquals(0, done.exitCode)
+        assertEquals(1, command.calls.size)
     }
 
     @Test
