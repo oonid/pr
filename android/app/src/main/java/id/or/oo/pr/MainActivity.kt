@@ -213,6 +213,7 @@ fun DistroListScreen(app: App) {
                     operationLabel = current.kind.label,
                     distroName = current.displayName,
                     isRunning = current.running,
+                    isCancelled = current.cancelled,
                     outputLines = current.lines,
                     onClose = ::dismissOutput,
                     onCancel = app.operations::cancel,
@@ -470,6 +471,7 @@ fun OutputConsoleContent(
     operationLabel: String,
     distroName: String,
     isRunning: Boolean,
+    isCancelled: Boolean,
     outputLines: List<String>,
     onClose: () -> Unit,
     onCancel: () -> Unit,
@@ -508,7 +510,7 @@ fun OutputConsoleContent(
                 )
                 if (!isRunning) {
                     Text(
-                        "Completed",
+                        if (isCancelled) "Cancelled" else "Completed",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
