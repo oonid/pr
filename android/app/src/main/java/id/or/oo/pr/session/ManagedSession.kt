@@ -115,8 +115,8 @@ class ManagedSession(
     }
 
     private fun awaitExitCode(ms: Long): Boolean {
-        val deadline = System.currentTimeMillis() + ms
-        while (pty.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms)
+        while (pty.exitCode == null && deadline - System.nanoTime() > 0) Thread.sleep(20)
         return pty.exitCode != null
     }
 
