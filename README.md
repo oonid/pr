@@ -4,8 +4,17 @@ Android app that runs Linux distributions via [proot](https://github.com/proot-m
 
 ## What it does
 
-- Install and run Linux distributions (Alpine, Debian, Ubuntu, and 5 more) on any Android device
-- Native OCI container image support (`docker.io/library/...`)
+- Install and run Linux distributions on any Android device: the list offers Alpine, Debian, Fedora and Ubuntu, and the custom-image card installs any OCI image, with Arch Linux, Manjaro, openSUSE and Rocky Linux one tap away under **Images** (see [Supported distributions](#supported-distributions))
+- Native OCI container image support (`docker.io/library/...`), with a layer cache that is verified before reuse
+- Background sessions: a session keeps running after its screen closes, for example a long-running agent or server, under a `specialUse` foreground service with an ongoing notification (End all, Keep CPU awake)
+  - Back asks End session / Keep running / Cancel; End sends SIGTERM to every process in the session, gives them up to 10 s to exit, then closes the shell and proot
+  - "Keep CPU awake" holds a partial wake lock with the screen off; toggle it from the notification or the switch pinned above the list
+  - a banner offers the battery-optimization exemption, which guards against vendor battery savers
+  - a session that ends while its screen is not visible posts a "session ended (exit N)" notification
+- Install, remove and test containers from the list, with live output
+  - Cancel stops `pr-cli` and everything it started, and removes the partial container of a cancelled install
+  - Remove ends the container's running session first
+  - sessions and operations survive rotation and dark-mode changes
 - Full package manager support: `apk`, `apt-get`
 - Compile and run C, Rust, and other programs inside the guest
 - targetSdk 35 — Play Store compatible
@@ -25,7 +34,7 @@ The container list offers Alpine (latest & edge), Debian (stable & testing), Fed
 The project consists of three layers:
 - **Patched proot** (C) — Handles Android-specific seccomp filters, SELinux, and W^X restrictions.
 - **pr-cli** (Rust) — High-performance, zero-copy CLI that replaces the original `proot-distro.sh` bash script. Supports native OCI extraction and robust quoting.
-- **Android APK / Library** (Kotlin + Compose) — The `:proot-engine` exposes a clean Kotlin API (`ProotHost`, `ProotLauncher`), while `:app` provides a Jetpack Compose terminal UI with soft-keyboard resize support.
+- **Android APK / Library** (Kotlin + Compose) — The `:proot-engine` exposes a clean Kotlin API (`ProotHost`, `ProotLauncher`), while `:app` provides a Jetpack Compose terminal UI with soft-keyboard resize support, an app-wide session manager that keeps sessions running under a foreground service, and an app-scoped runner for install, remove and test.
 
 ### Android compatibility
 
@@ -72,7 +81,35 @@ cd android && ./gradlew assembleDebug
 
 ## Testing
 
-### On-device (requires connected Android device)
+CI runs both host-side unit suites (`cargo test` for pr-cli and `:app:testDebugUnitTest`) on every push and pull request, then builds the APK.
+
+### App unit tests (JVM)
+
+```bash
+cd android && ./gradlew :app:testDebugUnitTest
+```
+
+**128 tests**: session lifetime (`SessionManager`, `ManagedSession`, `ServiceState`, notifications), End's `/proc` scan through a fake process table (`ProotProcesses`), the list's operations (`DistroOperations`, `InstalledContainers`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
+
+### Host-side (pr-cli unit tests)
+
+```bash
+# pr-cli embeds the guest test binary, so build it first
+cd src/proot-integration-test && cargo build --target aarch64-linux-android --release
+cd src/pr-cli && cargo test
+```
+
+**178 tests**: 153 library unit tests, 11 in the binaries and 14 plugin-parser integration tests.
+
+### Instrumented (requires connected Android device)
+
+```bash
+cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
+```
+
+**8 tests** of the PTY bridge (`PtyNative`) and session reaping.
+
+### On-device integration suite (requires connected Android device)
 
 ```bash
 # Install Alpine or Debian via the app UI, then:
@@ -80,13 +117,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-**55 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot
-
-### Host-side (pr-cli unit tests)
-
-```bash
-cd src/pr-cli && cargo test
-```
+In the app, **Test** in an installed container's menu runs the same suite. **55 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot
 
 ## Project structure
 
@@ -95,7 +126,8 @@ src/proot/                  # Patched proot C source
 src/pr-cli/                 # Rust CLI (install, login, OCI pull)
 src/proot-integration-test/ # Guest-side test binary (TAP output)
 android/proot-engine/       # Standalone Android Library AAR (Engine)
-android/app/                # Thin Android UI shell (Compose)
+android/app/                # Android UI shell (Compose): container list, terminal, list operations
+android/app/.../session/    # Background sessions: SessionManager, ManagedSession, SessionService
 scripts/                    # Host-side build scripts
 docs/                       # Technical documentation
 ```
@@ -105,11 +137,14 @@ docs/                       # Technical documentation
 | Document | Description |
 |----------|-------------|
 | [`docs/important-notes.md`](docs/important-notes.md) | Critical constraints, seccomp handlers, caveats — read first |
+| [`docs/android-apk-architecture.md`](docs/android-apk-architecture.md) | Android app architecture; "Session lifetime and Back" covers sessions and list operations |
+| [`docs/design/background-sessions.md`](docs/design/background-sessions.md) | Design of background sessions, End, Cancel and the operation runner |
 | [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
 | [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (35 sections) |
 | [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
 | [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |
 | [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (55 tests) |
+| [`docs/plans/`](docs/plans/) | Historical implementation plans; the design docs and the code are authoritative |
 
 ## Credits
 
