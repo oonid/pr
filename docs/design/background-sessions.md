@@ -159,6 +159,12 @@ background with no session running.
   `pr-cli remove` does not delete it and it blocks a later install of that alias ("already
   exists"). Catalog and other OCI installs never take that path. A cancel during `pr-cli remove`
   may leave a half-removed container: run Remove again.
+- A cancel during a layer download leaves at most `dlcache/sha256_<digest>.partial`. `pr-cli`
+  downloads each layer to that name, renames it to `sha256_<digest>` only once its sha256 matches,
+  overwrites a leftover `.partial`, and hashes a cached layer before reusing it; a damaged one is
+  deleted and downloaded again ("Cached OCI layer <digest> is damaged; downloading again...").
+  An OCI install that fails on its own (bad layer, missing `/etc`, config write) removes its
+  container in-process before it exits, so the list does not show it.
 
 ### `MainActivity` (changed)
 

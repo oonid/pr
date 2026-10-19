@@ -310,7 +310,11 @@ with a plugin name (not an OCI image) and an alias writes `etc/pr/<alias>.overri
 its rootfs, so a cancel in between can leave only that file, which `pr-cli remove` does not
 delete and which blocks a later install of that alias ("already exists"); catalog and other OCI
 installs never take that path. A cancel during `pr-cli remove` may leave a half-removed
-container: run Remove again.
+container: run Remove again. A cancel or a network drop during a layer download leaves at most
+`var/lib/pr/dlcache/sha256_<digest>.partial`, which the next download overwrites: `pr-cli`
+renames a layer to its cache name only once its sha256 matches the digest, and hashes a cached
+layer again before reusing it ("Cached OCI layer <digest> is damaged; downloading again..."). An
+OCI install that fails on its own removes its container before it exits.
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen
 off). A process with a foreground service keeps its wake lock and network in Doze; vendor battery

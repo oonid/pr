@@ -22,7 +22,7 @@ use crate::shared::{
 /// it tries `opendir()` which requires execute permission.  `libc::rmdir()` only
 /// needs write permission on the *parent*, so it succeeds even on 0000-perms
 /// empty dirs.  For non-empty dirs we chmod 0700 first, then recurse.
-fn force_remove_dir_all(path: &Path) {
+pub(crate) fn force_remove_dir_all(path: &Path) {
     // Fast path: try rmdir first.  For empty dirs (even 0000-perms) this works
     // because the kernel only checks write permission on the parent directory.
     if let Ok(cstr) = CString::new(path.to_string_lossy().as_bytes()) {

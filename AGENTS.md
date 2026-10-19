@@ -110,7 +110,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ```bash
 cd src/pr-cli && cargo test
-# 169 tests: 144 library unit + 2 binary + 23 integration (14 plugin parsers)
+# 178 tests: 153 library unit + 2 binary + 23 integration (14 plugin parsers)
 ```
 
 ### On-device integration tests
