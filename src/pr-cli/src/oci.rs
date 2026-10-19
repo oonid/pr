@@ -298,19 +298,64 @@ pub async fn download_blob(
     download_blob_with_bearer(url, destination, expected_digest, None).await
 }
 
+pub fn partial_blob_path(destination: &Path) -> PathBuf {
+    let mut name = destination
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(".partial");
+    destination.with_file_name(name)
+}
+
+pub fn blob_matches_digest(path: &Path, expected_digest: &str) -> Result<bool, String> {
+    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("open blob {}: {}", path.display(), e))?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .map_err(|e| format!("read blob {}: {}", path.display(), e))?;
+    Ok(hex_lower(&hasher.finalize()) == expected_sha256)
+}
+
 pub async fn download_blob_with_bearer(
     url: &str,
     destination: &Path,
     expected_digest: &str,
     bearer_token: Option<&str>,
 ) -> Result<(), String> {
-    use futures_util::StreamExt;
-    use tokio::io::AsyncWriteExt;
-
+    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("create blob dir {}: {}", parent.display(), e))?;
     }
+
+    let partial = partial_blob_path(destination);
+    let downloaded = download_to_partial(url, &partial, &expected_sha256, bearer_token)
+        .await
+        .and_then(|()| {
+            fs::rename(&partial, destination).map_err(|e| {
+                format!(
+                    "rename blob {} to {}: {}",
+                    partial.display(),
+                    destination.display(),
+                    e
+                )
+            })
+        });
+    if downloaded.is_err() {
+        let _ = tokio::fs::remove_file(&partial).await;
+    }
+    downloaded
+}
+
+async fn download_to_partial(
+    url: &str,
+    partial: &Path,
+    expected_sha256: &str,
+    bearer_token: Option<&str>,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
 
     let client = reqwest::Client::builder()
         .user_agent("pr-cli-oci/0.1")
@@ -332,10 +377,9 @@ pub async fn download_blob_with_bearer(
         ));
     }
 
-    let mut file = tokio::fs::File::create(destination)
+    let mut file = tokio::fs::File::create(partial)
         .await
-        .map_err(|e| format!("create blob file {}: {}", destination.display(), e))?;
-    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
+        .map_err(|e| format!("create blob file {}: {}", partial.display(), e))?;
     let mut hasher = sha2::Sha256::new();
     let mut stream = response.bytes_stream();
     while let Some(next) = stream.next().await {
@@ -343,14 +387,16 @@ pub async fn download_blob_with_bearer(
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
-            .map_err(|e| format!("write blob {}: {}", destination.display(), e))?;
+            .map_err(|e| format!("write blob {}: {}", partial.display(), e))?;
     }
     file.flush()
         .await
-        .map_err(|e| format!("flush blob {}: {}", destination.display(), e))?;
+        .map_err(|e| format!("flush blob {}: {}", partial.display(), e))?;
+    file.sync_all()
+        .await
+        .map_err(|e| format!("sync blob {}: {}", partial.display(), e))?;
     let actual_sha256 = hex_lower(&hasher.finalize());
     if actual_sha256 != expected_sha256 {
-        let _ = tokio::fs::remove_file(destination).await;
         return Err(format!(
             "digest mismatch for {}: expected sha256:{}, got sha256:{}",
             url, expected_sha256, actual_sha256
@@ -1150,5 +1196,161 @@ mod tests {
         assert!(normalize_expected_sha256("sha512:abcd").is_err());
         assert!(normalize_expected_sha256("sha256:abcd").is_err());
         assert!(normalize_expected_sha256("not-a-digest").is_err());
+    }
+
+    fn sha256_digest(bytes: &[u8]) -> String {
+        format!("sha256:{}", hex_lower(&sha2::Sha256::digest(bytes)))
+    }
+
+    fn serve_blob(
+        content_length: usize,
+        head: Vec<u8>,
+        tail: Option<(std::sync::mpsc::Receiver<()>, Vec<u8>)>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!(
+            "http://{}/v2/test/blobs/sha256:blob",
+            listener.local_addr().expect("local addr")
+        );
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut reader = std::io::BufReader::new(stream.try_clone().expect("clone stream"));
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                content_length
+            )
+            .expect("write response head");
+            stream.write_all(&head).expect("write body head");
+            stream.flush().expect("flush body head");
+            if let Some((gate, rest)) = tail {
+                gate.recv().expect("wait for release");
+                stream.write_all(&rest).expect("write body tail");
+            }
+        });
+        (url, server)
+    }
+
+    fn test_body() -> Vec<u8> {
+        (0..64 * 1024).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn blob_matches_digest_rejects_truncated_content() {
+        let tmp = unique_tmp_dir("oci-blob-digest");
+        let body = test_body();
+        let digest = sha256_digest(&body);
+        let blob = tmp.join("sha256_blob");
+        fs::write(&blob, &body).expect("write blob");
+        assert!(blob_matches_digest(&blob, &digest).expect("hash blob"));
+        fs::write(&blob, &body[..body.len() / 2]).expect("truncate blob");
+        assert!(!blob_matches_digest(&blob, &digest).expect("hash truncated blob"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn download_keeps_the_final_name_absent_until_the_blob_is_complete() {
+        let tmp = unique_tmp_dir("oci-download-in-progress");
+        let body = test_body();
+        let digest = sha256_digest(&body);
+        let (head, rest) = body.split_at(body.len() / 2);
+        let (release, gate) = std::sync::mpsc::channel();
+        let (url, server) = serve_blob(body.len(), head.to_vec(), Some((gate, rest.to_vec())));
+        let destination = tmp.join("sha256_blob");
+        let partial = partial_blob_path(&destination);
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let task = {
+            let destination = destination.clone();
+            let digest = digest.clone();
+            rt.spawn(async move { download_blob(&url, &destination, &digest).await })
+        };
+        let received = |path: &Path| fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while received(&partial) < head.len() as u64
+            && received(&destination) < head.len() as u64
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let final_name_seen_mid_download = destination.exists();
+        let partial_seen_mid_download = received(&partial) == head.len() as u64;
+        release.send(()).expect("release server");
+        let result = rt.block_on(task).expect("join download");
+        server.join().expect("server thread");
+
+        assert!(!final_name_seen_mid_download);
+        assert!(partial_seen_mid_download);
+        result.expect("download");
+        assert_eq!(fs::read(&destination).expect("read blob"), body);
+        assert!(!partial.exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn download_leaves_nothing_behind_when_the_connection_drops() {
+        let tmp = unique_tmp_dir("oci-download-dropped");
+        let body = test_body();
+        let digest = sha256_digest(&body);
+        let (url, server) = serve_blob(body.len(), body[..body.len() / 2].to_vec(), None);
+        let destination = tmp.join("sha256_blob");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let result = rt.block_on(download_blob(&url, &destination, &digest));
+        server.join().expect("server thread");
+
+        assert!(result.is_err());
+        assert!(!destination.exists());
+        assert!(!partial_blob_path(&destination).exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn download_leaves_nothing_behind_on_a_digest_mismatch() {
+        let tmp = unique_tmp_dir("oci-download-mismatch");
+        let body = test_body();
+        let digest = sha256_digest(b"another blob");
+        let (url, server) = serve_blob(body.len(), body.clone(), None);
+        let destination = tmp.join("sha256_blob");
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let err = rt
+            .block_on(download_blob(&url, &destination, &digest))
+            .expect_err("digest mismatch");
+        server.join().expect("server thread");
+
+        assert!(err.contains("digest mismatch"));
+        assert!(!destination.exists());
+        assert!(!partial_blob_path(&destination).exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn download_overwrites_a_partial_file_left_by_a_killed_run() {
+        let tmp = unique_tmp_dir("oci-download-stale-partial");
+        let body = test_body();
+        let digest = sha256_digest(&body);
+        let destination = tmp.join("sha256_blob");
+        let partial = partial_blob_path(&destination);
+        fs::write(&partial, vec![0xa5u8; body.len() * 2]).expect("seed stale partial");
+        let (url, server) = serve_blob(body.len(), body.clone(), None);
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(download_blob(&url, &destination, &digest))
+            .expect("download");
+        server.join().expect("server thread");
+
+        assert_eq!(fs::read(&destination).expect("read blob"), body);
+        assert!(!partial.exists());
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

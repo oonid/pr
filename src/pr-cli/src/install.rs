@@ -11,11 +11,13 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::color::*;
+use crate::commands_extra::force_remove_dir_all;
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
-    apply_layer_blob, blob_path, blob_url, download_blob_with_bearer, select_manifest_descriptor,
-    OciDescriptor, OciManifest, OciPlatform, DOCKER_MANIFEST_LIST_MEDIA_TYPE,
-    DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+    apply_layer_blob, blob_matches_digest, blob_path, blob_url, download_blob_with_bearer,
+    select_manifest_descriptor, OciDescriptor, OciManifest, OciPlatform,
+    DOCKER_MANIFEST_LIST_MEDIA_TYPE, DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE,
+    OCI_IMAGE_MANIFEST_MEDIA_TYPE,
 };
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
@@ -584,21 +586,52 @@ fn cleanup_oci_on_failure(container_dir: &Path) {
         return;
     }
 
-    let container_dir_str = container_dir.to_string_lossy().into_owned();
-    let busybox = get_native_busybox();
-    let _ = Command::new(&busybox)
-        .arg0("busybox")
-        .args(["rm", "-rf", &container_dir_str])
-        .status();
+    match fs::symlink_metadata(container_dir) {
+        Ok(meta) if meta.is_dir() => force_remove_dir_all(container_dir),
+        Ok(_) => {
+            let _ = fs::remove_file(container_dir);
+        }
+        Err(_) => return,
+    }
+    if fs::symlink_metadata(container_dir).is_ok() {
+        msg_error(&format!(
+            "could not remove the partial container '{}'",
+            container_dir.display()
+        ));
+    }
+}
+
+fn install_oci_layers<F>(
+    layers: &[OciDescriptor],
+    cache_dir: &Path,
+    rootfs: &Path,
+    mut fetch: F,
+) -> Result<(), String>
+where
+    F: FnMut(&OciDescriptor, &Path) -> Result<(), String>,
+{
+    for layer in layers {
+        let blob = blob_path(cache_dir, &layer.digest)?;
+        if blob.exists() && !blob_matches_digest(&blob, &layer.digest)? {
+            msg_status(&format!(
+                "Cached OCI layer {} is damaged; downloading again...",
+                layer.digest
+            ));
+            fs::remove_file(&blob)
+                .map_err(|e| format!("remove damaged blob {}: {}", blob.display(), e))?;
+        }
+        if !blob.exists() {
+            msg_status(&format!("Downloading OCI layer {}...", layer.digest));
+            fetch(layer, &blob)?;
+        }
+        apply_layer_blob(&blob, rootfs)?;
+    }
+    Ok(())
 }
 
 fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> Result<(), String> {
     let resolved = resolve_oci_reference(reference)?;
     let install_name = derive_oci_install_name(&resolved, override_alias)?;
-    let container_dir = get_oci_container_dir(&install_name);
-    let rootfs = get_oci_container_rootfs_dir(&install_name);
-    let metadata_path = get_oci_container_manifest_path(&install_name);
-    let container_dir_path = Path::new(&container_dir);
 
     if resolve_installed_rootfs(&install_name).is_some() {
         return Err(format!(
@@ -612,53 +645,54 @@ fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> 
         resolved.repository, resolved.reference, install_name
     ));
 
+    if let Err(e) = populate_oci_container(reference, &resolved, &install_name) {
+        cleanup_oci_on_failure(Path::new(&get_oci_container_dir(&install_name)));
+        return Err(e);
+    }
+    msg_status("Finished.");
+    Ok(())
+}
+
+fn populate_oci_container(
+    reference: &str,
+    resolved: &ResolvedOciReference,
+    install_name: &str,
+) -> Result<(), String> {
+    let rootfs = get_oci_container_rootfs_dir(install_name);
+    let metadata_path = get_oci_container_manifest_path(install_name);
+
     fs::create_dir_all(&rootfs).map_err(|e| format!("create OCI rootfs dir: {}", e))?;
     let l2s_dir = format!("{}/.l2s", rootfs);
     fs::create_dir_all(&l2s_dir).map_err(|e| format!("create OCI .l2s dir: {}", e))?;
 
     let device_arch = detect_device_arch();
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create tokio runtime: {}", e))?;
-    let resolved_manifest = match rt.block_on(resolve_oci_manifest(&resolved, &device_arch)) {
-        Ok(manifest) => manifest,
-        Err(e) => {
-            cleanup_oci_on_failure(container_dir_path);
-            return Err(e);
-        }
-    };
+    let resolved_manifest = rt.block_on(resolve_oci_manifest(resolved, &device_arch))?;
     let bearer_token = resolved_manifest.bearer_token;
     let manifest = resolved_manifest.manifest;
 
     if manifest.layers.is_empty() {
-        cleanup_oci_on_failure(container_dir_path);
         return Err("OCI manifest does not contain filesystem layers".to_string());
     }
 
     let cache_dir = Path::new(&get_download_cache_dir()).to_path_buf();
     fs::create_dir_all(&cache_dir).map_err(|e| format!("create cache dir: {}", e))?;
-    let rootfs_path = Path::new(&rootfs);
-    for layer in &manifest.layers {
-        let blob = blob_path(&cache_dir, &layer.digest)?;
-        if !blob.exists() {
+    install_oci_layers(
+        &manifest.layers,
+        &cache_dir,
+        Path::new(&rootfs),
+        |layer, blob| {
             let url = blob_url(&resolved.registry_base, &resolved.repository, &layer.digest);
-            msg_status(&format!("Downloading OCI layer {}...", layer.digest));
-            if let Err(e) = rt.block_on(download_blob_with_bearer(
+            rt.block_on(download_blob_with_bearer(
                 &url,
-                &blob,
+                blob,
                 &layer.digest,
                 bearer_token.as_deref(),
-            )) {
-                cleanup_oci_on_failure(container_dir_path);
-                return Err(e);
-            }
-        }
-        apply_layer_blob(&blob, rootfs_path).map_err(|e| {
-            cleanup_oci_on_failure(container_dir_path);
-            e
-        })?;
-    }
+            ))
+        },
+    )?;
 
     if !Path::new(&format!("{}/etc", rootfs)).exists() {
-        cleanup_oci_on_failure(container_dir_path);
         return Err("OCI rootfs has unexpected structure (missing /etc)".to_string());
     }
 
@@ -668,18 +702,13 @@ fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> 
         .map_err(|e| format!("system clock error while writing OCI metadata: {}", e))?
         .as_secs();
     let metadata = OciInstallMetadata::new(
-        install_name.clone(),
+        install_name.to_string(),
         reference,
-        normalized_oci_reference(&resolved),
+        normalized_oci_reference(resolved),
         device_arch,
         created_at,
     );
-    if let Err(e) = write_oci_install_metadata(Path::new(&metadata_path), &metadata) {
-        cleanup_oci_on_failure(container_dir_path);
-        return Err(e);
-    }
-    msg_status("Finished.");
-    Ok(())
+    write_oci_install_metadata(Path::new(&metadata_path), &metadata)
 }
 
 fn extract_tarball(
@@ -2068,5 +2097,143 @@ mod tests {
         assert!(rootfs.join("etc/resolv.conf").is_file());
 
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    fn gzip_layer(path_in_layer: &str, content: &[u8]) -> (Vec<u8>, String) {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_size(content.len() as u64);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path_in_layer, content)
+            .expect("append layer file");
+        let bytes = builder
+            .into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish gzip");
+        let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+        (bytes, digest)
+    }
+
+    #[test]
+    fn install_oci_layers_downloads_again_over_a_truncated_cached_blob() {
+        let tmp_dir = unique_temp_dir("pr-cli-oci-truncated-blob");
+        let cache = tmp_dir.join("dlcache");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&cache).expect("create cache");
+        let (layer_bytes, digest) = gzip_layer("etc/os-release", b"ID=debian\n");
+        let blob = blob_path(&cache, &digest).expect("blob path");
+        fs::write(&blob, &layer_bytes[..layer_bytes.len() / 2]).expect("seed truncated blob");
+
+        let mut fetches = 0;
+        install_oci_layers(
+            &[OciDescriptor::new(digest.clone())],
+            &cache,
+            &rootfs,
+            |layer, dest| {
+                fetches += 1;
+                assert_eq!(layer.digest, digest);
+                assert!(!dest.exists());
+                fs::write(dest, &layer_bytes).map_err(|e| e.to_string())
+            },
+        )
+        .expect("install layers");
+
+        assert_eq!(fetches, 1);
+        assert_eq!(fs::read(&blob).expect("read blob"), layer_bytes);
+        assert_eq!(
+            fs::read(rootfs.join("etc/os-release")).expect("read os-release"),
+            b"ID=debian\n"
+        );
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn install_oci_layers_reuses_a_cached_blob_that_matches_its_digest() {
+        let tmp_dir = unique_temp_dir("pr-cli-oci-cached-blob");
+        let cache = tmp_dir.join("dlcache");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&cache).expect("create cache");
+        let (layer_bytes, digest) = gzip_layer("etc/os-release", b"ID=alpine\n");
+        let blob = blob_path(&cache, &digest).expect("blob path");
+        fs::write(&blob, &layer_bytes).expect("seed blob");
+
+        let mut fetches = 0;
+        install_oci_layers(&[OciDescriptor::new(digest)], &cache, &rootfs, |_, _| {
+            fetches += 1;
+            Err("unexpected download".to_string())
+        })
+        .expect("install layers");
+
+        assert_eq!(fetches, 0);
+        assert!(rootfs.join("etc/os-release").is_file());
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn install_oci_layers_drops_a_corrupt_cached_blob_when_the_download_fails() {
+        let tmp_dir = unique_temp_dir("pr-cli-oci-corrupt-blob");
+        let cache = tmp_dir.join("dlcache");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&cache).expect("create cache");
+        let (mut layer_bytes, digest) = gzip_layer("etc/os-release", b"ID=debian\n");
+        let last = layer_bytes.len() - 1;
+        layer_bytes[last] ^= 0xff;
+        let blob = blob_path(&cache, &digest).expect("blob path");
+        fs::write(&blob, &layer_bytes).expect("seed corrupt blob");
+
+        let err = install_oci_layers(&[OciDescriptor::new(digest)], &cache, &rootfs, |_, _| {
+            Err("network is unreachable".to_string())
+        })
+        .expect_err("install must fail");
+
+        assert_eq!(err, "network is unreachable");
+        assert!(!blob.exists());
+        assert!(!rootfs.join("etc/os-release").exists());
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn cleanup_oci_on_failure_removes_a_partially_extracted_container() {
+        let guard = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev_prefix = std::env::var("APP_PREFIX").ok();
+        let tmp_dir = unique_temp_dir("pr-cli-cleanup-partial-oci");
+        let prefix = tmp_dir.join("usr");
+        std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+        let container = PathBuf::from(get_oci_container_dir("debian"));
+        let rootfs = container.join("rootfs");
+        fs::create_dir_all(rootfs.join(".l2s")).expect("create .l2s");
+        fs::create_dir_all(rootfs.join("usr/bin")).expect("create usr/bin");
+        fs::write(rootfs.join("usr/bin/perl"), b"\x7fELF").expect("write partial perl");
+        std::os::unix::fs::symlink("usr/bin", rootfs.join("bin")).expect("symlink bin");
+        let read_only = rootfs.join("usr/share/locked");
+        fs::create_dir_all(&read_only).expect("create read-only dir");
+        fs::write(read_only.join("file"), b"x").expect("write locked file");
+        fs::set_permissions(&read_only, fs::Permissions::from_mode(0o555)).expect("chmod 0555");
+        let sealed = rootfs.join("apex");
+        fs::create_dir_all(&sealed).expect("create sealed dir");
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).expect("chmod 0000");
+
+        cleanup_oci_on_failure(&container);
+        let left = container.exists();
+
+        if left {
+            let _ = fs::set_permissions(&read_only, fs::Permissions::from_mode(0o755));
+            let _ = fs::set_permissions(&sealed, fs::Permissions::from_mode(0o755));
+        }
+        if let Some(prev) = prev_prefix {
+            std::env::set_var("APP_PREFIX", prev);
+        } else {
+            std::env::remove_var("APP_PREFIX");
+        }
+        let _ = fs::remove_dir_all(&tmp_dir);
+        drop(guard);
+        assert!(!left, "partial container must be removed");
     }
 }
