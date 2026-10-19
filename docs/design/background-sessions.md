@@ -308,7 +308,7 @@ another `pr-cli` command) and lists every descendant, with and without `children
 
 `ManagedSession` with a fake PTY: End's drain window stops as soon as the signalled programs
 exit; the slowest End (every step ignored, no exit code) takes the sum of `endWorstCaseMs()`'s
-steps, so a missing step fails; `END_TIMEOUT_MS` exceeds the default worst case.
+steps, so a missing step fails.
 
 ### Existing suites
 

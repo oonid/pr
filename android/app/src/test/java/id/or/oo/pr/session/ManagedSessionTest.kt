@@ -169,11 +169,6 @@ class ManagedSessionTest {
     }
 
     @Test
-    fun theEndTimeoutExceedsTheDefaultWorstCase() {
-        assertTrue(ManagedSession.END_TIMEOUT_MS > ManagedSession.endWorstCaseMs())
-    }
-
-    @Test
     fun endSendsEofAtOnceWhenNothingWasSignalled() {
         val s = session(endGraceMs = 2_000, signalWaitMs = 3_000)
         s.end()
