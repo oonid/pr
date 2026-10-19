@@ -301,10 +301,15 @@ through `/proc`: `pr-cli` by its command line among the app's children, then its
 parent links): SIGTERM, up to 2 s, then SIGKILL. The output ends with "Cancelled." During
 Remove's wait for a session, Cancel stops the wait and nothing is removed; the session's End
 continues. `pr-cli` creates the container directory first and has no SIGTERM handler, so a
-cancelled install whose alias is known (every catalog install; a custom install with an alias)
-and whose container did not exist before runs `pr-cli remove <alias>` in the same operation
-before "Cancelled.". A custom install without an alias is not cleaned up: remove its partial
-container before installing it again. A cancel during `pr-cli remove` may leave a half-removed
+cancelled install whose alias is known (every catalog install; a custom install with an alias),
+whose container did not exist before the install started and exists after `pr-cli` stops runs
+`pr-cli remove <alias>` in the same operation before "Cancelled.". If `pr-cli` had already exited
+when Cancel arrived, its result stands and nothing is removed. A custom install without an alias
+is not cleaned up: remove its partial container before installing it again. A custom install
+with a plugin name (not an OCI image) and an alias writes `etc/pr/<alias>.override.sh` before
+its rootfs, so a cancel in between can leave only that file, which `pr-cli remove` does not
+delete and which blocks a later install of that alias ("already exists"); catalog and other OCI
+installs never take that path. A cancel during `pr-cli remove` may leave a half-removed
 container: run Remove again.
 
 "Keep CPU awake", in the notification and in the container list, holds a partial wake lock (screen

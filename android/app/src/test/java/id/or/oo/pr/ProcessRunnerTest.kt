@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -36,11 +37,13 @@ class ProcessRunnerTest {
         ProcessRunner(myPid, { pid, signal -> ProcessBuilder("kill", "-$signal", "$pid").start().waitFor() }, stopWaitMs = stopWaitMs)
 
     private fun cancelAfterTwoLines(runner: ProcessRunner, script: String): Pair<List<Int>, Long> = runBlocking {
-        val job = launch(Dispatchers.Default) { runner.run(sh(script), emptyMap()) { lines += it } }
+        var returned: Int? = null
+        val job = launch(Dispatchers.Default) { returned = runner.run(sh(script), emptyMap()) { lines += it } }
         withTimeout(10_000) { while (lines.size < 2) delay(10) }
         val started = System.nanoTime()
         withTimeout(10_000) { job.cancelAndJoin() }
         assertTrue(job.isCancelled)
+        assertNull(returned)
         lines.map { it.toInt() } to (System.nanoTime() - started) / 1_000_000
     }
 
@@ -112,5 +115,20 @@ class ProcessRunnerTest {
         job.join()
 
         assertEquals(7, result)
+    }
+
+    @Test
+    fun anExitThatHappenedBeforeTheCancelIsReturnedWhileADescendantHoldsTheOutput() = runBlocking {
+        var result: Int? = null
+        val job = launch(Dispatchers.Default) {
+            result = runner().run(sh("(sleep 1.5; echo late) & echo \$\$; exit 0"), emptyMap()) { lines += it }
+        }
+        withTimeout(10_000) { while (lines.isEmpty()) delay(5) }
+        val shell = lines.first().toInt()
+        withTimeout(10_000) { while (alive(shell)) delay(5) }
+
+        withTimeout(10_000) { job.cancelAndJoin() }
+
+        assertEquals(0, result)
     }
 }

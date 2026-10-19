@@ -49,8 +49,9 @@ class ProcessRunner(
             return exit.await()
         } catch (e: Throwable) {
             if (e is CancellationException) code.get()?.let { return it }
-            withContext(NonCancellable) {
+            val natural = withContext(NonCancellable) {
                 started.await()?.let { proc ->
+                    val natural = if (proc.isAlive) null else proc.exitValue()
                     val stopped = CompletableDeferred<Unit>()
                     thread(isDaemon = true, name = "process-stop") {
                         try {
@@ -61,24 +62,28 @@ class ProcessRunner(
                     }
                     stopped.await()
                     if (withTimeoutOrNull(stopWaitMs) { exit.join() } == null) proc.inputStream.close()
+                    natural
                 }
             }
+            if (e is CancellationException) natural?.let { return it }
             open.set(false)
             throw e
         }
     }
 
     private fun stop(proc: Process, cmd: List<String>) {
-        val roots = processes.children(parentPid, cmd)
-        val tree = processes.descendants(roots)
-        tree.forEach { signal(it, SIGTERM) }
-        proc.destroy()
-        if (exited(proc, tree)) return
-        (tree + processes.descendants(roots)).distinct()
-            .filter { processes.alive(setOf(it)) }
-            .forEach { signal(it, SIGKILL) }
-        proc.destroyForcibly()
-        proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)
+        runCatching {
+            val roots = processes.children(parentPid, cmd)
+            val tree = processes.descendants(roots)
+            tree.forEach { signal(it, SIGTERM) }
+            proc.destroy()
+            if (exited(proc, tree)) return@runCatching
+            (tree + processes.descendants(roots)).distinct()
+                .filter { processes.alive(setOf(it)) }
+                .forEach { signal(it, SIGKILL) }
+            proc.destroyForcibly()
+            proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)
+        }
     }
 
     private fun exited(proc: Process, tree: List<Int>): Boolean {
