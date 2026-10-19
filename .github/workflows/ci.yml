@@ -74,6 +74,11 @@ jobs:
         cp build/out/arm64/loader android/proot-engine/src/main/jniLibs/arm64-v8a/libproot-loader.so
         cp src/pr-cli/target/aarch64-linux-android/release/pr-cli android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
 
+    - name: Run Android App Unit Tests
+      run: |
+        cd android
+        ./gradlew :app:testDebugUnitTest
+
     - name: Build Android App & proot-engine AAR
       run: |
         cd android
