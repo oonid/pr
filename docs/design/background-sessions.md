@@ -154,8 +154,11 @@ background with no session running.
   of the alias would fail with "already installed". "Exists" is the list's own test
   (`InstalledContainers`: the OCI container's `rootfs` directory or the legacy `installed-rootfs`
   entry). A custom install without an alias is not cleaned up: remove its partial container before
-  installing it again. A cancel during `pr-cli remove` may leave a half-removed container: run
-  Remove again.
+  installing it again. A custom install with a plugin name (not an OCI image) and an alias writes
+  `etc/pr/<alias>.override.sh` before its rootfs, so a cancel in between can leave only that file;
+  `pr-cli remove` does not delete it and it blocks a later install of that alias ("already
+  exists"). Catalog and other OCI installs never take that path. A cancel during `pr-cli remove`
+  may leave a half-removed container: run Remove again.
 
 ### `MainActivity` (changed)
 
@@ -322,7 +325,9 @@ directory or the legacy directory marks a container installed; a container direc
 host: output lines in order and the exit code, the environment, standard input closed (so a reader
 of it does not block), a failing read that stops the process before the error is rethrown, and
 cancellation stopping the process and its descendants, with SIGKILL after the wait for a tree that
-ignores SIGTERM; an exit code already known when the cancellation arrives is returned, not lost.
+ignores SIGTERM; an exit code already known when the cancellation arrives is returned, not lost,
+and so is the exit of a process that ended before the cancel while a descendant still holds its
+output (the process's own exit value, so a tree that Cancel killed never reads as a result).
 `ProotProcesses` finds a child by its exact command line (not a zombie, not another `pr-cli`
 command) and lists every descendant, with and without `children` files.
 
