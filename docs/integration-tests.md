@@ -196,9 +196,10 @@ Available suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, c
 
 ## Android UI
 
-BugReport icon button on each installed distro row (Play → BugReport → Delete).
-Runs `pr-cli test <distro>` via `DistroOperations.test` (`PrCliCommand`), output shown in the output panel
-with ANSI escape code stripping. Sets `PROOT_TMP_DIR` + `TMPDIR` to `app.cacheDir`.
+**Test** (BugReport icon) in the ⋮ menu of each installed container row (Play, then ⋮ → Test / Remove).
+Runs `pr-cli test <distro>` via `DistroOperations.test` (`PrCliCommand`), output shown in the output sheet
+with ANSI escape code stripping. Sets `PROOT_TMP_DIR` + `TMPDIR` to `app.cacheDir`. Cancel stops the
+run; rotating the screen keeps it.
 
 ---
 

@@ -7,10 +7,10 @@
 ## 1. Goal & Context
 
 A terminal session (the shell `pr-cli login` starts in a container, and everything started from
-it) is owned by `TerminalActivity` today: the PTY, the `TerminalEmulator` holding the screen, and
-the reader thread. Closing the screen ends the session; Back runs `cleanup()` (see
-`android-apk-architecture.md`, "Session lifetime and Back"). Because pr-cli starts proot with
-`--kill-on-exit`, nothing started in the session outlives it.
+it) was owned by `TerminalActivity` before this work: the PTY, the `TerminalEmulator` holding the
+screen, and the reader thread. Closing the screen ended the session; Back ran `cleanup()` (the
+current behaviour is in `android-apk-architecture.md`, "Session lifetime and Back"). Because
+pr-cli starts proot with `--kill-on-exit`, nothing started in the session outlives it.
 
 The main use is a long-running server, the Hermes gateway, that must keep working with the screen
 off for hours. Ordinary terminal multitasking (leave a build running, come back later) comes with
@@ -71,7 +71,7 @@ Seams, so the logic runs in JVM unit tests (the real emulator uses native code):
 
 ### `ManagedSession` (new, app module)
 
-What `TerminalActivity` holds today, moved out of it:
+What `TerminalActivity` held before this work, moved out of it:
 
 - the `ProotLauncher.Session` (PTY master fd, child pid, reaper);
 - the `TerminalEmulator`, which keeps the screen contents while no screen is attached;
@@ -181,7 +181,8 @@ sheet closes. Only the custom image fields are kept by the screen (`rememberSave
 
 ### Unchanged
 
-`ProotLauncher`, `PtyNative`, `ptyjni.c`, pr-cli and proot.
+`ProotLauncher`, `PtyNative`, `ptyjni.c` and proot. pr-cli changes only in its OCI layer
+download and cleanup, described under `DistroOperations`.
 
 ## 4. Session Lifecycle
 
@@ -344,7 +345,7 @@ steps, so a missing step fails.
 ### Existing suites
 
 proot-engine instrumented tests (8), `pr-cli test alpine` and `pr-cli test ubuntu`, the full
-integration suite from an in-app terminal, and the 169 host tests stay green.
+integration suite from an in-app terminal, and the pr-cli host tests (178) stay green.
 
 ### Device lifecycle checks (adb; results recorded in the PR)
 
