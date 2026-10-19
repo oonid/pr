@@ -12,8 +12,8 @@ screen, and the reader thread. Closing the screen ended the session; Back ran `c
 current behaviour is in `android-apk-architecture.md`, "Session lifetime and Back"). Because
 pr-cli starts proot with `--kill-on-exit`, nothing started in the session outlives it.
 
-The main use is a long-running server, the Hermes gateway, that must keep working with the screen
-off for hours. Ordinary terminal multitasking (leave a build running, come back later) comes with
+The main use is a long-running server, such as an AI agent's gateway (Hermes is one example), that
+must keep working with the screen off for hours. Ordinary terminal multitasking (leave a build running, come back later) comes with
 it.
 
 Success means: a session keeps running after leaving its screen and after swiping the app away
@@ -24,7 +24,7 @@ contents, and ends only when the user ends it or its program exits.
 
 | Question | Decision | Alternatives considered |
 |----------|----------|-------------------------|
-| Main goal | Hermes gateway 24/7 first; covers multitasking | Multitasking only |
+| Main goal | A long-running server 24/7 first (e.g. an agent gateway such as Hermes); covers multitasking | Multitasking only |
 | Sessions per container | One; open reattaches. More shells via tmux inside the container | Several, with a session list or tabs |
 | Who owns sessions | An app-wide `SessionManager`; a thin foreground service keeps the process alive (approach B) | A: a bound service owns the sessions. C: sessions in a separate process with IPC |
 | Back | Prompt every time: End session / Keep running / Cancel | Keep running plus a setting; End plus a separate Detach action |
@@ -365,8 +365,8 @@ integration suite from an in-app terminal, and the pr-cli host tests (178) stay 
 
 ### Target check
 
-The Hermes gateway in the `hermes` container, Keep running, Keep CPU awake on, the exemption
-granted, forced deep sleep: it keeps answering from the host through `adb forward` for at least 30
+A long-running agent gateway in its container (the check used the Hermes gateway), Keep running,
+Keep CPU awake on, the exemption granted, forced deep sleep: it keeps answering from the host through `adb forward` for at least 30
 minutes, and its calls to the model provider keep working.
 
 ## 9. Out of Scope
