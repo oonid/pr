@@ -8,11 +8,12 @@ Android app that runs Linux distributions via [proot](https://github.com/proot-m
 - Native OCI container image support (`docker.io/library/...`), with a layer cache that is verified before reuse
 - Background sessions: a session keeps running after its screen closes, for example a long-running agent or server, under a `specialUse` foreground service with an ongoing notification (End all, Keep CPU awake)
   - Back asks End session / Keep running / Cancel; End sends SIGTERM to every process in the session, gives them up to 10 s to exit, then closes the shell and proot
-  - "Keep CPU awake" holds a partial wake lock with the screen off; toggle it from the notification or the switch pinned above the list
-  - a banner offers the battery-optimization exemption, which guards against vendor battery savers
-  - a session that ends while its screen is not visible posts a "session ended (exit N)" notification
+  - "Keep CPU awake" holds a partial wake lock with the screen off; toggle it from the notification, or from the switch pinned above the list, shown while a session runs and background running is available
+  - while Keep CPU awake is on and the app is not exempt from battery optimization, a banner offers the exemption, which guards against vendor battery savers
+  - a session that ends on its own (not through End) while its screen is not visible posts a "session ended (exit N)" notification
+  - the Android 12+ phantom-process limit and the Android 13+ Task Manager "Stop" can still end sessions (see [Session lifetime and Back](docs/android-apk-architecture.md#session-lifetime-and-back))
 - Install, remove and test containers from the list, with live output
-  - Cancel stops `pr-cli` and everything it started, and removes the partial container of a cancelled install
+  - Cancel stops `pr-cli` and everything it started; a cancelled install whose alias is known (every list install, and a custom install given an alias) removes its partial container, while a custom install without an alias leaves it for you to remove
   - Remove ends the container's running session first
   - sessions and operations survive rotation and dark-mode changes
 - Full package manager support: `apk`, `apt-get`
@@ -64,10 +65,10 @@ Our engine handles all of these:
 scripts/build.sh --arch=arm64
 
 # 2. Build test binary (guest-side)
-cd src/proot-integration-test && cargo build --target aarch64-linux-android --release
+(cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
 
 # 3. Build pr-cli (host-side)
-cd src/pr-cli && cargo build --target aarch64-linux-android --release
+(cd src/pr-cli && cargo build --target aarch64-linux-android --release)
 
 # 4. Copy binaries to the proot-engine library
 cp build/out/arm64/proot android/proot-engine/src/main/jniLibs/arm64-v8a/libproot.so
@@ -76,12 +77,12 @@ cp src/pr-cli/target/aarch64-linux-android/release/pr-cli \
    android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
 
 # 5. Build Android App and Engine AAR
-cd android && ./gradlew assembleDebug
+(cd android && ./gradlew assembleDebug)
 ```
 
 ## Testing
 
-CI runs both host-side unit suites (`cargo test` for pr-cli and `:app:testDebugUnitTest`) on every push and pull request, then builds the APK.
+CI runs both host-side unit suites (`cargo test` for pr-cli and `:app:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds the APK.
 
 ### App unit tests (JVM)
 
@@ -95,8 +96,8 @@ cd android && ./gradlew :app:testDebugUnitTest
 
 ```bash
 # pr-cli embeds the guest test binary, so build it first
-cd src/proot-integration-test && cargo build --target aarch64-linux-android --release
-cd src/pr-cli && cargo test
+(cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
+(cd src/pr-cli && cargo test)
 ```
 
 **178 tests**: 153 library unit tests, 11 in the binaries and 14 plugin-parser integration tests.

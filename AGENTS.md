@@ -106,10 +106,22 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Testing
 
-### Host-side (pr-cli unit/integration)
+CI runs `cargo test` (pr-cli) and `:app:testDebugUnitTest` on pushes to `main` and on pull requests.
+
+### App unit tests (JVM)
 
 ```bash
-cd src/pr-cli && cargo test
+cd android && ./gradlew :app:testDebugUnitTest
+# 128 tests: sessions, End's /proc scan, DistroOperations, ProcessRunner, InstalledContainers
+```
+
+### Host-side (pr-cli unit/integration)
+
+pr-cli embeds the guest test binary (`include_bytes!` in `cmd_test.rs`), so build it before `cargo test`:
+
+```bash
+(cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
+(cd src/pr-cli && cargo test)
 # 178 tests: 153 library unit + 11 binary (9 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
 ```
 
