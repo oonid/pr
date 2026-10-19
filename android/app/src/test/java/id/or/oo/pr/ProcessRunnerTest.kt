@@ -92,4 +92,18 @@ class ProcessRunnerTest {
         assertTrue(pids.none(::alive))
         assertTrue("took $tookMs ms", tookMs >= 300)
     }
+
+    @Test
+    fun anExitCodeKnownWhenCancellationArrivesIsReturned() = runBlocking {
+        var result: Int? = null
+        val job = launch { result = runner().run(sh("echo started; sleep 0.3; exit 7"), emptyMap()) { lines += it } }
+        withTimeout(10_000) { while (lines.isEmpty()) delay(5) }
+        delay(20)
+        Thread.sleep(1_000)
+
+        job.cancel()
+        job.join()
+
+        assertEquals(7, result)
+    }
 }

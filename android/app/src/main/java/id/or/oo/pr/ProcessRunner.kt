@@ -1,13 +1,14 @@
 package id.or.oo.pr
 
 import id.or.oo.pr.session.ProotProcesses
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class ProcessRunner(
@@ -17,40 +18,55 @@ class ProcessRunner(
     private val stopWaitMs: Long = STOP_WAIT_MS,
 ) {
 
-    suspend fun run(cmd: List<String>, env: Map<String, String>, onLine: (String) -> Unit): Int =
-        withContext(Dispatchers.IO) {
-            val pb = ProcessBuilder(cmd)
-            pb.environment().putAll(env)
-            pb.redirectErrorStream(true)
-            val proc = pb.start()
-            proc.outputStream.close()
-
-            val open = AtomicBoolean(true)
-            val exit = CompletableDeferred<Int>()
-            thread(isDaemon = true, name = "process-output") {
-                runCatching {
-                    proc.inputStream.bufferedReader().use { reader ->
-                        var line = reader.readLine()
-                        while (line != null) {
-                            if (open.get()) onLine(line)
-                            line = reader.readLine()
-                        }
+    suspend fun run(cmd: List<String>, env: Map<String, String>, onLine: (String) -> Unit): Int {
+        val open = AtomicBoolean(true)
+        val started = CompletableDeferred<Process?>()
+        val code = AtomicReference<Int>()
+        val exit = CompletableDeferred<Int>()
+        thread(isDaemon = true, name = "process-output") {
+            runCatching {
+                val pb = ProcessBuilder(cmd)
+                pb.environment().putAll(env)
+                pb.redirectErrorStream(true)
+                val proc = pb.start()
+                started.complete(proc)
+                proc.outputStream.close()
+                proc.inputStream.bufferedReader().use { reader ->
+                    var line = reader.readLine()
+                    while (line != null) {
+                        if (open.get()) onLine(line)
+                        line = reader.readLine()
                     }
-                    proc.waitFor()
-                }.fold(exit::complete, exit::completeExceptionally)
-            }
-
-            try {
-                exit.await()
-            } catch (e: Throwable) {
-                stop(proc, cmd)
-                withContext(NonCancellable) {
-                    if (withTimeoutOrNull(stopWaitMs) { exit.join() } == null) proc.inputStream.close()
                 }
-                open.set(false)
-                throw e
+                proc.waitFor().also(code::set)
+            }.fold(exit::complete) {
+                started.complete(null)
+                exit.completeExceptionally(it)
             }
         }
+
+        try {
+            return exit.await()
+        } catch (e: Throwable) {
+            if (e is CancellationException) code.get()?.let { return it }
+            withContext(NonCancellable) {
+                started.await()?.let { proc ->
+                    val stopped = CompletableDeferred<Unit>()
+                    thread(isDaemon = true, name = "process-stop") {
+                        try {
+                            stop(proc, cmd)
+                        } finally {
+                            stopped.complete(Unit)
+                        }
+                    }
+                    stopped.await()
+                    if (withTimeoutOrNull(stopWaitMs) { exit.join() } == null) proc.inputStream.close()
+                }
+            }
+            open.set(false)
+            throw e
+        }
+    }
 
     private fun stop(proc: Process, cmd: List<String>) {
         val roots = processes.children(parentPid, cmd)

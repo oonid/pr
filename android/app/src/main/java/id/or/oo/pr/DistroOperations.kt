@@ -111,8 +111,10 @@ class DistroOperations(
     }
 
     private fun finish(cause: Throwable?) {
-        val closing = if (cause is CancellationException) listOf("Cancelled.") else emptyList()
-        _operation.update { it?.copy(lines = it.lines + closing, running = false) }
+        _operation.update {
+            val cancelled = cause is CancellationException && it?.exitCode == null
+            it?.copy(lines = if (cancelled) it.lines + "Cancelled." else it.lines, running = false)
+        }
     }
 
     private suspend fun installing(alias: String, args: List<String>) {

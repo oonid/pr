@@ -11,21 +11,23 @@ class PrCliCommand(
     private val runner: ProcessRunner = ProcessRunner(Process.myPid(), Process::sendSignal),
 ) : DistroCommand {
 
-    override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int = withContext(Dispatchers.IO) {
+    override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int {
         val binDir = File(app.prefixDir, "bin")
 
-        val env = mapOf(
-            "APP_PREFIX" to app.prefixDir.absolutePath,
-            "APP_HOME" to app.homeDir.absolutePath,
-            "APP_PACKAGE" to app.packageName,
-            "PATH" to "${binDir.absolutePath}:/system/bin:/system/xbin",
-            "PROOT_NO_SECCOMP" to "1",
-            "PROOT_TMP_DIR" to app.cacheDir.absolutePath,
-            "HOME" to app.homeDir.absolutePath,
-            "TERM" to "xterm-256color",
-            "TMPDIR" to app.cacheDir.absolutePath,
-            "APP_DNS_SERVERS" to app.dnsServers.joinToString(","),
-        )
+        val env = withContext(Dispatchers.IO) {
+            mapOf(
+                "APP_PREFIX" to app.prefixDir.absolutePath,
+                "APP_HOME" to app.homeDir.absolutePath,
+                "APP_PACKAGE" to app.packageName,
+                "PATH" to "${binDir.absolutePath}:/system/bin:/system/xbin",
+                "PROOT_NO_SECCOMP" to "1",
+                "PROOT_TMP_DIR" to app.cacheDir.absolutePath,
+                "HOME" to app.homeDir.absolutePath,
+                "TERM" to "xterm-256color",
+                "TMPDIR" to app.cacheDir.absolutePath,
+                "APP_DNS_SERVERS" to app.dnsServers.joinToString(","),
+            )
+        }
 
         val prCli = File(binDir, "pr-cli").absolutePath
         val cmd = listOf(prCli) + args
@@ -43,7 +45,7 @@ class PrCliCommand(
             }
         }
         Log.d(TAG, "Exit code: $exitCode")
-        exitCode
+        return exitCode
     }
 
     private companion object {
