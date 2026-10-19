@@ -1,5 +1,8 @@
 # Background Sessions Follow-ups Plan
 
+Historical implementation plan, done in PR #17; where it differs, docs/design/background-sessions.md and the code are
+authoritative (`runDistroCommand` became `PrCliCommand`, run by `DistroOperations`).
+
 Follow-ups from PR #16 (`docs/design/background-sessions.md`). Each task is test-first where the logic runs on the JVM,
 reviewed on its own, and verified on a device at the end.
 

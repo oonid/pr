@@ -11,7 +11,7 @@ Status: **Complete** (commits `f71d547..f2eb29d`)
 ```
 android/                                    # Android project root
 ├── build.gradle.kts                        # Root: AGP 8.7.3, Kotlin 2.1.0, Compose plugin
-├── settings.gradle.kts                     # Includes :app and :termlib modules
+├── settings.gradle.kts                     # Includes :app, :proot-engine and :termlib modules
 ├── app/
 │   ├── build.gradle.kts                    # App module: Compose BOM 2024.12.01, CMake, termlib dep
 │   └── src/main/
@@ -29,13 +29,12 @@ android/                                    # Android project root
 │       │   └── plugins/                    # 17 distro plugins
 │       ├── java/id/or/oo/pr/
 │       │   ├── App.kt                      # Application: bootstrap on first launch (188 lines)
-│       │   ├── MainActivity.kt             # Compose: distro list, install/remove (270 lines)
+│       │   ├── MainActivity.kt             # Compose: container list, output sheet of DistroOperations
 │       │   ├── DistroOperations.kt         # App-scoped install/remove/test runner
 │       │   ├── PrCliCommand.kt             # Runs pr-cli for DistroOperations
 │       │   ├── ProcessRunner.kt            # Child process: stdin closed, lines out, stopped on failure
-│       │   ├── TerminalActivity.kt         # Compose: terminal emulator (115 lines)
-│       │   ├── ProotLauncher.kt            # PTY session manager (132 lines)
-│       │   └── PtyNative.kt                # JNI declarations for PTY (43 lines)
+│       │   ├── TerminalActivity.kt         # Compose: a view onto a ManagedSession
+│       │   └── session/                    # SessionManager, ManagedSession, SessionService
 │       └── res/                            # Theme, icons, strings
 ├── termlib/
 │   ├── build.gradle.kts                    # Thin wrapper: pulls source from vendor/termlib submodule
@@ -43,6 +42,10 @@ android/                                    # Android project root
 vendor/termlib/                             # Git submodule: ConnectBot terminal library
 └── android/gradle/wrapper/                 # Gradle 8.11.1 wrapper
 ```
+
+Current layout: `cpp/` (`ptyjni.c`), `jniLibs/`, `ProotLauncher.kt` and `PtyNative.kt` moved to
+`android/proot-engine/` (`docs/design/proot-engine-library.md`); pr-cli replaced
+`proot-distro.sh`, and the assets hold only `bin/busybox.applets` and `scripts/bootstrap.sh`.
 
 ---
 
@@ -127,6 +130,11 @@ Compose-based distro management UI (270 lines):
 - **UI**: Material3, `LazyColumn` with `Card` rows, `CircularProgressIndicator` during operations, download/play/delete icons
 - **Coroutine safety**: all PTY I/O on `Dispatchers.IO`, state updates via `withContext(Dispatchers.Main)`
 
+Current behaviour: the list is a fixed catalog (Alpine latest and edge, Debian stable and testing,
+Fedora, Ubuntu) plus any other installed container; Arch Linux, Manjaro, openSUSE and Rocky Linux
+are suggestions under **Images** on the custom-image card. Install, remove and test run `pr-cli`
+through `DistroOperations` (see "Session lifetime and Back").
+
 ### T4.4 — Implement TerminalActivity
 
 Commit: `f2eb29d`
@@ -144,8 +152,11 @@ Full terminal emulator using ConnectBot's termlib (115 lines):
   - Feeds data to `emulator.writeInput(buf, 0, n)`
   - Exits on EOF or error
 - Renders using termlib's `Terminal()` composable with `keyboardEnabled=true` and `Modifier.systemBarsPadding()` to prevent the first rows of output being hidden behind the camera notch and Android status bar
-- Lifecycle: `onDestroy()` closes session and interrupts reader thread
-- Back press: `OnBackPressedCallback` triggers cleanup and `finish()`. `dispatchKeyEvent` routes
+- Lifecycle: since background sessions, the PTY, emulator and reader thread live in
+  `ManagedSession`; `onDestroy()` detaches from the session and never ends it (see "Session
+  lifetime and Back")
+- Back press: `OnBackPressedCallback` shows the End session / Keep running / Cancel prompt (before
+  background sessions it ran cleanup and `finish()`). `dispatchKeyEvent` routes
   Back to it before the view tree, because the IME and Compose otherwise take the key-down; with
   the keyboard up, the first Back only hides it, and with a text selection active, Back clears the
   selection (through termlib's `SelectionController`) instead of leaving
@@ -268,6 +279,10 @@ The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()
 
 `proot-distro.sh` uses colors, progress indicators, and interactive confirmation. Running these in a PTY session and capturing the output gives users a live terminal-like experience in the output view.
 
+Current behaviour: install, remove and test run `pr-cli` as a plain child process
+(`ProcessRunner`, standard input closed); `PrCliCommand` strips ANSI escapes from each output
+line. Only terminal sessions use a PTY.
+
 ### Session lifetime and Back
 
 Sessions live in `SessionManager` (`app/.../session/`), owned by `App`: one `ManagedSession` per
@@ -333,7 +348,7 @@ notification shade kills the process and every session.
 
 - **T5.1**: Verify distro plugin TARBALL_URLs are accessible and audit `distro_setup()` hooks
 - **T5.2-T5.6**: Integration testing on device (Alpine, Debian, Ubuntu, backup/restore, isolated mode)
-- **Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution
+- ~~**Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution~~ **Resolved**: CI builds the APK with termlib on every push and pull request.
 - **Background sessions**: done (`docs/design/background-sessions.md`). Not covered: several sessions
   per container, start at boot, restoring sessions after the process is killed
 - **Compose theme**: Currently uses default Material3 — should adopt app branding (#1a1a2e navy, #e94560 red)
