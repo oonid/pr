@@ -800,8 +800,8 @@ fake_id0's `getsockopt(SO_PEERCRED)` exit handler replaced the peer's uid/gid wi
 when the peer pid was a tracee of the same PRoot. A server started from one `pr-cli login`
 session (or by the host side) and a client in another session saw each other with the real
 app uid while their own `getuid()` reported 0. Programs that authenticate a Unix-socket peer by
-comparing the two rejected each other: Hermes discovery reported `unsafe_control_peer` for a
-gateway started from another terminal session.
+comparing the two rejected each other: an agent's discovery (Hermes, in our tests) reported
+`unsafe_control_peer` for a gateway started from another terminal session.
 
 ### Fix
 

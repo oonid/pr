@@ -4,7 +4,7 @@ Historical implementation plan; where it differs, docs/design/background-session
 
 > Work through the tasks in order. Each step is a checkbox (`- [ ]`); each task ends with a commit.
 
-**Goal:** Keep a container's terminal session running after its screen closes, under a foreground service, so the Hermes gateway can run 24/7 (design: `docs/design/background-sessions.md`).
+**Goal:** Keep a container's terminal session running after its screen closes, under a foreground service, so a long-running server, for example an agent gateway such as Hermes, can run 24/7 (design: `docs/design/background-sessions.md`).
 
 **Architecture:** An app-wide `SessionManager` (owned by `App`) holds one `ManagedSession` per container: the PTY, the termlib emulator on its own `HandlerThread`, and a reader thread that always drains output. A thin `SessionService` (foreground, `specialUse`) only keeps the process alive, owns the notification and holds the optional wake lock. `TerminalActivity` becomes a view that attaches to a session and asks End / Keep running / Cancel on Back.
 
@@ -1787,9 +1787,9 @@ Expected: 24 unit tests; proot-engine 8 instrumented tests; 169 host tests; `pr-
 6. Two sessions running → notification End all: both end, the ongoing notification disappears (`adb shell dumpsys notification | grep sessions_running` finds nothing).
 7. Revoke the notification permission (`adb shell pm revoke id.or.oo.pr android.permission.POST_NOTIFICATIONS`), run check 1 again: the counter still advances.
 
-- [ ] **Step 4: Target check: the Hermes gateway**
+- [ ] **Step 4: Target check: a long-running agent gateway**
 
-This needs the model provider set up as in the Android phase (`adb reverse tcp:8317 tcp:8317` and the provider key in `/root/hermes-proot-data/.env` of the `hermes` container). The key was removed from the device afterwards: **stop and ask the user before putting it back**, and remove it again when the check is done.
+The check uses the Hermes gateway as the example. This needs the model provider set up as in the Android phase (`adb reverse tcp:8317 tcp:8317` and the provider key in `/root/hermes-proot-data/.env` of the `hermes` container). The key was removed from the device afterwards: **stop and ask the user before putting it back**, and remove it again when the check is done.
 
 1. Open the `hermes` container and start the check loop; each round starts the gateway if needed and makes one model call:
 
