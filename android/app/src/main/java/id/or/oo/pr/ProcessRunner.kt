@@ -65,8 +65,8 @@ class ProcessRunner(
                     natural
                 }
             }
-            if (e is CancellationException) natural?.let { return it }
             open.set(false)
+            if (e is CancellationException) natural?.let { return it }
             throw e
         }
     }
