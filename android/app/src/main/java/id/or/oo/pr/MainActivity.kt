@@ -134,7 +134,7 @@ fun DistroListScreen(app: App) {
             .map { alias ->
                 DistroInfo(
                     alias = alias,
-                    displayName = alias,
+                    displayName = OCI_IMAGE_SUGGESTIONS.firstOrNull { it.alias == alias }?.title ?: alias,
                     installSource = alias,
                     isInstalled = true
                 )
