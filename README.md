@@ -82,15 +82,15 @@ cp src/pr-cli/target/aarch64-linux-android/release/pr-cli \
 
 ## Testing
 
-CI runs both host-side unit suites (`cargo test` for pr-cli and `:app:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds the APK.
+CI runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds the APK.
 
-### App unit tests (JVM)
+### Android unit tests (JVM)
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest
+cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-**128 tests**: session lifetime (`SessionManager`, `ManagedSession`, `ServiceState`, notifications), End's `/proc` scan through a fake process table (`ProotProcesses`), the list's operations (`DistroOperations`, `InstalledContainers`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
+**143 tests in `:session-core`**: session lifetime (`SessionManager`, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`, `Bind`, end policy), End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **29 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
 
 ### Host-side (pr-cli unit tests)
 
@@ -128,7 +128,7 @@ src/pr-cli/                 # Rust CLI (install, login, OCI pull)
 src/proot-integration-test/ # Guest-side test binary (TAP output)
 android/proot-engine/       # Standalone Android Library AAR (Engine)
 android/app/                # Android UI shell (Compose): container list, terminal, list operations
-android/app/.../session/    # Background sessions: SessionManager, ManagedSession, SessionService
+android/session-core/       # Android library: background sessions, command sessions, pr-cli runner, bootstrap
 scripts/                    # Host-side build scripts
 docs/                       # Technical documentation
 ```
@@ -141,6 +141,7 @@ docs/                       # Technical documentation
 | [`docs/android-apk-architecture.md`](docs/android-apk-architecture.md) | Android app architecture; "Session lifetime and Back" covers sessions and list operations |
 | [`docs/design/background-sessions.md`](docs/design/background-sessions.md) | Design of background sessions, End, Cancel and the operation runner |
 | [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
+| [`docs/design/session-core.md`](docs/design/session-core.md) | Design of the `:session-core` library and command sessions |
 | [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (35 sections) |
 | [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
 | [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |

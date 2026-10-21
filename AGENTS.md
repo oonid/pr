@@ -106,13 +106,14 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Testing
 
-CI runs `cargo test` (pr-cli) and `:app:testDebugUnitTest` on pushes to `main` and on pull requests.
+CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests.
 
-### App unit tests (JVM)
+### Android unit tests (JVM)
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest
-# 128 tests: sessions, End's /proc scan, DistroOperations, ProcessRunner, InstalledContainers
+cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
+# session-core, 143 tests: sessions, command sessions, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# app, 29 tests: DistroOperations, InstalledContainers
 ```
 
 ### Host-side (pr-cli unit/integration)

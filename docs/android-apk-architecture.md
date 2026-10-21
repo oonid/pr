@@ -13,27 +13,30 @@ The T4.x sections below are the Phase 4 record; for current behaviour see "Sessi
 ```
 android/                                    # Android project root
 ├── build.gradle.kts                        # Root: AGP 8.7.3, Kotlin 2.1.0, Compose plugin
-├── settings.gradle.kts                     # Includes :app, :proot-engine and :termlib modules
+├── settings.gradle.kts                     # Includes :app, :proot-engine, :session-core and :termlib modules
+├── gradle.properties                       # Kotlin test fixtures on (for :session-core)
 ├── app/
-│   ├── build.gradle.kts                    # App module: Compose BOM 2025.05.00, :proot-engine and termlib deps
+│   ├── build.gradle.kts                    # App module: Compose BOM 2025.05.00, :proot-engine, :session-core and termlib deps
 │   └── src/
 │       ├── main/
 │       │   ├── AndroidManifest.xml         # Permissions, activities, SessionService, extractNativeLibs
-│       │   ├── assets/
-│       │   │   ├── bin/busybox.applets     # Busybox applets App.kt symlinks at bootstrap
-│       │   │   └── scripts/bootstrap.sh    # POSIX sh setup
 │       │   ├── java/id/or/oo/pr/
-│       │   │   ├── App.kt                  # Application: bootstrap; owns SessionManager and DistroOperations
+│       │   │   ├── App.kt                  # Application: ProotHost and SessionHost; runs PrBootstrap; owns SessionManager and DistroOperations
 │       │   │   ├── MainActivity.kt         # Compose: container list, output sheet of DistroOperations
 │       │   │   ├── SessionBanners.kt       # Keep CPU awake switch, battery and background-error banners
 │       │   │   ├── InstalledContainers.kt  # Which aliases are installed (OCI rootfs or legacy dir)
 │       │   │   ├── DistroOperations.kt     # App-scoped install/remove/test runner
-│       │   │   ├── PrCliCommand.kt         # Runs pr-cli for DistroOperations
-│       │   │   ├── ProcessRunner.kt        # Child process: stdin closed, lines out, stopped on failure
-│       │   │   ├── TerminalActivity.kt     # Compose: a view onto a ManagedSession
-│       │   │   └── session/                # SessionManager, ManagedSession, SessionService
-│       │   └── res/                        # Theme, icons, strings
+│       │   │   └── TerminalActivity.kt     # Compose: a view onto a ManagedSession
+│       │   └── res/                        # Theme, icons (ic_notification), strings
 │       └── test/                           # JVM unit tests (:app:testDebugUnitTest)
+├── session-core/                           # Android library: background sessions, pr-cli runner, bootstrap
+│   ├── build.gradle.kts                    # api :proot-engine, :termlib, coroutines; test fixtures; unit-test coverage
+│   └── src/
+│       ├── main/assets/                    # bin/busybox.applets, scripts/bootstrap.sh (POSIX sh setup)
+│       ├── main/java/id/or/oo/pr/session/  # SessionManager, ManagedSession, SessionService, SessionHost,
+│       │                                   # CommandSessionFactory, PrCliCommand, ProcessRunner, PrBootstrap
+│       ├── test/                           # JVM unit tests (:session-core:testDebugUnitTest)
+│       └── testFixtures/                   # FakePty and Eventually (also used by :app's tests)
 ├── proot-engine/                           # Android library: ProotHost, ProotLauncher, PtyNative
 │   ├── build.gradle.kts                    # CMake for libptyjni.so
 │   └── src/
@@ -49,39 +52,130 @@ vendor/termlib/                             # Git submodule: ConnectBot terminal
 ```
 
 `cpp/`, `jniLibs/`, `ProotLauncher.kt` and `PtyNative.kt` moved from `app/` to `proot-engine/`
-(`docs/design/proot-engine-library.md`), and pr-cli replaced `proot-distro.sh`.
+(`docs/design/proot-engine-library.md`), and pr-cli replaced `proot-distro.sh`. `session/`,
+`ProcessRunner.kt`, `PrCliCommand.kt`, the bootstrap in `App.kt` and the assets moved from `app/`
+to `session-core/` (`docs/design/session-core.md`).
+
+---
+
+## The `:session-core` Library
+
+`:session-core` holds what an app needs to run PRoot sessions in the background: `SessionManager`,
+`ManagedSession`, `SessionService` and its notifications, End's `/proc` scan, `PrCliCommand` over
+`ProcessRunner`, and `PrBootstrap`, which prepares `files/usr` (prefix directories, links to the
+native libraries and busybox applets, `bootstrap.sh`). Everything is in package
+`id.or.oo.pr.session`. Design: `docs/design/session-core.md`.
+
+An app that uses it:
+
+- implements `ProotHost` and `SessionHost` (`sessions`, `notificationIcon`, `openAppIntent()`) in
+  its `Application`, and calls `PrBootstrap(this, this, version).run()` from `onCreate`;
+- declares the service in its own manifest, with its own `specialUse` subtype text, and the
+  permissions `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `WAKE_LOCK` and
+  `POST_NOTIFICATIONS`:
+
+  ```xml
+  <service
+      android:name="id.or.oo.pr.session.SessionService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="..." />
+  </service>
+  ```
+
+- includes the three modules from a pr checkout, the way rs.oo.or.id includes `:proot-engine`
+  (`prRoot` found from its `prCandidates`), and depends on `project(":session-core")`; the module
+  refers to the other two by these names:
+
+  ```kotlin
+  include(":termlib")
+  project(":termlib").projectDir = java.io.File(prRoot, "android/termlib")
+  include(":proot-engine")
+  project(":proot-engine").projectDir = java.io.File(prRoot, "android/proot-engine")
+  include(":session-core")
+  project(":session-core").projectDir = java.io.File(prRoot, "android/session-core")
+  ```
+
+- sets up the build for those modules:
+  - `android.experimental.enableTestFixturesKotlinSupport=true` in `gradle.properties`; running
+    `test`, `check` or `build` across `:session-core` needs it, building the app alone does not;
+  - `packaging.jniLibs.useLegacyPackaging = true` in the app and `android:extractNativeLibs="true"`
+    in its manifest, because library packaging settings do not reach the app;
+  - the Kotlin compose plugin declared in the root build, because `:termlib` applies it;
+  - pr's `vendor/termlib` submodule initialised (`git clone --recursive`, or
+    `git submodule update --init --recursive`);
+  - the `INTERNET` permission, and `SessionService` declared in the app's manifest as above.
+
+A command session's shell contract:
+
+- the command runs as `/bin/sh -l -c '<command>'` with cwd `/`, HOME from passwd, and an
+  environment built from PATH, `/etc/environment`, TERM, LANG and TMPDIR;
+- set any working directory or environment inside the command, for example
+  `cd /srv && exec env K=V server`;
+- busybox `sh` execs the last simple command, so a lone server command replaces the shell.
+
+A command session's sink contract:
+
+- the sink is called on the reader thread with a reused 8 KiB buffer; it must copy what it keeps
+  and never block;
+- the bytes are PTY output: CRLF line ends, ANSI escapes, UTF-8 that may be split across reads,
+  and a 24x80 window that `ManagedSession.resize` can change;
+- a sink that throws loses that chunk, and the failure is logged once.
+
+End timing: after SIGTERM, End waits at most 10 s for the session to exit; it then sends EOF,
+waits a 2 s grace and sends SIGKILL. A server that needs longer to drain is killed.
+
+The notification actions are `<package>.action.END_ALL` and `<package>.action.TOGGLE_WAKE`.
+
+Two kinds of session share one `SessionManager`, keyed by a session key. `open(key)` uses the
+factory the manager was built with (pr's `ProotSessionFactory`: a terminal with a termlib
+emulator, where the key is the container alias). `open(key, CommandSessionFactory(host, container,
+command, sink, binds))` runs
+`pr-cli login <container> --user root [--custom-bind host:guest]... -- '<command>'` with no
+emulator; the key only names the session, so `web-server` can run in container `debian`
+beside a terminal into the same container. Its output goes to `sink`, which gets a reused buffer and must
+copy what it keeps. Both kinds appear in the running notification and end with End and End all in
+the same way, except that End follows an `EndPolicy`: a terminal spares its login shell
+(`SPARE_LOGIN_SHELL`), a command session signals every tracee (`SIGNAL_EVERY_TRACEE`), so an
+exec'd server gets SIGTERM. `open` returns `Failed` when the key is held by a running or retained
+ended session of another kind, and the same kind of factory gets the running session back. A blank
+command or a missing pr-cli fails early. `SessionManager.running` lists session keys, not
+containers, so a host that removes or resets containers maps keys to containers itself.
 
 ---
 
 ## Runtime Directory Layout
 
-After first launch, App.kt creates this structure inside the app's private data directory:
+After first launch, `PrBootstrap` (`:session-core`, run from `App.onCreate`) prepares this structure inside the app's private data directory:
 
 ```
 /data/data/id.or.oo.pr/files/
 ├── usr/                                    # APP_PREFIX
 │   ├── bin/
-│   │   ├── busybox                         # From assets/bin/busybox (1.1MB)
-│   │   ├── bash                            # From assets/bin/bash (2.3MB)
-│   │   ├── proot                           # From jniLibs/libproot.so (2.5MB)
-│   │   ├── bootstrap.sh                    # From assets/scripts/bootstrap.sh
-│   │   ├── sh -> busybox                   # 311 applet symlinks created by bootstrap.sh
+│   │   ├── busybox -> <nativeLibraryDir>/libbusybox.so
+│   │   ├── proot   -> <nativeLibraryDir>/libproot.so
+│   │   ├── pr-cli  -> <nativeLibraryDir>/libpr-cli.so
+│   │   ├── sh -> busybox                   # busybox applet links, from assets/bin/busybox.applets
 │   │   ├── awk -> busybox
-│   │   ├── tar -> busybox
-│   │   └── ... (308 more)
-│   ├── scripts/
-│   │   └── proot-distro.sh                 # From assets/scripts/proot-distro.sh
-│   ├── etc/proot-distro/
-│   │   ├── alpine.sh                       # 17 distro plugins from assets/plugins/
-│   │   ├── debian.sh
-│   │   └── ...
-│   ├── var/lib/proot-distro/
-│   │   ├── dlcache/                        # Download cache for rootfs tarballs
-│   │   └── installed-rootfs/               # Extracted distro rootfs (populated on install)
-│   │       └── alpine/
-│   └── tmp/
+│   │   ├── ...
+│   │   └── bootstrap.sh                    # From assets/scripts/bootstrap.sh
+│   ├── etc/pr/
+│   ├── tmp/
+│   └── var/lib/pr/
+│       ├── installed-rootfs/
+│       ├── dlcache/
+│       └── containers/                     # Created by pr-cli
+│           └── <alias>/rootfs/
 └── home/                                   # APP_HOME
 ```
+
+`NativeLinks` makes the three links into the native library directory on every launch, and
+removes a stale `bin/bash`, `bin/pr-test` and `bin/proot-distro`, and the `usr/scripts`
+directory, left by older builds. The busybox applet links and `bootstrap.sh` are made when the
+bootstrap version changes. `bootstrap.sh` creates `etc/pr`, the two `var/lib/pr` directories,
+`home` and `tmp`.
 
 ---
 
@@ -216,7 +310,7 @@ Commit: `0bf00eb`
 
 Commit: `0bf00eb`
 
-All assets bundled in APK under `app/src/main/assets/`:
+All assets bundled in APK under `assets/` (then in `app/`; today the only assets are `bin/busybox.applets` and `scripts/bootstrap.sh`, in `session-core/src/main/assets/`):
 
 | Path | Size | Source |
 |---|---|---|
@@ -285,12 +379,12 @@ The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()
 
 Current behaviour: install, remove and test run `pr-cli` as a plain child process
 (`ProcessRunner`, standard input closed); `PrCliCommand` strips ANSI escapes from each output
-line. Only terminal sessions use a PTY.
+line. Terminal sessions and command sessions use a PTY.
 
 ### Session lifetime and Back
 
-Sessions live in `SessionManager` (`app/.../session/`), owned by `App`: one `ManagedSession` per
-container holds the PTY, the termlib emulator, and a reader thread that keeps draining output with
+Sessions live in `SessionManager` (`:session-core`, package `id.or.oo.pr.session`), owned by `App`: one `ManagedSession` per
+session key holds the PTY, the termlib emulator (none for a command session), and a reader thread that keeps draining output with
 no screen attached. The emulator runs on the main looper because termlib resizes on the caller's
 thread and is not safe with its updates on another looper. `TerminalActivity` attaches to a session and
 detaches when it closes; a session is shown by at most one screen. `SessionService`, a `specialUse`
@@ -353,8 +447,9 @@ notification shade kills the process and every session.
 - **T5.1**: Verify distro plugin TARBALL_URLs are accessible and audit `distro_setup()` hooks
 - **T5.2-T5.6**: Integration testing on device (Alpine, Debian, Ubuntu, backup/restore, isolated mode)
 - ~~**Build test**: APK has not been built with termlib integration yet — Gradle sync + `assembleDebug` needed to verify module resolution~~ **Resolved**: CI builds the APK with termlib on pushes to `main` and on pull requests.
-- **Background sessions**: done (`docs/design/background-sessions.md`). Not covered: several sessions
-  per container, start at boot, restoring sessions after the process is killed
+- **Background sessions**: done (`docs/design/background-sessions.md`). A host can now run a terminal
+  and a command session in one container under different keys. Not covered: several terminal
+  sessions per container, start at boot, restoring sessions after the process is killed
 - **Compose theme**: Currently uses default Material3 — should adopt app branding (#1a1a2e navy, #e94560 red)
 - ~~**Terminal resize**: TerminalActivity does not yet observe Compose layout size changes to call `session.resize()` + `emulator.resize()` — terminal starts at 24x80 regardless of screen size~~ **Resolved**: `onResize` callback added to `TerminalEmulatorFactory.create()`; forwarded to `session.resize()`.
 
