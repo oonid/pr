@@ -35,9 +35,10 @@ class ProotProcesses(private val proc: ProcFs = SystemProcFs) {
 
     fun shells(proot: Int): List<Int> = childrenOf(proot)
 
-    fun endTargets(proot: Int): Set<Int> {
+    fun endTargets(proot: Int, policy: EndPolicy = EndPolicy.SPARE_LOGIN_SHELL): Set<Int> {
         val shells = childrenOf(proot)
-        return traceesOf(proot, statuses(), exclude = shells.toSet() + proot) ?: descendantsOf(shells).toSet()
+        val spared = if (policy == EndPolicy.SPARE_LOGIN_SHELL) shells.toSet() else emptySet()
+        return traceesOf(proot, statuses(), exclude = spared + proot) ?: (shells - spared + descendantsOf(shells)).toSet()
     }
 
     fun alive(pids: Set<Int>): Boolean = pids.any { pid ->

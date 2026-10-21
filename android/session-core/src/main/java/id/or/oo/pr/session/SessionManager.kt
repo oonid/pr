@@ -28,6 +28,7 @@ class SessionManager(
 
     private val lock = Any()
     private val sessions = LinkedHashMap<String, ManagedSession>()
+    private val kinds = HashMap<String, Class<out SessionFactory>>()
     private val retained = HashSet<ManagedSession>()
 
     private val _running = MutableStateFlow<List<String>>(emptyList())
@@ -45,11 +46,14 @@ class SessionManager(
     private val _backgroundError = MutableStateFlow<String?>(null)
     val backgroundError: StateFlow<String?> = _backgroundError
 
-    fun open(alias: String): OpenResult {
+    fun open(alias: String, factory: SessionFactory = this.factory): OpenResult {
         val session = synchronized(lock) {
             val existing = sessions[alias]
             if (existing != null) {
                 val wasRetained = existing in retained
+                if ((existing.exit.value == null || wasRetained) && kinds[alias] != factory.javaClass) {
+                    return OpenResult.Failed("$alias is already open as another kind of session")
+                }
                 if (existing.exit.value == null && existing.endRequested) return OpenResult.Ending(existing)
                 if (existing.exit.value == null || wasRetained) return OpenResult.Opened(existing)
                 sessions.remove(alias)
@@ -60,6 +64,7 @@ class SessionManager(
                 return OpenResult.Failed(e.message ?: e.javaClass.simpleName)
             }
             sessions[alias] = created
+            kinds[alias] = factory.javaClass
             updateRunning()
             created
         }
