@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.ServiceCompat
-import id.or.oo.pr.App
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,15 +17,10 @@ import kotlinx.coroutines.launch
 
 class SessionService : Service() {
 
-    companion object {
-        const val ACTION_END_ALL = "id.or.oo.pr.action.END_ALL"
-        const val ACTION_TOGGLE_WAKE = "id.or.oo.pr.action.TOGGLE_WAKE"
-    }
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var wakeLock: PowerManager.WakeLock? = null
     private val state = ServiceState()
-    private val sessions: SessionManager get() = (application as App).sessions
+    private val sessions: SessionManager get() = sessionHost.sessions
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -42,8 +36,8 @@ class SessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         execute(state.onStartCommand(startId, sessions.running.value, sessions.keepCpuAwake.value))
         when (intent?.action) {
-            ACTION_END_ALL -> sessions.endAll()
-            ACTION_TOGGLE_WAKE -> sessions.setKeepCpuAwake(!sessions.keepCpuAwake.value)
+            SessionActions.endAll(packageName) -> sessions.endAll()
+            SessionActions.toggleWake(packageName) -> sessions.setKeepCpuAwake(!sessions.keepCpuAwake.value)
         }
         return START_NOT_STICKY
     }

@@ -7,8 +7,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import id.or.oo.pr.MainActivity
-import id.or.oo.pr.R
 
 object SessionNotifications {
     const val RUNNING_ID = 1
@@ -33,18 +31,18 @@ object SessionNotifications {
             if (keepAwake && !exempt) add("Battery saver may stop sessions; allow in the app")
         }.joinToString(" · ")
         return NotificationCompat.Builder(context, CHANNEL_RUNNING)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(context.sessionHost.notificationIcon)
             .setContentTitle(title)
             .setContentText(details)
             .setStyle(NotificationCompat.BigTextStyle().bigText(details))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openList(context))
-            .addAction(0, "End all", serviceAction(context, SessionService.ACTION_END_ALL))
+            .addAction(0, "End all", serviceAction(context, SessionActions.endAll(context.packageName)))
             .addAction(
                 0,
                 if (keepAwake) "Let CPU sleep" else "Keep CPU awake",
-                serviceAction(context, SessionService.ACTION_TOGGLE_WAKE),
+                serviceAction(context, SessionActions.toggleWake(context.packageName)),
             )
             .build()
     }
@@ -52,7 +50,7 @@ object SessionNotifications {
     fun ended(context: Context, alias: String, exitCode: Int?): Notification {
         val code = exitCode?.toString() ?: "unknown"
         return NotificationCompat.Builder(context, CHANNEL_ENDED)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(context.sessionHost.notificationIcon)
             .setContentTitle("$alias: session ended (exit $code)")
             .setContentIntent(openList(context))
             .setAutoCancel(true)
@@ -62,7 +60,7 @@ object SessionNotifications {
     private fun openList(context: Context): PendingIntent = PendingIntent.getActivity(
         context,
         0,
-        Intent(context, MainActivity::class.java)
+        context.sessionHost.openAppIntent()
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_IMMUTABLE,
     )
