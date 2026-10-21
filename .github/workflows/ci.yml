@@ -79,6 +79,11 @@ jobs:
         cd android
         ./gradlew :app:testDebugUnitTest
 
+    - name: Run session-core Unit Tests
+      run: |
+        cd android
+        ./gradlew :session-core:testDebugUnitTest
+
     - name: Build Android App & proot-engine AAR
       run: |
         cd android
