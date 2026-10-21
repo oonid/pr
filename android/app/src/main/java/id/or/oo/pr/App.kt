@@ -2,6 +2,7 @@ package id.or.oo.pr
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.system.Os
@@ -11,6 +12,7 @@ import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.session.NotificationEndedNotifier
 import id.or.oo.pr.session.ProotSessionFactory
 import id.or.oo.pr.session.ServiceForegroundController
+import id.or.oo.pr.session.SessionHost
 import id.or.oo.pr.session.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +22,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.Inet6Address
 
-class App : Application(), ProotHost {
+class App : Application(), ProotHost, SessionHost {
 
     companion object {
         private const val TAG = "PR"
@@ -52,13 +54,17 @@ class App : Application(), ProotHost {
     @get:JvmName("getProotCacheDir")
     override val cacheDir: File get() = super.getCacheDir()
 
-    val sessions: SessionManager by lazy {
+    override val sessions: SessionManager by lazy {
         SessionManager(
             ProotSessionFactory(this),
             ServiceForegroundController(this),
             NotificationEndedNotifier(this),
         )
     }
+
+    override val notificationIcon: Int get() = R.drawable.ic_notification
+
+    override fun openAppIntent(): Intent = Intent(this, MainActivity::class.java)
 
     val containers: InstalledContainers by lazy { InstalledContainers(prefixDir) }
 
