@@ -6,6 +6,7 @@ import id.or.oo.pr.engine.ProotLauncher
 class ProotPty(
     private val session: ProotLauncher.Session,
     private val processes: ProotProcesses = ProotProcesses(),
+    private val endPolicy: EndPolicy = EndPolicy.SPARE_LOGIN_SHELL,
 ) : Pty {
 
     override fun read(buf: ByteArray): Int = session.read(buf)
@@ -18,7 +19,7 @@ class ProotPty(
 
     override fun signalTracees(): Set<Int> {
         if (session.exitCode != null || session.pid <= 0) return emptySet()
-        val targets = processes.endTargets(session.pid)
+        val targets = processes.endTargets(session.pid, endPolicy)
         targets.forEach { pid -> END_SIGNALS.forEach { Process.sendSignal(pid, it) } }
         return targets
     }

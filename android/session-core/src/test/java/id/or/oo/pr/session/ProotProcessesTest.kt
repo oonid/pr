@@ -162,4 +162,41 @@ class ProotProcessesTest {
         }
         assertEquals(listOf(shell, 1810, 1820, 1811, proot), ProotProcesses(proc).forceKillTargets(proot))
     }
+
+    @Test
+    fun aCommandThatIsProotsDirectChildIsAnEndTargetForACommandSession() {
+        listOf(false, true).forEach { childrenFiles ->
+            val proc = FakeProcFs(childrenFiles).apply {
+                add(app, ppid = 1)
+                add(proot, ppid = app)
+                add(shell, ppid = proot, tracer = proot, cmdline = listOf("httpd", "-f", "-p", "8080"))
+            }
+            assertEquals(setOf(shell), ProotProcesses(proc).endTargets(proot, EndPolicy.SIGNAL_EVERY_TRACEE))
+        }
+    }
+
+    @Test
+    fun aShellThatStayedAndItsCommandsAreAllEndTargetsForACommandSession() {
+        listOf(false, true).forEach { childrenFiles ->
+            assertEquals(
+                setOf(shell, 1810, 1811),
+                ProotProcesses(session(childrenFiles)).endTargets(proot, EndPolicy.SIGNAL_EVERY_TRACEE),
+            )
+        }
+    }
+
+    @Test
+    fun aCommandSessionsFallbackWalkIncludesProotsChildren() {
+        val proc = session().apply {
+            add(1820, ppid = shell, tracer = proot, statusReadable = false)
+            add(2790, ppid = app)
+            add(2804, ppid = 2790, tracer = 2790)
+        }
+        assertEquals(setOf(shell, 1810, 1811, 1820), ProotProcesses(proc).endTargets(proot, EndPolicy.SIGNAL_EVERY_TRACEE))
+    }
+
+    @Test
+    fun aTerminalSessionStillSparesTheLoginShell() {
+        assertEquals(setOf(1810, 1811), ProotProcesses(session()).endTargets(proot, EndPolicy.SPARE_LOGIN_SHELL))
+    }
 }
