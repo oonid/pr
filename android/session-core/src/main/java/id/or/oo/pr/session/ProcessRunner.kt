@@ -1,6 +1,5 @@
-package id.or.oo.pr
+package id.or.oo.pr.session
 
-import id.or.oo.pr.session.ProotProcesses
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
