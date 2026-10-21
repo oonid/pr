@@ -15,9 +15,9 @@ class ProcessRunner(
     private val signal: (pid: Int, signal: Int) -> Unit,
     private val processes: ProotProcesses = ProotProcesses(),
     private val stopWaitMs: Long = STOP_WAIT_MS,
-) {
+) : CommandRunner {
 
-    suspend fun run(cmd: List<String>, env: Map<String, String>, onLine: (String) -> Unit): Int {
+    override suspend fun run(cmd: List<String>, env: Map<String, String>, onLine: (String) -> Unit): Int {
         val open = AtomicBoolean(true)
         val started = CompletableDeferred<Process?>()
         val code = AtomicReference<Int>()

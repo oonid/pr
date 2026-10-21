@@ -1,32 +1,32 @@
-package id.or.oo.pr
+package id.or.oo.pr.session
 
 import android.os.Process
 import android.util.Log
-import id.or.oo.pr.session.ProcessRunner
+import id.or.oo.pr.engine.ProotHost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 class PrCliCommand(
-    private val app: App,
-    private val runner: ProcessRunner = ProcessRunner(Process.myPid(), Process::sendSignal),
+    private val host: ProotHost,
+    private val runner: CommandRunner = ProcessRunner(Process.myPid(), Process::sendSignal),
 ) : DistroCommand {
 
     override suspend fun run(args: List<String>, onLine: (String) -> Unit): Int {
-        val binDir = File(app.prefixDir, "bin")
+        val binDir = File(host.prefixDir, "bin")
 
         val env = withContext(Dispatchers.IO) {
             mapOf(
-                "APP_PREFIX" to app.prefixDir.absolutePath,
-                "APP_HOME" to app.homeDir.absolutePath,
-                "APP_PACKAGE" to app.packageName,
+                "APP_PREFIX" to host.prefixDir.absolutePath,
+                "APP_HOME" to host.homeDir.absolutePath,
+                "APP_PACKAGE" to host.packageName,
                 "PATH" to "${binDir.absolutePath}:/system/bin:/system/xbin",
                 "PROOT_NO_SECCOMP" to "1",
-                "PROOT_TMP_DIR" to app.cacheDir.absolutePath,
-                "HOME" to app.homeDir.absolutePath,
+                "PROOT_TMP_DIR" to host.cacheDir.absolutePath,
+                "HOME" to host.homeDir.absolutePath,
                 "TERM" to "xterm-256color",
-                "TMPDIR" to app.cacheDir.absolutePath,
-                "APP_DNS_SERVERS" to app.dnsServers.joinToString(","),
+                "TMPDIR" to host.cacheDir.absolutePath,
+                "APP_DNS_SERVERS" to host.dnsServers.joinToString(","),
             )
         }
 
