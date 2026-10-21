@@ -1,6 +1,7 @@
 package id.or.oo.pr
 
 import id.or.oo.pr.DistroOperations.Kind
+import id.or.oo.pr.session.DistroCommand
 import id.or.oo.pr.session.FakePty
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager

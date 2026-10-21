@@ -10,6 +10,7 @@ import android.util.Log
 import id.or.oo.pr.engine.NetworkDns
 import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.session.NotificationEndedNotifier
+import id.or.oo.pr.session.PrCliCommand
 import id.or.oo.pr.session.ProotSessionFactory
 import id.or.oo.pr.session.ServiceForegroundController
 import id.or.oo.pr.session.SessionHost

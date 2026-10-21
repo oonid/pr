@@ -1,5 +1,6 @@
 package id.or.oo.pr
 
+import id.or.oo.pr.session.DistroCommand
 import id.or.oo.pr.session.ManagedSession
 import id.or.oo.pr.session.SessionManager
 import kotlinx.coroutines.CancellationException
@@ -15,10 +16,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-
-fun interface DistroCommand {
-    suspend fun run(args: List<String>, onLine: (String) -> Unit): Int
-}
 
 class DistroOperations(
     private val command: DistroCommand,
