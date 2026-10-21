@@ -17,4 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "pr"
 include(":app")
 include(":proot-engine")
+include(":session-core")
 include(":termlib")

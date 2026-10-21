@@ -1,7 +1,5 @@
-package id.or.oo.pr
+package id.or.oo.pr.session
 
-import id.or.oo.pr.session.SystemProcFs
-import id.or.oo.pr.session.processState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
