@@ -237,8 +237,8 @@ in Settings on returning to the list.
    for a start that finds no session and stops at once), text the container names, plus "CPU kept
    awake" when the toggle is on. A session whose End has started is left out of the count and named
    as "Stopping <name>…" until it exits ("alpine · Stopping web-server…"); when every session is
-   ending, the title reads "Stopping 1 session…" or "Stopping N sessions…". Tapping opens the list. Actions: **End all**, and **Keep CPU
-   awake** / **Let CPU sleep**.
+   ending, the title reads "Stopping 1 session…" or "Stopping N sessions…". Tapping opens the list.
+   Actions: **End all**, and **Keep CPU awake** / **Let CPU sleep**.
 2. **Session ended**: default importance. "alias: session ended (exit N)"; tapping opens the list.
 
 Tapping either returns to the one existing list (`CLEAR_TOP | SINGLE_TOP`): a terminal on top of it

@@ -152,8 +152,8 @@ factory the manager was built with (pr's `ProotSessionFactory`: a terminal with 
 emulator, where the key is the container alias). `ProotSessionFactory(host, binds)` adds the same
 `--custom-bind host:guest` pairs to every terminal it opens, and `open` fails when a bind's host
 path is missing. Binds apply when a terminal starts: an open session keeps the binds it started
-with, and an `open` of its key through a factory with other binds returns that existing session. `open(key, CommandSessionFactory(host, container,
-command, sink, binds))` runs
+with, and an `open` of its key through a factory with other binds returns that existing session.
+`open(key, CommandSessionFactory(host, container, command, sink, binds))` runs
 `pr-cli login <container> --user root [--custom-bind host:guest]... -- <command>` with no
 emulator, where `<command>` is ONE argument: pass the shell text as is, for example
 `"cd /srv && exec server"`, and do not quote it again inside the Kotlin string. The key only
