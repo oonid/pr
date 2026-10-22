@@ -61,8 +61,11 @@ No change is needed in pr-cli or `:proot-engine`: `login` already accepts repeat
 given to `SessionManager.open(key, factory)` only names the session: the `ManagedSession` alias,
 the notifications and End. A host can run `web-server` in container `debian` while a
 terminal into the same container runs beside it. `open` refuses a key held by a running or retained ended session of
-another kind with `OpenResult.Failed`, instead of returning that session. A factory of the same
-kind gets the running session back. `SessionManager.running` lists session keys, not containers,
+another kind with `OpenResult.Failed`, instead of returning that session. A same-kind `open` on a
+running or retained key returns the existing session and ignores the new factory's command, binds
+and sink; to change any of them, the host calls `end(key)`, waits for `exit`, then opens again. The
+sink lives as long as the session, so it must be application-scoped, not tied to an Activity or
+ViewModel. `SessionManager.running` lists session keys, not containers,
 so a host that removes or resets containers must map keys to containers itself.
 
 End follows an explicit `EndPolicy`. Terminal sessions keep `SPARE_LOGIN_SHELL`: the login shell

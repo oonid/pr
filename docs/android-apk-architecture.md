@@ -122,7 +122,10 @@ A command session's sink contract:
   and never block;
 - the bytes are PTY output: CRLF line ends, ANSI escapes, UTF-8 that may be split across reads,
   and a 24x80 window that `ManagedSession.resize` can change;
-- a sink that throws loses that chunk, and the failure is logged once.
+- a sink that throws loses that chunk, and the failure is logged once;
+- the sink lives as long as the session, which can outlive every Activity, so it must be
+  application-scoped (for example, a log buffer the `Application` owns), never tied to an
+  Activity or a ViewModel.
 
 End timing: after SIGTERM, End waits at most 10 s for the session to exit; it then sends EOF,
 waits a 2 s grace and sends SIGKILL. A server that needs longer to drain is killed.
@@ -140,7 +143,10 @@ copy what it keeps. Both kinds appear in the running notification and end with E
 the same way, except that End follows an `EndPolicy`: a terminal spares its login shell
 (`SPARE_LOGIN_SHELL`), a command session signals every tracee (`SIGNAL_EVERY_TRACEE`), so an
 exec'd server gets SIGTERM. `open` returns `Failed` when the key is held by a running or retained
-ended session of another kind, and the same kind of factory gets the running session back. A blank
+ended session of another kind. A same-kind `open` on a running or retained key returns the
+existing session and ignores the new factory's command, binds and sink; to change any of them,
+call `end(key)`, wait for the session's `exit`, then `open` again (a retained ended session holds
+its key until a `detach` without `retainEnded`). A blank
 command or a missing pr-cli fails early. Each bind's host path must exist: proot would only warn
 and run the session without that bind, so `open` returns `Failed("... no bind source <path>")`
 instead. `SessionManager.running` lists session keys, not
