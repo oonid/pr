@@ -48,8 +48,8 @@ the `specialUse` subtype text is each app's own justification; the class comes f
 ## 4. New: Command Sessions
 
 A second session factory runs `pr-cli login <container> --user root [--custom-bind host:guest]... --
-<command>`, with the command as ONE argument that is not quoted again inside the Kotlin string, through the existing `ProotLauncher.startCustomSession`. Its session has no terminal
-emulator; its output goes to a sink the host provides (for example, a bounded log buffer). It
+<command>`, with the command as ONE argument that is not quoted again inside the Kotlin string,
+through the existing `ProotLauncher.startCustomSession`. Its session has no terminal emulator; its output goes to a sink the host provides (for example, a bounded log buffer). It
 starts, appears in the running notification, and ends with End and drain exactly like a terminal
 session, because `ManagedSession` and `SessionManager` treat both the same way.
 
@@ -60,8 +60,8 @@ No change is needed in pr-cli or `:proot-engine`: `login` already accepts repeat
 `CommandSessionFactory(host, container, command, sink, binds)` logs into `container`, and the key
 given to `SessionManager.open(key, factory)` only names the session: the `ManagedSession` alias,
 the notifications and End. A host can run `web-server` in container `debian` while a
-terminal into the same container runs beside it. `open` refuses a key held by a running or retained ended session of
-another kind with `OpenResult.Failed`, instead of returning that session. A same-kind `open` on a
+terminal into the same container runs beside it. `open` refuses a key held by a running or
+retained ended session of another kind with `OpenResult.Failed`, instead of returning that session. A same-kind `open` on a
 running or retained key returns the existing session and ignores the new factory's command, binds
 and sink; to change any of them, the host calls `end(key)`, waits for `exit`, then opens again. The
 sink lives as long as the session, so it must be application-scoped, not tied to an Activity or

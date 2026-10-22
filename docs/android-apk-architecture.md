@@ -148,8 +148,7 @@ exec'd server gets SIGTERM. `open` returns `Failed` when the key is held by a ru
 ended session of another kind. A same-kind `open` on a running or retained key returns the
 existing session and ignores the new factory's command, binds and sink; to change any of them,
 call `end(key)`, wait for the session's `exit`, then `open` again (a retained ended session holds
-its key until a `detach` without `retainEnded`). A blank
-command or a missing pr-cli fails early. Each bind's host path must exist: proot would only warn
+its key until its screen attaches again or detaches without `retainEnded`). A blank command or a missing pr-cli fails early. Each bind's host path must exist: proot would only warn
 and run the session without that bind, so `open` returns `Failed("... no bind source <path>")`
 instead. `SessionManager.running` lists session keys, not
 containers, so a host that removes or resets containers maps keys to containers itself.

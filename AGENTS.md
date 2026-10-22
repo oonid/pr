@@ -112,7 +112,7 @@ CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testD
 
 ```bash
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
-# session-core, 143 tests: sessions, command sessions, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# session-core, 147 tests: sessions, command sessions, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
 # app, 29 tests: DistroOperations, InstalledContainers
 ```
 
