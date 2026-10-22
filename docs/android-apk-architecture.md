@@ -128,13 +128,19 @@ A command session's sink contract:
   Activity or a ViewModel.
 
 End timing: after SIGTERM, End waits at most 10 s for the session to exit; it then sends EOF,
-waits a 2 s grace and sends SIGKILL. A server that needs longer to drain is killed.
+waits a 2 s grace and sends SIGKILL. A server that needs longer to drain sets its own wait:
+`CommandSessionFactory(host, container, command, sink, binds, signalWaitMs = 65_000)` replaces
+the 10 s for that session only, and `ManagedSession.endWorstCaseMs(signalWaitMs = 65_000)` gives
+the longest End can then take; a host that waits on it adds some headroom, as pr's own
+`END_TIMEOUT_MS` adds 2.5 s to the worst case of the default 10 s wait.
 
 The notification actions are `<package>.action.END_ALL` and `<package>.action.TOGGLE_WAKE`.
 
 Two kinds of session share one `SessionManager`, keyed by a session key. `open(key)` uses the
 factory the manager was built with (pr's `ProotSessionFactory`: a terminal with a termlib
-emulator, where the key is the container alias). `open(key, CommandSessionFactory(host, container,
+emulator, where the key is the container alias). `ProotSessionFactory(host, binds)` adds the same
+`--custom-bind host:guest` pairs to every terminal it opens, and `open` fails when a bind's host
+path is missing. `open(key, CommandSessionFactory(host, container,
 command, sink, binds))` runs
 `pr-cli login <container> --user root [--custom-bind host:guest]... -- <command>` with no
 emulator, where `<command>` is ONE argument: pass the shell text as is, for example

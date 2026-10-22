@@ -23,7 +23,7 @@ package `id.or.oo.pr.session` so pr's imports barely change:
 |------|-------|
 | `session/SessionManager`, `ManagedSession`, `ServiceState`, `ProotProcesses` (with `ProcFs`), `Pty`, `ProotPty` | Unchanged |
 | `session/SessionService`, `SessionNotifications`, `AndroidSessionHooks` | Host couplings removed (§3) |
-| `session/ProotSessionFactory` | The interactive terminal session, unchanged |
+| `session/ProotSessionFactory` | The interactive terminal session, unchanged (later it gained optional binds; see §4) |
 | `ProcessRunner` | Moves with its package and now implements `CommandRunner` |
 | `PrCliCommand` and its `DistroCommand` interface | Take a `ProotHost` instead of pr's `App` |
 | The bootstrap in `App.kt` (prefix directories, native-library and busybox links, `bootstrap.sh`) | Becomes a reusable `PrBootstrap`; `assets/scripts/bootstrap.sh` moves with it |
@@ -55,6 +55,9 @@ session, because `ManagedSession` and `SessionManager` treat both the same way.
 
 No change is needed in pr-cli or `:proot-engine`: `login` already accepts repeatable
 `--custom-bind` and a trailing command.
+
+**Later addition.** `CommandSessionFactory` takes `signalWaitMs`, the wait after SIGTERM for that
+session, and `ProotSessionFactory(host, binds)` binds the same host directories into terminals.
 
 **As executed.** The session key and the container are separate.
 `CommandSessionFactory(host, container, command, sink, binds)` logs into `container`, and the key
