@@ -4,6 +4,7 @@ import android.util.Log
 import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.engine.ProotLauncher
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class CommandSessionFactory internal constructor(
     private val host: ProotHost,
@@ -28,7 +29,7 @@ class CommandSessionFactory internal constructor(
 
     init {
         require(command.isNotBlank()) { "command must not be blank" }
-        require(signalWaitMs > 0) { "signalWaitMs must be positive: $signalWaitMs" }
+        require(signalWaitMs in 1..TimeUnit.HOURS.toMillis(1)) { "signalWaitMs must be between 1 and 3600000: $signalWaitMs" }
     }
 
     override fun create(alias: String, onEnded: (ManagedSession) -> Unit): ManagedSession =
