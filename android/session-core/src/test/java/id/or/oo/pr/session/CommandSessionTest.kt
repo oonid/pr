@@ -1,6 +1,7 @@
 package id.or.oo.pr.session
 
 import id.or.oo.pr.engine.ProotHost
+import id.or.oo.pr.engine.ProotLauncher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -58,11 +60,21 @@ class CommandSessionTest {
 
     private val toReceived: (ByteArray, Int, Int) -> Unit = { buf, off, len -> received.append(String(buf, off, len)) }
 
+    private val launched = ConcurrentHashMap<ProotLauncher.Session, Pty>()
+
     private fun factory(
         sink: (ByteArray, Int, Int) -> Unit = toReceived,
         binds: List<Bind> = this.binds,
         start: (List<String>) -> Pty? = { args -> started += args; FakePty().also { ptys += it } },
-    ) = CommandSessionFactory(host, container, command, sink, binds, start)
+    ) = CommandSessionFactory(
+        host,
+        container,
+        command,
+        sink,
+        binds,
+        startSession = { args -> start(args)?.let { pty -> ProotLauncher.Session(-1).also { launched[it] = pty } } },
+        pty = { session, _ -> launched.getValue(session) },
+    )
 
     private fun openCommand(): ManagedSession =
         (sessions.open(key, factory()) as SessionManager.OpenResult.Opened).session
@@ -348,5 +360,29 @@ class CommandSessionTest {
         assertTrue(started.isEmpty())
         assertTrue(sessions.running.value.isEmpty())
         assertTrue(ended.isEmpty())
+    }
+
+    @Test
+    fun theFactorysPtySendsSigtermToEveryTraceeIncludingProotsDirectChild() {
+        val proc = FakeProcFs(childrenFiles = false).apply {
+            add(app, ppid = 1)
+            add(proot, ppid = app)
+            add(gateway, ppid = proot, tracer = proot, cmdline = listOf("httpd", "-f", "-p", "8080"))
+            add(1820, ppid = gateway, tracer = proot)
+        }
+        val factory = CommandSessionFactory(
+            host,
+            container,
+            command,
+            toReceived,
+            binds,
+            startSession = { args -> started += args; ProotLauncher.Session(-1, proot) },
+            processes = ProotProcesses(proc),
+        )
+
+        val pty = factory.startPty(key)
+
+        assertEquals(setOf(gateway, 1820), pty.signalTracees())
+        assertEquals(listOf(loginArgs(host.prefixDir, container, command, binds)), started)
     }
 }
