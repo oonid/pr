@@ -71,7 +71,8 @@ children. Alpine's `sh -c` execs the last command, so the server itself is proot
 without this it would be SIGKILLed after the grace period instead of stopping on SIGTERM.
 
 A sink that throws loses only that output and the failure is logged once. `Bind` paths and the
-command are checked when built, and a missing pr-cli makes `open` fail.
+command are checked when built, and a missing pr-cli makes `open` fail. So does a bind whose host
+path does not exist, because proot would only warn and run the session without that bind.
 
 ## 5. Build and CI
 

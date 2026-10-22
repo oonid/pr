@@ -141,7 +141,9 @@ the same way, except that End follows an `EndPolicy`: a terminal spares its logi
 (`SPARE_LOGIN_SHELL`), a command session signals every tracee (`SIGNAL_EVERY_TRACEE`), so an
 exec'd server gets SIGTERM. `open` returns `Failed` when the key is held by a running or retained
 ended session of another kind, and the same kind of factory gets the running session back. A blank
-command or a missing pr-cli fails early. `SessionManager.running` lists session keys, not
+command or a missing pr-cli fails early. Each bind's host path must exist: proot would only warn
+and run the session without that bind, so `open` returns `Failed("... no bind source <path>")`
+instead. `SessionManager.running` lists session keys, not
 containers, so a host that removes or resets containers maps keys to containers itself.
 
 ---

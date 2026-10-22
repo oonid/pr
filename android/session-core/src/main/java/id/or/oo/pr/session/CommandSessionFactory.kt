@@ -23,6 +23,9 @@ class CommandSessionFactory(
     override fun create(alias: String, onEnded: (ManagedSession) -> Unit): ManagedSession {
         val prCli = File(host.prefixDir, "bin/pr-cli")
         check(prCli.exists()) { "could not start a command session for $alias: no pr-cli at $prCli" }
+        binds.forEach { bind ->
+            check(File(bind.hostPath).exists()) { "could not start a command session for $alias: no bind source ${bind.hostPath}" }
+        }
         val pty = start(loginArgs(host.prefixDir, container, command, binds))
             ?: throw IllegalStateException("could not start a command session for $alias")
         return ManagedSession(alias = alias, pty = pty, emulator = null, output = isolated(alias), onEnded = onEnded)
