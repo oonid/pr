@@ -66,6 +66,7 @@ class CommandSessionTest {
         sink: (ByteArray, Int, Int) -> Unit = toReceived,
         binds: List<Bind> = this.binds,
         start: (List<String>) -> Pty? = { args -> started += args; FakePty().also { ptys += it } },
+        signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
     ) = CommandSessionFactory(
         host,
         container,
@@ -74,6 +75,7 @@ class CommandSessionTest {
         binds,
         startSession = { args -> start(args)?.let { pty -> ProotLauncher.Session(-1).also { launched[it] = pty } } },
         pty = { session, _ -> launched.getValue(session) },
+        signalWaitMs = signalWaitMs,
     )
 
     private fun openCommand(): ManagedSession =
@@ -360,6 +362,29 @@ class CommandSessionTest {
         assertTrue(started.isEmpty())
         assertTrue(sessions.running.value.isEmpty())
         assertTrue(ended.isEmpty())
+    }
+
+    @Test
+    fun endWaitsTheFactorysSignalWaitForTheServerBeforeTheEof() {
+        val pty = FakePty().apply { signalled = setOf(gateway) }
+        val session = (sessions.open(key, factory(signalWaitMs = 1_500, start = { args -> started += args; pty.also { ptys += it } }))
+            as SessionManager.OpenResult.Opened).session
+
+        session.end()
+
+        eventually(timeoutMs = 10_000) { session.exit.value != null }
+        assertEquals(listOf("signal", "eof", "close"), pty.calls)
+        assertTrue(pty.msBetween("signal", "eof") >= 1_500)
+        assertTrue(pty.msBetween("signal", "eof") < ManagedSession.SIGNAL_WAIT_MS)
+    }
+
+    @Test
+    fun aSignalWaitThatIsNotPositiveIsRejectedWhenTheFactoryIsBuilt() {
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 0)
+        }
+
+        assertEquals("signalWaitMs must be positive: 0", e.message)
     }
 
     @Test
