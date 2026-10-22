@@ -18,6 +18,7 @@ class CommandSessionFactory internal constructor(
     private val signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
 ) : SessionManager.SessionFactory {
 
+    @JvmOverloads
     constructor(
         host: ProotHost,
         container: String,
