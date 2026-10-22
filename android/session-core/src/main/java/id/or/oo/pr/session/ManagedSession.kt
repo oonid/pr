@@ -32,6 +32,9 @@ class ManagedSession(
     val endRequested: Boolean
         get() = endFlag.get()
 
+    @Volatile
+    internal var onEndRequested: () -> Unit = {}
+
     private val ptyLock = Any()
     private var closed = false
     private val ended = CountDownLatch(1)
@@ -79,6 +82,7 @@ class ManagedSession(
     fun end() {
         if (_exit.value != null) return
         if (!endFlag.compareAndSet(false, true)) return
+        onEndRequested()
         thread(isDaemon = true, name = "pty-end-$alias") {
             val signalled = pty.signalTracees()
             if (signalled.isNotEmpty() && awaitEndOrExit(signalled)) return@thread

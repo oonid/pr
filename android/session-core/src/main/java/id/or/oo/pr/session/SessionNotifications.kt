@@ -23,13 +23,15 @@ object SessionNotifications {
         )
     }
 
-    fun running(context: Context, aliases: List<String>, keepAwake: Boolean, exempt: Boolean): Notification {
-        val title = runningTitle(aliases)
-        val details = buildList {
-            if (aliases.isNotEmpty()) add(aliases.joinToString(", "))
-            if (keepAwake) add("CPU kept awake")
-            if (keepAwake && !exempt) add("Battery saver may stop sessions; allow in the app")
-        }.joinToString(" · ")
+    fun running(
+        context: Context,
+        aliases: List<String>,
+        keepAwake: Boolean,
+        exempt: Boolean,
+        ending: List<String> = emptyList(),
+    ): Notification {
+        val title = runningTitle(aliases, ending)
+        val details = runningText(aliases, ending, keepAwake, exempt)
         return NotificationCompat.Builder(context, CHANNEL_RUNNING)
             .setSmallIcon(context.sessionHost.notificationIcon)
             .setContentTitle(title)
@@ -73,8 +75,23 @@ object SessionNotifications {
     )
 }
 
-internal fun runningTitle(aliases: List<String>): String = when (aliases.size) {
-    0 -> "Stopping…"
-    1 -> "1 session running"
-    else -> "${aliases.size} sessions running"
+internal fun runningText(aliases: List<String>, ending: List<String>, keepAwake: Boolean, exempt: Boolean): String {
+    val (stopping, active) = aliases.partition { it in ending }
+    return buildList {
+        if (active.isNotEmpty()) add(active.joinToString(", "))
+        if (stopping.isNotEmpty()) add("Stopping ${stopping.joinToString(", ")}…")
+        if (keepAwake) add("CPU kept awake")
+        if (keepAwake && !exempt) add("Battery saver may stop sessions; allow in the app")
+    }.joinToString(" · ")
+}
+
+internal fun runningTitle(aliases: List<String>, ending: List<String> = emptyList()): String {
+    val stopping = aliases.count { it in ending }
+    val active = aliases.size - stopping
+    return when {
+        aliases.isEmpty() -> "Stopping…"
+        active == 0 -> if (stopping == 1) "Stopping 1 session…" else "Stopping $stopping sessions…"
+        active == 1 -> "1 session running"
+        else -> "$active sessions running"
+    }
 }

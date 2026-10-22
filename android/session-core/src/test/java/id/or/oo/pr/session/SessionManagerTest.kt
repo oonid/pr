@@ -370,4 +370,51 @@ class SessionManagerTest {
         eventually { manager.running.value.isEmpty() }
         assertEquals(false, manager.keepCpuAwake.value)
     }
+
+    @Test
+    fun endListsTheSessionAsEndingUntilItExits() {
+        endGraceMs = 5_000
+        open("alpine")
+        open("ubuntu")
+        ptys.getValue("alpine").ignoresEof = true
+        manager.end("alpine")
+        assertEquals(listOf("alpine"), manager.ending.value)
+        assertEquals(listOf("alpine", "ubuntu"), manager.running.value)
+        ptys.getValue("alpine").exit(0)
+        eventually { manager.running.value == listOf("ubuntu") }
+        assertTrue(manager.ending.value.isEmpty())
+        ptys.getValue("ubuntu").exit(0)
+    }
+
+    @Test
+    fun endAllListsEverySessionAsEnding() {
+        endGraceMs = 5_000
+        open("alpine")
+        open("ubuntu")
+        ptys.values.forEach { it.ignoresEof = true }
+        manager.endAll()
+        assertEquals(listOf("alpine", "ubuntu"), manager.ending.value)
+        ptys.values.forEach { it.exit(0) }
+        eventually { manager.running.value.isEmpty() }
+        assertTrue(manager.ending.value.isEmpty())
+    }
+
+    @Test
+    fun endingTheSessionDirectlyListsItAsEnding() {
+        endGraceMs = 5_000
+        val session = open("alpine")
+        ptys.getValue("alpine").ignoresEof = true
+        session.end()
+        assertEquals(listOf("alpine"), manager.ending.value)
+        ptys.getValue("alpine").exit(0)
+        eventually { manager.ending.value.isEmpty() }
+    }
+
+    @Test
+    fun aSessionThatExitsOnItsOwnIsNeverListedAsEnding() {
+        open("alpine")
+        ptys.getValue("alpine").exit(0)
+        eventually { manager.running.value.isEmpty() }
+        assertTrue(manager.ending.value.isEmpty())
+    }
 }

@@ -34,6 +34,9 @@ class SessionManager(
     private val _running = MutableStateFlow<List<String>>(emptyList())
     val running: StateFlow<List<String>> = _running
 
+    private val _ending = MutableStateFlow<List<String>>(emptyList())
+    val ending: StateFlow<List<String>> = _ending
+
     private val _keepCpuAwake = MutableStateFlow(false)
     val keepCpuAwake: StateFlow<Boolean> = _keepCpuAwake
 
@@ -63,6 +66,7 @@ class SessionManager(
             } catch (e: Exception) {
                 return OpenResult.Failed(e.message ?: e.javaClass.simpleName)
             }
+            created.onEndRequested = { synchronized(lock) { updateEnding() } }
             sessions[alias] = created
             kinds[alias] = factory.javaClass
             updateRunning()
@@ -127,13 +131,18 @@ class SessionManager(
         if (before == 0 && now.isNotEmpty()) {
             _running.value = now
             startForeground()
-            return
+        } else {
+            if (before > 0 && now.isEmpty()) {
+                _keepCpuAwake.value = false
+                _backgroundError.value = null
+            }
+            _running.value = now
         }
-        if (before > 0 && now.isEmpty()) {
-            _keepCpuAwake.value = false
-            _backgroundError.value = null
-        }
-        _running.value = now
+        updateEnding()
+    }
+
+    private fun updateEnding() {
+        _ending.value = sessions.values.filter { it.endRequested && it.exit.value == null }.map { it.alias }
     }
 
     private fun startForeground() {
