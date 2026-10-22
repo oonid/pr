@@ -11,7 +11,8 @@ import androidx.core.content.ContextCompat
 
 class ServiceForegroundController(private val context: Context) : SessionManager.ForegroundController {
     override fun start() {
-        ContextCompat.startForegroundService(context, Intent(context, SessionService::class.java))
+        context.startForegroundService(Intent(context, SessionService::class.java))
+            ?: throw IllegalStateException("SessionService is not declared in the app manifest")
     }
 }
 
