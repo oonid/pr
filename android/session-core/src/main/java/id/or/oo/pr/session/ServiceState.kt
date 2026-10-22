@@ -1,6 +1,6 @@
 package id.or.oo.pr.session
 
-class ServiceState {
+internal class ServiceState {
 
     sealed interface Action {
         data class StartForeground(val running: List<String>, val awake: Boolean) : Action
