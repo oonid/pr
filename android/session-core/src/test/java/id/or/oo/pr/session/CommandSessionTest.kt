@@ -388,6 +388,15 @@ class CommandSessionTest {
     }
 
     @Test
+    fun thePublicConstructorPassesTheSignalWaitItIsGiven() {
+        val given = CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 65_000)
+        val defaulted = CommandSessionFactory(host, container, command, toReceived)
+
+        assertEquals(65_000L, given.signalWaitMs)
+        assertEquals(ManagedSession.SIGNAL_WAIT_MS, defaulted.signalWaitMs)
+    }
+
+    @Test
     fun aSignalWaitOverAnHourIsRejectedWhenTheFactoryIsBuilt() {
         CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 3_600_000)
         val over = assertThrows(IllegalArgumentException::class.java) {
