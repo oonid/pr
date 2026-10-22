@@ -13,6 +13,7 @@ class ProotSessionFactory internal constructor(
     private val startSession: (List<String>) -> ProotLauncher.Session?,
 ) : SessionManager.SessionFactory {
 
+    @JvmOverloads
     constructor(host: ProotHost, binds: List<Bind> = emptyList()) :
         this(host, binds, { args -> ProotLauncher(host).startCustomSession(args, rows = 24, cols = 80) })
 
