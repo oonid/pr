@@ -28,7 +28,7 @@ class SessionService : Service() {
         super.onCreate()
         SessionNotifications.createChannels(this)
         scope.launch {
-            combine(sessions.running, sessions.keepCpuAwake) { running, awake -> running to awake }
+            combine(sessions.running, sessions.ending, sessions.keepCpuAwake) { running, _, awake -> running to awake }
                 .collect { (running, awake) -> execute(state.onRunningChanged(running, awake)) }
         }
     }
@@ -72,7 +72,7 @@ class SessionService : Service() {
     }
 
     private fun notification(running: List<String>, awake: Boolean) =
-        SessionNotifications.running(this, running, awake, isIgnoringBatteryOptimizations())
+        SessionNotifications.running(this, running, awake, isIgnoringBatteryOptimizations(), sessions.ending.value)
 
     private fun setWakeLock(on: Boolean) {
         val held = wakeLock
