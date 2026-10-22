@@ -2,7 +2,7 @@
 # bootstrap.sh — First-run setup for standalone pr on Android
 #
 # This script MUST be POSIX sh compatible (#!/system/bin/sh).
-# Called by APK App.kt on first launch.
+# Called by APK PrBootstrap on first launch.
 #
 # Environment variables (set by caller):
 #   APP_PREFIX  - Base directory (default: /data/data/id.or.oo.pr/files/usr)

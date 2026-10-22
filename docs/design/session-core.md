@@ -48,7 +48,7 @@ the `specialUse` subtype text is each app's own justification; the class comes f
 ## 4. New: Command Sessions
 
 A second session factory runs `pr-cli login <container> --user root [--custom-bind host:guest]... --
-'<command>'` through the existing `ProotLauncher.startCustomSession`. Its session has no terminal
+<command>`, with the command as ONE argument that is not quoted again inside the Kotlin string, through the existing `ProotLauncher.startCustomSession`. Its session has no terminal
 emulator; its output goes to a sink the host provides (for example, a bounded log buffer). It
 starts, appears in the running notification, and ends with End and drain exactly like a terminal
 session, because `ManagedSession` and `SessionManager` treat both the same way.

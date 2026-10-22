@@ -136,9 +136,11 @@ Two kinds of session share one `SessionManager`, keyed by a session key. `open(k
 factory the manager was built with (pr's `ProotSessionFactory`: a terminal with a termlib
 emulator, where the key is the container alias). `open(key, CommandSessionFactory(host, container,
 command, sink, binds))` runs
-`pr-cli login <container> --user root [--custom-bind host:guest]... -- '<command>'` with no
-emulator; the key only names the session, so `web-server` can run in container `debian`
-beside a terminal into the same container. Its output goes to `sink`, which gets a reused buffer and must
+`pr-cli login <container> --user root [--custom-bind host:guest]... -- <command>` with no
+emulator, where `<command>` is ONE argument: pass the shell text as is, for example
+`"cd /srv && exec server"`, and do not quote it again inside the Kotlin string. The key only
+names the session, so `web-server` can run in container `debian` beside a terminal into the same
+container. Its output goes to `sink`, which gets a reused buffer and must
 copy what it keeps. Both kinds appear in the running notification and end with End and End all in
 the same way, except that End follows an `EndPolicy`: a terminal spares its login shell
 (`SPARE_LOGIN_SHELL`), a command session signals every tracee (`SIGNAL_EVERY_TRACEE`), so an
@@ -151,6 +153,27 @@ command or a missing pr-cli fails early. Each bind's host path must exist: proot
 and run the session without that bind, so `open` returns `Failed("... no bind source <path>")`
 instead. `SessionManager.running` lists session keys, not
 containers, so a host that removes or resets containers maps keys to containers itself.
+
+A missing container does not fail `open`: it returns `Opened`, then the session ends with exit 1
+and pr-cli's message that the distribution is not installed reaches the sink. Exit 1 can
+also be any other pr-cli failure. `ManagedSession.endRequested` tells an End apart from an exit on
+its own.
+
+Notifications: `POST_NOTIFICATIONS` must also be requested at runtime on API 33 and later, or the
+ended notifications are dropped. When the CPU is kept awake and the app is not exempt from battery
+optimisation, the running notification says "Battery saver may stop sessions; allow in the app",
+which assumes the app offers that exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`).
+
+Reserved identities: the library uses the same names in every app, so an app must not use them for
+anything else:
+
+- the wake-lock tag `pr:sessions`;
+- the preferences file `pr_prefs`, where `PrBootstrap` keeps its bootstrap state;
+- notification id 1, the running notification, and the channel ids `sessions_running` and
+  `sessions_ended`;
+- the prefix paths `$prefix/scripts`, `$prefix/bin/bash`, `$prefix/bin/pr-test` and
+  `$prefix/bin/proot-distro`, which `NativeLinks` deletes on every launch as names left by older
+  pr builds.
 
 ---
 
@@ -325,7 +348,7 @@ All assets bundled in APK under `assets/` (then in `app/`; today the only assets
 | `bin/busybox` | 1.1MB | Alpine busybox-static v1.37.0-r14 (Phase 3, T3.1) |
 | `bin/bash` | 2.3MB | robxu9/bash-static v5.2.015 (Phase 3, T3.2) |
 | `scripts/proot-distro.sh` | 3051 lines | Standalone port (Phase 2, T2.1-T2.10) |
-| `scripts/bootstrap.sh` | 184 lines | First-run setup (Phase 3, T3.3) |
+| `scripts/bootstrap.sh` | 39 lines | First-run setup (Phase 3, T3.3) |
 | `plugins/*.sh` | 17 files | Distro plugins (Phase 2, T2.1) |
 
 Total APK size: ~15MB (debug, uncompressed assets).
