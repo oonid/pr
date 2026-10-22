@@ -32,9 +32,13 @@ class CommandSessionTest {
     private val container = "debian"
     private val key = "web-server"
     private val command = "httpd -f -p 8080 && echo 'server stopped'"
-    private val binds = listOf(
+    private val literalBinds = listOf(
         Bind("/storage/emulated/0/Download", "/root/Download"),
         Bind("/data/data/org.example.host/files/home/srv", "/srv"),
+    )
+    private val binds = listOf(
+        Bind(File(root, "Download").apply { mkdirs() }.path, "/root/Download"),
+        Bind(File(root, "srv").apply { mkdirs() }.path, "/srv"),
     )
 
     private val started = CopyOnWriteArrayList<List<String>>()
@@ -56,6 +60,7 @@ class CommandSessionTest {
 
     private fun factory(
         sink: (ByteArray, Int, Int) -> Unit = toReceived,
+        binds: List<Bind> = this.binds,
         start: (List<String>) -> Pty? = { args -> started += args; FakePty().also { ptys += it } },
     ) = CommandSessionFactory(host, container, command, sink, binds, start)
 
@@ -114,7 +119,7 @@ class CommandSessionTest {
                 "--",
                 "httpd -f -p 8080 && echo 'server stopped'",
             ),
-            loginArgs(literalPrefix, "debian", command, binds),
+            loginArgs(literalPrefix, "debian", command, literalBinds),
         )
     }
 
@@ -307,6 +312,21 @@ class CommandSessionTest {
 
         assertEquals(
             SessionManager.OpenResult.Failed("could not start a command session for web-server: no pr-cli at $prCli"),
+            result,
+        )
+        assertTrue(started.isEmpty())
+        assertTrue(sessions.running.value.isEmpty())
+        assertTrue(ended.isEmpty())
+    }
+
+    @Test
+    fun aMissingBindSourceFailsTheOpenAndStartsNothing() {
+        val missing = File(root, "absent")
+
+        val result = sessions.open(key, factory(binds = binds + Bind(missing.path, "/mnt")))
+
+        assertEquals(
+            SessionManager.OpenResult.Failed("could not start a command session for web-server: no bind source $missing"),
             result,
         )
         assertTrue(started.isEmpty())
