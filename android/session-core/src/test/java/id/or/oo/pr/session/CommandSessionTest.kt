@@ -384,7 +384,21 @@ class CommandSessionTest {
             CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 0)
         }
 
-        assertEquals("signalWaitMs must be positive: 0", e.message)
+        assertEquals("signalWaitMs must be between 1 and 3600000: 0", e.message)
+    }
+
+    @Test
+    fun aSignalWaitOverAnHourIsRejectedWhenTheFactoryIsBuilt() {
+        CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 3_600_000)
+        val over = assertThrows(IllegalArgumentException::class.java) {
+            CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = 3_600_001)
+        }
+        val max = assertThrows(IllegalArgumentException::class.java) {
+            CommandSessionFactory(host, container, command, toReceived, binds, signalWaitMs = Long.MAX_VALUE)
+        }
+
+        assertEquals("signalWaitMs must be between 1 and 3600000: 3600001", over.message)
+        assertEquals("signalWaitMs must be between 1 and 3600000: ${Long.MAX_VALUE}", max.message)
     }
 
     @Test
