@@ -74,6 +74,4 @@ internal fun commandPty(session: ProotLauncher.Session, processes: ProotProcesse
     ProotPty(session, processes, CommandSessionFactory.END_POLICY)
 
 internal fun loginArgs(prefixDir: File, container: String, command: String, binds: List<Bind>): List<String> =
-    listOf(File(prefixDir, "bin/pr-cli").absolutePath, "login", container, "--user", "root") +
-        binds.flatMap { listOf("--custom-bind", "${it.hostPath}:${it.guestPath}") } +
-        listOf("--", command)
+    terminalArgs(prefixDir, container, binds) + listOf("--", command)
