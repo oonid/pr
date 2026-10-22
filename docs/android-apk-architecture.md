@@ -127,12 +127,23 @@ A command session's sink contract:
   application-scoped (for example, a log buffer the `Application` owns), never tied to an
   Activity or a ViewModel.
 
-End timing: after SIGTERM, End waits at most 10 s for the session to exit; it then sends EOF,
-waits a 2 s grace and sends SIGKILL. A server that needs longer to drain sets its own wait:
+End timing: End runs four steps, each skipped once the session has exited:
+
+1. SIGTERM, then the signal wait, at most 10 s by default; End waits only when its `/proc` scan
+   finds processes to signal, and stops waiting once they have exited;
+2. EOF, then a 2 s grace;
+3. SIGKILL to proot's children (the login shell), then 2 s more;
+4. the force kill of every tracee and proot, with the waits for an exit code (2 s, then 0.5 s
+   after killing a shell that left none).
+
+`ManagedSession.endWorstCaseMs(signalWaitMs)` adds these up, with 1 s for the `/proc` scans:
+17.5 s with the default wait. A server that needs longer to drain sets its own wait:
 `CommandSessionFactory(host, container, command, sink, binds, signalWaitMs = 65_000)` replaces
-the 10 s for that session only, and `ManagedSession.endWorstCaseMs(signalWaitMs = 65_000)` gives
-the longest End can then take; a host that waits on it adds some headroom, as pr's own
-`END_TIMEOUT_MS` adds 2.5 s to the worst case of the default 10 s wait.
+the 10 s for that session only; `signalWaitMs` must be between 1 and 3600000 (one hour). Any wait
+a host does on `Ending`, `end(key)` or `endAll` for a session with its own `signalWaitMs` must use
+`ManagedSession.endTimeoutMs(signalWaitMs)`, the worst case plus 2.5 s of headroom, not
+`ManagedSession.END_TIMEOUT_MS`, which is `endTimeoutMs()` and covers only the default 10 s wait
+(20 s).
 
 The notification actions are `<package>.action.END_ALL` and `<package>.action.TOGGLE_WAKE`.
 
@@ -140,7 +151,8 @@ Two kinds of session share one `SessionManager`, keyed by a session key. `open(k
 factory the manager was built with (pr's `ProotSessionFactory`: a terminal with a termlib
 emulator, where the key is the container alias). `ProotSessionFactory(host, binds)` adds the same
 `--custom-bind host:guest` pairs to every terminal it opens, and `open` fails when a bind's host
-path is missing. `open(key, CommandSessionFactory(host, container,
+path is missing. Binds apply when a terminal starts: an open session keeps the binds it started
+with, and an `open` of its key through a factory with other binds returns that existing session. `open(key, CommandSessionFactory(host, container,
 command, sink, binds))` runs
 `pr-cli login <container> --user root [--custom-bind host:guest]... -- <command>` with no
 emulator, where `<command>` is ONE argument: pass the shell text as is, for example
@@ -165,7 +177,11 @@ also be any other pr-cli failure. `ManagedSession.endRequested` tells an End apa
 its own.
 
 Notifications: `POST_NOTIFICATIONS` must also be requested at runtime on API 33 and later, or the
-ended notifications are dropped. When the CPU is kept awake and the app is not exempt from battery
+ended notifications are dropped. The running notification counts the sessions that run ("1 session
+running", "2 sessions running") and names them; a session whose End has started
+(`SessionManager.ending`) is named apart until it exits, as in "alpine · Stopping web-server…",
+and when every session is ending the title reads "Stopping 1 session…" or "Stopping N
+sessions…". When the CPU is kept awake and the app is not exempt from battery
 optimisation, the running notification says "Battery saver may stop sessions; allow in the app",
 which assumes the app offers that exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`).
 
