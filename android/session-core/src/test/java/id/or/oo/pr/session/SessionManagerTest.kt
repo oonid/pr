@@ -381,8 +381,7 @@ class SessionManagerTest {
         assertEquals(listOf("alpine"), manager.ending.value)
         assertEquals(listOf("alpine", "ubuntu"), manager.running.value)
         ptys.getValue("alpine").exit(0)
-        eventually { manager.running.value == listOf("ubuntu") }
-        assertTrue(manager.ending.value.isEmpty())
+        eventually { manager.running.value == listOf("ubuntu") && manager.ending.value.isEmpty() }
         ptys.getValue("ubuntu").exit(0)
     }
 
@@ -395,8 +394,7 @@ class SessionManagerTest {
         manager.endAll()
         assertEquals(listOf("alpine", "ubuntu"), manager.ending.value)
         ptys.values.forEach { it.exit(0) }
-        eventually { manager.running.value.isEmpty() }
-        assertTrue(manager.ending.value.isEmpty())
+        eventually { manager.running.value.isEmpty() && manager.ending.value.isEmpty() }
     }
 
     @Test
