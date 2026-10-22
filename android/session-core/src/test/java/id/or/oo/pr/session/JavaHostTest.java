@@ -9,7 +9,9 @@ import java.nio.file.Files;
 import java.util.Collections;
 import java.util.List;
 import kotlin.Unit;
+import kotlin.io.FilesKt;
 import kotlin.jvm.functions.Function3;
+import org.junit.After;
 import org.junit.Test;
 
 public class JavaHostTest {
@@ -52,6 +54,11 @@ public class JavaHostTest {
         } catch (java.io.IOException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @After
+    public void tearDown() {
+        FilesKt.deleteRecursively(root);
     }
 
     @Test
