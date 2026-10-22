@@ -50,18 +50,18 @@ class ProotPty(
 
 private val END_SIGNALS = listOf(15, 18)
 
-fun parentPid(stat: String): Int? {
+internal fun parentPid(stat: String): Int? {
     val afterName = stat.substringAfterLast(')', missingDelimiterValue = "").trim()
     return afterName.split(' ').getOrNull(1)?.toIntOrNull()
 }
 
-fun processState(stat: String): Char? =
+internal fun processState(stat: String): Char? =
     stat.substringAfterLast(')', missingDelimiterValue = "").trim().split(' ').firstOrNull()?.singleOrNull()
 
-fun tracerPid(status: String): Int? =
+internal fun tracerPid(status: String): Int? =
     status.lineSequence().firstOrNull { it.startsWith("TracerPid:") }?.substringAfter(':')?.trim()?.toIntOrNull()
 
-fun traceesOf(tracer: Int, statuses: Map<Int, String?>, exclude: Set<Int>): Set<Int>? {
+internal fun traceesOf(tracer: Int, statuses: Map<Int, String?>, exclude: Set<Int>): Set<Int>? {
     val tracees = LinkedHashSet<Int>()
     for ((pid, status) in statuses) {
         val tracedBy = status?.let(::tracerPid) ?: return null
@@ -70,7 +70,7 @@ fun traceesOf(tracer: Int, statuses: Map<Int, String?>, exclude: Set<Int>): Set<
     return tracees
 }
 
-fun forceKillTargets(proot: Int, statuses: Map<Int, String?>, walk: () -> List<Int>): List<Int> {
+internal fun forceKillTargets(proot: Int, statuses: Map<Int, String?>, walk: () -> List<Int>): List<Int> {
     val tracees = traceesOf(proot, statuses, exclude = setOf(proot)) ?: walk()
     return tracees.filter { it != proot }.distinct() + proot
 }

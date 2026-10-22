@@ -73,7 +73,7 @@ object SessionNotifications {
     )
 }
 
-fun runningTitle(aliases: List<String>): String = when (aliases.size) {
+internal fun runningTitle(aliases: List<String>): String = when (aliases.size) {
     0 -> "Stopping…"
     1 -> "1 session running"
     else -> "${aliases.size} sessions running"
