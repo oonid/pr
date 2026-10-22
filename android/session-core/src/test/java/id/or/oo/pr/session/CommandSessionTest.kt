@@ -238,6 +238,22 @@ class CommandSessionTest {
     }
 
     @Test
+    fun aRetainedEndedTerminalKeepsItsKeyFromACommandSession() {
+        val terminal = (sessions.open(container) as SessionManager.OpenResult.Opened).session
+        val screen = ManagedSession.Screen {}
+        sessions.attach(terminal, screen)
+        sessions.detach(terminal, screen, retainEnded = true)
+        ptys.single().exit(0)
+        eventually { terminal.exit.value != null }
+
+        val result = sessions.open(container, factory())
+
+        assertEquals(SessionManager.OpenResult.Failed("debian is already open as another kind of session"), result)
+        assertTrue(started.isEmpty())
+        assertEquals(1, ptys.size)
+    }
+
+    @Test
     fun aRunningKeyIsReturnedToAnotherFactoryOfTheSameKind() {
         val first = openCommand()
 
