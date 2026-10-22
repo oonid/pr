@@ -147,7 +147,7 @@ class ManagedSession(
         const val KILL_EXIT_WAIT_MS = 500L
         private const val POLL_MS = 50L
         internal const val SCAN_MARGIN_MS = 1_000L
-        private const val TIMEOUT_HEADROOM_MS = 2_500L
+        internal const val TIMEOUT_HEADROOM_MS = 2_500L
 
         fun endWorstCaseMs(
             signalWaitMs: Long = SIGNAL_WAIT_MS,
@@ -156,6 +156,8 @@ class ManagedSession(
             killExitWaitMs: Long = KILL_EXIT_WAIT_MS,
         ): Long = signalWaitMs + endGraceMs + endGraceMs + exitCodeWaitMs + killExitWaitMs + SCAN_MARGIN_MS
 
-        val END_TIMEOUT_MS: Long = endWorstCaseMs() + TIMEOUT_HEADROOM_MS
+        fun endTimeoutMs(signalWaitMs: Long = SIGNAL_WAIT_MS): Long = endWorstCaseMs(signalWaitMs) + TIMEOUT_HEADROOM_MS
+
+        val END_TIMEOUT_MS: Long = endTimeoutMs()
     }
 }
