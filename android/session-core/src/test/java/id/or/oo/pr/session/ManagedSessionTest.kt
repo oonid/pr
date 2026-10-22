@@ -306,4 +306,18 @@ class ManagedSessionTest {
         assertEquals(0, pty.resizesAfterClose)
         assertEquals(0, pty.eofCount)
     }
+
+    @Test
+    fun theDefaultEndTimeoutIsTheEndTimeoutOfTheDefaultSignalWait() {
+        assertEquals(ManagedSession.END_TIMEOUT_MS, ManagedSession.endTimeoutMs())
+        assertEquals(ManagedSession.END_TIMEOUT_MS, ManagedSession.endTimeoutMs(ManagedSession.SIGNAL_WAIT_MS))
+    }
+
+    @Test
+    fun theEndTimeoutAddsTheHeadroomToTheWorstCaseOfItsSignalWait() {
+        assertEquals(
+            ManagedSession.endWorstCaseMs(65_000) + ManagedSession.TIMEOUT_HEADROOM_MS,
+            ManagedSession.endTimeoutMs(65_000),
+        )
+    }
 }
