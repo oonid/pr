@@ -15,7 +15,7 @@ class CommandSessionFactory internal constructor(
     private val startSession: (List<String>) -> ProotLauncher.Session?,
     private val processes: ProotProcesses = ProotProcesses(),
     private val pty: (ProotLauncher.Session, ProotProcesses) -> Pty = ::commandPty,
-    private val signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
+    internal val signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
 ) : SessionManager.SessionFactory {
 
     @JvmOverloads
