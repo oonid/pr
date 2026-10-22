@@ -14,6 +14,7 @@ class CommandSessionFactory internal constructor(
     private val startSession: (List<String>) -> ProotLauncher.Session?,
     private val processes: ProotProcesses = ProotProcesses(),
     private val pty: (ProotLauncher.Session, ProotProcesses) -> Pty = ::commandPty,
+    private val signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
 ) : SessionManager.SessionFactory {
 
     constructor(
@@ -22,14 +23,23 @@ class CommandSessionFactory internal constructor(
         command: String,
         sink: (ByteArray, Int, Int) -> Unit,
         binds: List<Bind> = emptyList(),
-    ) : this(host, container, command, sink, binds, ProotLauncher(host)::startCustomSession)
+        signalWaitMs: Long = ManagedSession.SIGNAL_WAIT_MS,
+    ) : this(host, container, command, sink, binds, ProotLauncher(host)::startCustomSession, signalWaitMs = signalWaitMs)
 
     init {
         require(command.isNotBlank()) { "command must not be blank" }
+        require(signalWaitMs > 0) { "signalWaitMs must be positive: $signalWaitMs" }
     }
 
     override fun create(alias: String, onEnded: (ManagedSession) -> Unit): ManagedSession =
-        ManagedSession(alias = alias, pty = startPty(alias), emulator = null, output = isolated(alias), onEnded = onEnded)
+        ManagedSession(
+            alias = alias,
+            pty = startPty(alias),
+            emulator = null,
+            output = isolated(alias),
+            onEnded = onEnded,
+            signalWaitMs = signalWaitMs,
+        )
 
     internal fun startPty(alias: String): Pty {
         val prCli = File(host.prefixDir, "bin/pr-cli")
