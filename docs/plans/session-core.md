@@ -2129,7 +2129,7 @@ CI runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitT
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-**143 tests in `:session-core`**: session lifetime (`SessionManager`, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`), End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **29 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
+**147 tests in `:session-core`**: session lifetime (`SessionManager`, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`), End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **29 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
 ~~~
 
 Before:
@@ -2181,7 +2181,7 @@ CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testD
 
 ```bash
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
-# session-core, 143 tests: sessions, command sessions, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# session-core, 147 tests: sessions, command sessions, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
 # app, 29 tests: DistroOperations, InstalledContainers
 ```
 ~~~
@@ -2214,7 +2214,7 @@ Expected: no output. (The historical plans `docs/plans/background-sessions*.md` 
 cd android && ./gradlew :app:testDebugUnitTest :session-core:testDebugUnitTest assembleDebug
 ```
 
-Expected: `BUILD SUCCESSFUL`; 29 + 143 = 172 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; 29 + 147 = 176 tests, 0 failures.
 
 - [ ] **Step 10: Commit**
 
