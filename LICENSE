@@ -7,11 +7,9 @@ Component License Map
 ---------------------
 
   src/proot/                    GPL-2.0-or-later  (derivative of proot/termux-proot)
-  src/scripts/plugins/          GPL-3.0-or-later  (derivative of termux-proot-distro)
-  src/pr-cli/                   MIT
+  src/pr-cli/                   GPL-3.0-or-later  (derivative of termux-proot-distro)
   src/proot-integration-test/   MIT
   android/                      MIT
-  src/scripts/bootstrap.sh      MIT
   scripts/                      MIT
   docs/                         MIT
 
@@ -20,12 +18,29 @@ Vendor submodules (READ ONLY, not modified):
   vendor/termux-proot/          GPL-2.0
   vendor/termux-proot-distro/   GPL-3.0
   vendor/busybox/               GPL-2.0
-  vendor/samba/                 GPL-3.0
+  vendor/samba/                 GPL-3.0 (talloc, the only part used: LGPL-3.0-or-later)
   vendor/musl/                  MIT
   vendor/bionic/                BSD (AOSP)
   vendor/termlib/               Apache-2.0
 
 Full license texts are in the vendor subdirectories.
+
+Prebuilt binaries in android/proot-engine/src/main/jniLibs/
+--------------------------------------------------------------
+
+  libproot.so                       built from src/proot/ with talloc from
+                                    vendor/samba; GPL-2.0-or-later, and
+                                    GPL-3.0 as a whole because talloc is
+                                    LGPL-3.0-or-later
+  libproot-loader.so                built from src/proot/src/loader/;
+                                    GPL-2.0-or-later
+  libpr-cli.so                      built from src/pr-cli/; GPL-3.0-or-later
+  libbusybox.so                     Alpine Linux busybox-static 1.37.0-r14
+                                    (scripts/download-busybox.sh);
+                                    GPL-2.0-only
+
+The Android code runs these as separate programs, so it keeps its own
+license.
 
 GPL-2.0-or-later
 -----------------
@@ -38,8 +53,9 @@ Full text: vendor/proot/COPYING
 GPL-3.0-or-later
 -----------------
 
-This license applies to src/scripts/plugins/ (derivative work of termux-proot-distro
-by Termux contributors).
+This license applies to src/pr-cli/, a Rust port of termux-proot-distro by
+Termux contributors, including the plug-in files copied from it under
+src/pr-cli/tests/fixtures/plugins/.
 
 Full text: vendor/termux-proot-distro/LICENSE
 
