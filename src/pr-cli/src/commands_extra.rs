@@ -2,11 +2,12 @@ use std::ffi::CString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use libc;
 
+use crate::backup::{restore_backup, write_backup, BackupDirs};
 use crate::install_model::load_oci_install_metadata;
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
@@ -243,8 +244,6 @@ fn render_override_plugin(plugin: &DistroPlugin, alias: &str) -> String {
 }
 
 pub fn command_backup(distro_name: &str, output_path: Option<&str>) -> Result<(), String> {
-    let installed_rootfs_dir = get_installed_rootfs_dir();
-    let oci_containers_dir = get_oci_containers_dir();
     let plugins_dir = get_plugins_dir();
     let Some((rootfs, source_type)) = resolve_installed_rootfs(distro_name) else {
         println!();
@@ -285,91 +284,34 @@ pub fn command_backup(distro_name: &str, output_path: Option<&str>) -> Result<()
     msg_status("Fixing file permissions in rootfs...");
     chmod_readable_recursive(Path::new(&rootfs));
 
-    let busybox = get_native_busybox();
-    let status = if source_type == InstalledSourceType::Legacy {
-        let plugin_file =
-            if Path::new(&format!("{}/{}.override.sh", plugins_dir, distro_name)).exists() {
-                Some(format!("{}.override.sh", distro_name))
-            } else if Path::new(&format!("{}/{}.sh", plugins_dir, distro_name)).exists() {
-                Some(format!("{}.sh", distro_name))
-            } else {
-                None
-            };
-        msg_status("Archiving the rootfs and plug-in...");
-        let parent_rootfs = Path::new(&installed_rootfs_dir)
-            .parent()
-            .unwrap_or(Path::new("/"))
-            .to_string_lossy()
-            .to_string();
-        let rootfs_basename = Path::new(&installed_rootfs_dir)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let parent_plugins = Path::new(&plugins_dir)
-            .parent()
-            .unwrap_or(Path::new("/"))
-            .to_string_lossy()
-            .to_string();
-        let plugins_basename = Path::new(&plugins_dir)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let mut args = vec![
-            "tar".to_string(),
-            "-c".to_string(),
-            "--auto-compress".to_string(),
-            "--warning=no-file-ignored".to_string(),
-            "-f".to_string(),
-            output.clone(),
-        ];
-        if let Some(plugin_file) = plugin_file {
-            args.push("-C".to_string());
-            args.push(parent_plugins.clone());
-            args.push(format!("{}/{}", plugins_basename, plugin_file));
+    let mut members: Vec<(PathBuf, PathBuf)> = Vec::new();
+    if source_type == InstalledSourceType::Legacy {
+        for plugin_file in [
+            format!("{}.override.sh", distro_name),
+            format!("{}.sh", distro_name),
+        ] {
+            let source = Path::new(&plugins_dir).join(&plugin_file);
+            if source.is_file() {
+                members.push((Path::new("pr").join(&plugin_file), source));
+                break;
+            }
         }
-        args.push("-C".to_string());
-        args.push(parent_rootfs.clone());
-        args.push(format!("{}/{}", rootfs_basename, distro_name));
-        Command::new(&busybox)
-            .arg0("busybox")
-            .args(&args)
-            .status()
-            .map_err(|e| format!("exec tar: {}", e))?
+        msg_status("Archiving the rootfs and plug-in...");
+        members.push((
+            Path::new("installed-rootfs").join(distro_name),
+            PathBuf::from(&rootfs),
+        ));
     } else {
         msg_status("Archiving the OCI container directory...");
-        let parent_containers = Path::new(&oci_containers_dir)
-            .parent()
-            .unwrap_or(Path::new("/"))
-            .to_string_lossy()
-            .to_string();
-        let containers_basename = Path::new(&oci_containers_dir)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        Command::new(&busybox)
-            .arg0("busybox")
-            .arg("tar")
-            .args([
-                "-c",
-                "--auto-compress",
-                "--warning=no-file-ignored",
-                "-f",
-                &output,
-                "-C",
-                &parent_containers,
-                &format!("{}/{}", containers_basename, distro_name),
-            ])
-            .status()
-            .map_err(|e| format!("exec tar: {}", e))?
-    };
+        members.push((
+            Path::new("containers").join(distro_name),
+            PathBuf::from(get_oci_container_dir(distro_name)),
+        ));
+    }
 
-    if !status.success() {
-        let _ = fs::remove_file(&output);
+    if let Err(e) = write_backup(Path::new(&output), &members) {
         msg_error("Backup failed.");
-        return Err("tar failed".to_string());
+        return Err(e);
     }
 
     msg_status("Finished.");
@@ -390,109 +332,22 @@ pub fn command_restore(tarball_path: &str) -> Result<(), String> {
         return Err("path is directory".to_string());
     }
 
-    let busybox = get_native_busybox();
-    let list_output = Command::new(&busybox)
-        .arg0("busybox")
-        .arg("tar")
-        .args(["-tf", tarball_path])
-        .output()
-        .map_err(|e| format!("list tarball: {}", e))?;
-    if !list_output.status.success() {
-        return Err("unable to inspect tarball".to_string());
-    }
-    let listing = String::from_utf8_lossy(&list_output.stdout);
-    let contains_oci = listing.lines().any(|line| line.starts_with("containers/"));
-
-    if contains_oci {
-        fs::create_dir_all(&oci_containers_dir)
-            .map_err(|e| format!("create containers dir: {}", e))?;
-        msg_status("Extracting OCI container data from the tarball...");
-    } else {
-        fs::create_dir_all(&installed_rootfs_dir)
-            .map_err(|e| format!("create installed-rootfs dir: {}", e))?;
-        fs::create_dir_all(&plugins_dir).map_err(|e| format!("create plugins dir: {}", e))?;
-        msg_status("Extracting distribution plug-in and rootfs from the tarball...");
-    }
-    let parent_rootfs = Path::new(&installed_rootfs_dir)
-        .parent()
-        .unwrap_or(Path::new("/"))
-        .to_string_lossy()
-        .to_string();
-    let rootfs_basename = Path::new(&installed_rootfs_dir)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    let parent_plugins = Path::new(&plugins_dir)
-        .parent()
-        .unwrap_or(Path::new("/"))
-        .to_string_lossy()
-        .to_string();
-    let plugins_basename = Path::new(&plugins_dir)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let contains_plugin_entries = listing
-        .lines()
-        .any(|line| line.starts_with("pr/") || line.starts_with("proot-distro/"));
-
-    let status = if contains_oci {
-        let parent_containers = Path::new(&oci_containers_dir)
-            .parent()
-            .unwrap_or(Path::new("/"))
-            .to_string_lossy()
-            .to_string();
-        let containers_basename = Path::new(&oci_containers_dir)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        Command::new(&busybox)
-            .arg0("busybox")
-            .arg("tar")
-            .args([
-                "-x",
-                "--auto-compress",
-                "--recursive-unlink",
-                "--preserve-permissions",
-                "-f",
-                tarball_path,
-                "-C",
-                &parent_containers,
-                &format!("{}/", containers_basename),
-            ])
-            .status()
-            .map_err(|e| format!("exec tar: {}", e))?
-    } else {
-        let mut args = vec![
-            "tar".to_string(),
-            "-x".to_string(),
-            "--auto-compress".to_string(),
-            "--recursive-unlink".to_string(),
-            "--preserve-permissions".to_string(),
-            "-f".to_string(),
-            tarball_path.to_string(),
-        ];
-        if contains_plugin_entries {
-            args.push("-C".to_string());
-            args.push(parent_plugins.clone());
-            args.push(format!("{}/", plugins_basename));
-        }
-        args.push("-C".to_string());
-        args.push(parent_rootfs.clone());
-        args.push(format!("{}/", rootfs_basename));
-        Command::new(&busybox)
-            .arg0("busybox")
-            .args(&args)
-            .status()
-            .map_err(|e| format!("exec tar: {}", e))?
+    msg_status("Restoring containers from the tarball...");
+    let dirs = BackupDirs {
+        plugins: PathBuf::from(&plugins_dir),
+        legacy: PathBuf::from(&installed_rootfs_dir),
+        containers: PathBuf::from(&oci_containers_dir),
     };
-
-    if !status.success() {
-        msg_error("Restore failed.");
-        return Err("tar extract failed".to_string());
+    match restore_backup(Path::new(tarball_path), &dirs) {
+        Ok(restored) => {
+            for name in restored {
+                msg_status(&format!("Restored '{}'.", name));
+            }
+        }
+        Err(e) => {
+            msg_error("Restore failed.");
+            return Err(e);
+        }
     }
 
     msg_status("Finished.");
@@ -1028,17 +883,228 @@ mod tests {
     }
 
     #[test]
-    fn command_restore_reports_uninspectable_tarball_without_busybox() {
+    fn command_restore_reports_a_file_that_is_not_a_backup() {
         let tmp_dir = unique_temp_dir("pr-cli-commands-extra-restore-uninspectable");
         fs::create_dir_all(&tmp_dir).expect("create tmp dir");
         let tarball = tmp_dir.join("backup.tar.xz");
         fs::write(&tarball, b"not-a-real-tarball").expect("write file");
 
         let err = command_restore(tarball.to_str().expect("tarball path"))
-            .expect_err("restore should fail to inspect tarball");
-        assert!(err.contains("list tarball"));
+            .expect_err("restore should fail to read the tarball");
+        assert!(err.contains("backup"), "{}", err);
 
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    struct TestPrefix {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        base: PathBuf,
+        prefix: PathBuf,
+    }
+
+    impl TestPrefix {
+        fn new(label: &str) -> Self {
+            let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+            let base = unique_temp_dir(label);
+            let prefix = base.join("usr");
+            fs::create_dir_all(prefix.join("etc/pr")).expect("create plugins dir");
+            std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+            TestPrefix {
+                _guard: guard,
+                base,
+                prefix,
+            }
+        }
+
+        fn containers(&self) -> PathBuf {
+            self.prefix.join("var/lib/pr/containers")
+        }
+
+        fn legacy(&self) -> PathBuf {
+            self.prefix.join("var/lib/pr/installed-rootfs")
+        }
+    }
+
+    impl Drop for TestPrefix {
+        fn drop(&mut self) {
+            std::env::remove_var("APP_PREFIX");
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    fn seed_rootfs(rootfs: &Path) {
+        fs::create_dir_all(rootfs.join("bin")).expect("create bin");
+        fs::create_dir_all(rootfs.join("usr/lib")).expect("create usr/lib");
+        fs::write(rootfs.join("bin/sh"), b"\x7fELFsh").expect("write sh");
+        fs::set_permissions(rootfs.join("bin/sh"), fs::Permissions::from_mode(0o755))
+            .expect("chmod sh");
+        fs::write(rootfs.join("usr/lib/os-release"), b"ID=test\n").expect("write os-release");
+        std::os::unix::fs::symlink("usr/lib", rootfs.join("lib")).expect("symlink lib");
+    }
+
+    fn assert_rootfs(rootfs: &Path) {
+        assert_eq!(
+            fs::read(rootfs.join("bin/sh")).expect("read sh"),
+            b"\x7fELFsh"
+        );
+        assert_eq!(mode_of(&rootfs.join("bin/sh")), 0o755);
+        assert_eq!(
+            fs::read_link(rootfs.join("lib")).expect("read link"),
+            Path::new("usr/lib")
+        );
+        assert_eq!(
+            fs::read(rootfs.join("lib/os-release")).expect("read through link"),
+            b"ID=test\n"
+        );
+    }
+
+    #[test]
+    fn backup_then_restore_round_trips_an_oci_container() {
+        let env = TestPrefix::new("pr-cli-backup-oci");
+        let container = env.containers().join("box");
+        seed_rootfs(&container.join("rootfs"));
+        fs::write(container.join("manifest.json"), b"{}").expect("write manifest");
+        let output = env.base.join("box.tar.gz");
+
+        command_backup("box", Some(output.to_str().unwrap())).expect("backup");
+        assert_eq!(&fs::read(&output).expect("read backup")[..2], &[0x1f, 0x8b]);
+        force_remove_dir_all(&container);
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_rootfs(&container.join("rootfs"));
+        assert_eq!(fs::read(container.join("manifest.json")).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn backup_then_restore_round_trips_a_legacy_container_with_its_plugin() {
+        let env = TestPrefix::new("pr-cli-backup-legacy");
+        seed_rootfs(&env.legacy().join("old"));
+        fs::write(env.prefix.join("etc/pr/old.sh"), b"DISTRO_NAME=\"Old\"\n").expect("plugin");
+        let output = env.base.join("old.tar.xz");
+
+        command_backup("old", Some(output.to_str().unwrap())).expect("backup");
+        assert_eq!(
+            &fs::read(&output).expect("read backup")[..6],
+            b"\xfd7zXZ\x00"
+        );
+        force_remove_dir_all(&env.legacy().join("old"));
+        fs::remove_file(env.prefix.join("etc/pr/old.sh")).expect("remove plugin");
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_rootfs(&env.legacy().join("old"));
+        assert_eq!(
+            fs::read(env.prefix.join("etc/pr/old.sh")).unwrap(),
+            b"DISTRO_NAME=\"Old\"\n"
+        );
+    }
+
+    fn write_gz_backup(path: &Path, entries: &[(&str, Option<&[u8]>)]) {
+        let file = fs::File::create(path).expect("create backup");
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, content) in entries {
+            let mut header = tar::Header::new_gnu();
+            let gnu = header.as_gnu_mut().expect("gnu header");
+            gnu.name[..name.len()].copy_from_slice(name.as_bytes());
+            match content {
+                Some(data) => {
+                    header.set_entry_type(tar::EntryType::Regular);
+                    header.set_mode(0o644);
+                    header.set_size(data.len() as u64);
+                    header.set_cksum();
+                    builder.append(&header, *data).expect("append file");
+                }
+                None => {
+                    header.set_entry_type(tar::EntryType::Directory);
+                    header.set_mode(0o755);
+                    header.set_size(0);
+                    header.set_cksum();
+                    builder
+                        .append(&header, std::io::empty())
+                        .expect("append dir");
+                }
+            }
+        }
+        builder
+            .into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish gz");
+    }
+
+    #[test]
+    fn restore_accepts_an_upstream_proot_distro_backup() {
+        let env = TestPrefix::new("pr-cli-restore-upstream");
+        let output = env.base.join("up.tar.gz");
+        write_gz_backup(
+            &output,
+            &[
+                ("proot-distro/up.sh", Some(b"DISTRO_NAME=\"Up\"\n")),
+                ("installed-rootfs/up/", None),
+                ("installed-rootfs/up/etc/", None),
+                ("installed-rootfs/up/etc/os-release", Some(b"ID=up\n")),
+            ],
+        );
+
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_eq!(
+            fs::read(env.legacy().join("up/etc/os-release")).unwrap(),
+            b"ID=up\n"
+        );
+        assert!(env.prefix.join("etc/pr/up.sh").is_file());
+    }
+
+    #[test]
+    fn restore_refuses_entries_outside_the_backup_layout() {
+        for bad in [
+            "etc/passwd",
+            "installed-rootfs/../escape",
+            "containers/a b/rootfs/x",
+            "pr/sub/x.sh",
+        ] {
+            let env = TestPrefix::new("pr-cli-restore-bad-entry");
+            let output = env.base.join("bad.tar.gz");
+            write_gz_backup(
+                &output,
+                &[("containers/ok/rootfs/f", Some(b"x")), (bad, Some(b"x"))],
+            );
+
+            assert!(
+                command_restore(output.to_str().unwrap()).is_err(),
+                "{} was accepted",
+                bad
+            );
+            assert!(!env.base.join("escape").exists());
+            assert!(!env.prefix.join("etc/passwd").exists());
+            assert!(!env.containers().join("ok").exists());
+        }
+    }
+
+    #[test]
+    fn restore_keeps_the_existing_container_when_the_backup_is_bad() {
+        let env = TestPrefix::new("pr-cli-restore-keeps-existing");
+        let existing = env.containers().join("box/rootfs");
+        fs::create_dir_all(&existing).expect("create existing");
+        fs::write(existing.join("keep"), b"data").expect("seed existing");
+        let output = env.base.join("bad.tar.gz");
+        write_gz_backup(
+            &output,
+            &[
+                ("containers/box/rootfs/new", Some(b"x")),
+                ("etc/passwd", Some(b"x")),
+            ],
+        );
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+
+        assert_eq!(fs::read(existing.join("keep")).unwrap(), b"data");
+        assert!(!existing.join("new").exists());
+        let leftovers: Vec<_> = fs::read_dir(env.containers())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("box")]);
     }
 
     #[test]
