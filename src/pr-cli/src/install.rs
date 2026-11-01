@@ -765,64 +765,74 @@ fn extract_tarball(
             continue;
         }
 
-        let dest_path = resolve_in_root(root, &relative, false)?;
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("create dir {}: {}", parent.display(), e))?;
-        }
-        let existing = fs::symlink_metadata(&dest_path).ok();
-        if let Some(meta) = &existing {
-            if !(entry_type.is_dir() && meta.is_dir()) {
-                if meta.is_dir() {
-                    fs::remove_dir_all(&dest_path)
-                } else {
-                    fs::remove_file(&dest_path)
-                }
-                .map_err(|e| format!("replace {}: {}", dest_path.display(), e))?;
-            }
-        }
-
-        if entry_type.is_dir() {
-            fs::create_dir_all(&dest_path)
-                .map_err(|e| format!("create dir {}: {}", dest_path.display(), e))?;
-            let mode = entry.header().mode().unwrap_or(0o755) | 0o700;
-            let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode));
-        } else if entry_type.is_symlink() {
-            let target = entry
-                .link_name()
-                .map_err(|e| format!("read symlink target: {}", e))?
-                .map(|t| t.into_owned())
-                .unwrap_or_default();
-            std::os::unix::fs::symlink(&target, &dest_path).map_err(|e| {
-                format!(
-                    "symlink {} -> {}: {}",
-                    dest_path.display(),
-                    target.display(),
-                    e
-                )
-            })?;
-        } else {
-            let mut out = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&dest_path)
-                .map_err(|e| format!("create {}: {}", dest_path.display(), e))?;
-            std::io::copy(&mut entry, &mut out)
-                .map_err(|e| format!("write {}: {}", dest_path.display(), e))?;
-            let mode = entry.header().mode().unwrap_or(0o644);
-            // Use fchmod on the open fd for reliable permission setting on Android.
-            // Strip setuid/setgid (0o6000) bits; Android blocks those for non-root.
-            let safe_mode = (mode & 0o1777) as libc::mode_t;
-            unsafe {
-                libc::fchmod(out.as_raw_fd(), safe_mode);
-            }
-        }
+        unpack_entry(root, &relative, &mut entry)?;
     }
 
     // Post-extraction: ensure ELF binaries have their execute bit set.
     // This is a safety net in case fchmod silently failed for some entries.
     fix_elf_execute_bits(dest);
 
+    Ok(())
+}
+
+pub(crate) fn unpack_entry<R: Read>(
+    root: &Path,
+    relative: &Path,
+    entry: &mut tar::Entry<R>,
+) -> Result<(), String> {
+    let entry_type = entry.header().entry_type();
+    let dest_path = resolve_in_root(root, relative, false)?;
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("create dir {}: {}", parent.display(), e))?;
+    }
+    let existing = fs::symlink_metadata(&dest_path).ok();
+    if let Some(meta) = &existing {
+        if !(entry_type.is_dir() && meta.is_dir()) {
+            if meta.is_dir() {
+                fs::remove_dir_all(&dest_path)
+            } else {
+                fs::remove_file(&dest_path)
+            }
+            .map_err(|e| format!("replace {}: {}", dest_path.display(), e))?;
+        }
+    }
+
+    if entry_type.is_dir() {
+        fs::create_dir_all(&dest_path)
+            .map_err(|e| format!("create dir {}: {}", dest_path.display(), e))?;
+        let mode = entry.header().mode().unwrap_or(0o755) | 0o700;
+        let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode));
+    } else if entry_type.is_symlink() {
+        let target = entry
+            .link_name()
+            .map_err(|e| format!("read symlink target: {}", e))?
+            .map(|t| t.into_owned())
+            .unwrap_or_default();
+        std::os::unix::fs::symlink(&target, &dest_path).map_err(|e| {
+            format!(
+                "symlink {} -> {}: {}",
+                dest_path.display(),
+                target.display(),
+                e
+            )
+        })?;
+    } else {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest_path)
+            .map_err(|e| format!("create {}: {}", dest_path.display(), e))?;
+        std::io::copy(entry, &mut out)
+            .map_err(|e| format!("write {}: {}", dest_path.display(), e))?;
+        let mode = entry.header().mode().unwrap_or(0o644);
+        // Use fchmod on the open fd for reliable permission setting on Android.
+        // Strip setuid/setgid (0o6000) bits; Android blocks those for non-root.
+        let safe_mode = (mode & 0o1777) as libc::mode_t;
+        unsafe {
+            libc::fchmod(out.as_raw_fd(), safe_mode);
+        }
+    }
     Ok(())
 }
 
