@@ -491,47 +491,11 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
         let mut progressed = false;
 
         for (relative_path, link_target) in pending_hardlinks {
-            let source = rootfs.join(&link_target);
-            if !source.exists() {
+            if !link_inside_root(rootfs, &relative_path, &link_target)? {
                 remaining.push((relative_path, link_target));
                 continue;
             }
-
-            let destination = rootfs.join(&relative_path);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("create hardlink parent {}: {}", parent.display(), e))?;
-            }
-            remove_path_if_exists(&destination)?;
-            if let Err(err) = fs::hard_link(&source, &destination) {
-                let fallback_allowed = matches!(
-                    err.kind(),
-                    std::io::ErrorKind::PermissionDenied
-                        | std::io::ErrorKind::CrossesDevices
-                        | std::io::ErrorKind::Unsupported
-                );
-                if !fallback_allowed {
-                    return Err(format!(
-                        "extract {}: create hardlink to {}: {}",
-                        relative_path.display(),
-                        link_target.display(),
-                        err
-                    ));
-                }
-
-                fs::copy(&source, &destination).map_err(|copy_err| {
-                    format!(
-                        "extract {}: copy fallback for hardlink {} failed: {}",
-                        relative_path.display(),
-                        link_target.display(),
-                        copy_err
-                    )
-                })?;
-                if let Ok(metadata) = fs::metadata(&source) {
-                    let _ = fs::set_permissions(&destination, metadata.permissions());
-                }
-            }
-            created_paths.insert(destination);
+            created_paths.insert(rootfs.join(&relative_path));
             progressed = true;
         }
 
@@ -549,7 +513,99 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
     Ok(())
 }
 
-fn sanitize_layer_path(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn link_inside_root(
+    rootfs: &Path,
+    relative_path: &Path,
+    link_target: &Path,
+) -> Result<bool, String> {
+    ensure_parent_inside_root(rootfs, link_target)
+        .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
+    let source = rootfs.join(link_target);
+    let Ok(source_metadata) = fs::symlink_metadata(&source) else {
+        return Ok(false);
+    };
+
+    ensure_parent_inside_root(rootfs, relative_path)
+        .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
+    let destination = rootfs.join(relative_path);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("create hardlink parent {}: {}", parent.display(), e))?;
+    }
+    remove_path_if_exists(&destination)?;
+    if source_metadata.file_type().is_symlink() {
+        let target = fs::read_link(&source)
+            .map_err(|e| format!("read symlink {}: {}", source.display(), e))?;
+        std::os::unix::fs::symlink(&target, &destination)
+            .map_err(|e| format!("extract {}: symlink: {}", relative_path.display(), e))?;
+        return Ok(true);
+    }
+    if let Err(err) = fs::hard_link(&source, &destination) {
+        let fallback_allowed = matches!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::CrossesDevices
+                | std::io::ErrorKind::Unsupported
+        );
+        if !fallback_allowed {
+            return Err(format!(
+                "extract {}: create hardlink to {}: {}",
+                relative_path.display(),
+                link_target.display(),
+                err
+            ));
+        }
+
+        fs::copy(&source, &destination).map_err(|copy_err| {
+            format!(
+                "extract {}: copy fallback for hardlink {} failed: {}",
+                relative_path.display(),
+                link_target.display(),
+                copy_err
+            )
+        })?;
+        let _ = fs::set_permissions(&destination, source_metadata.permissions());
+    }
+    Ok(true)
+}
+
+pub(crate) fn ensure_parent_inside_root(rootfs: &Path, relative: &Path) -> Result<(), String> {
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    let root = fs::canonicalize(rootfs)
+        .map_err(|e| format!("resolve rootfs {}: {}", rootfs.display(), e))?;
+    let mut current = rootfs.to_path_buf();
+    for component in parent.components() {
+        let Component::Normal(part) = component else {
+            return Err(format!("unsafe path {}", relative.display()));
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("stat {}: {}", current.display(), e)),
+        }
+        let resolved = fs::canonicalize(&current).map_err(|e| {
+            format!(
+                "{} leaves the rootfs: resolve {}: {}",
+                relative.display(),
+                current.display(),
+                e
+            )
+        })?;
+        if !resolved.starts_with(&root) {
+            return Err(format!(
+                "{} leaves the rootfs through {}",
+                relative.display(),
+                current.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn sanitize_layer_path(path: &Path) -> Result<PathBuf, String> {
     let mut cleaned = PathBuf::new();
     for component in path.components() {
         match component {
@@ -997,6 +1053,87 @@ mod tests {
         assert_eq!(target, hardlink);
 
         let _ = fs::remove_dir_all(tmp);
+    }
+
+    fn write_layer_tar_with_hardlink(path: &Path, link: &str, target: &str, target_file: bool) {
+        let file = fs::File::create(path).expect("create tar");
+        let mut builder = tar::Builder::new(file);
+        if target_file {
+            let content = b"payload";
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, target, &content[..])
+                .expect("append target");
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Link);
+        header.set_size(0);
+        header.set_cksum();
+        builder
+            .append_link(&mut header, link, target)
+            .expect("append hardlink");
+        builder.finish().expect("finish tar");
+    }
+
+    #[test]
+    fn hardlink_is_not_created_through_a_symlinked_parent() {
+        let tmp = unique_tmp_dir("oci-hardlink-symlink-destination");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::write(outside.join("victim"), b"victim").expect("seed victim");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("mkdir rootfs");
+        symlink(&outside, rootfs.join("etc")).expect("symlink etc");
+
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_hardlink(&layer, "etc/victim", "usr/bin/perl", true);
+
+        assert!(apply_layer_blob(&layer, &rootfs).is_err());
+        assert_eq!(
+            fs::read(outside.join("victim")).expect("read victim"),
+            b"victim"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn hardlink_source_is_not_taken_through_a_symlinked_parent() {
+        let tmp = unique_tmp_dir("oci-hardlink-symlink-source");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::write(outside.join("key"), b"secret").expect("seed key");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("mkdir rootfs");
+        symlink(&outside, rootfs.join("secret")).expect("symlink secret");
+
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_hardlink(&layer, "stolen", "secret/key", false);
+
+        assert!(apply_layer_blob(&layer, &rootfs).is_err());
+        assert!(fs::symlink_metadata(rootfs.join("stolen")).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn hardlink_through_a_symlink_that_stays_inside_the_rootfs_still_works() {
+        let tmp = unique_tmp_dir("oci-hardlink-inner-symlink");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(rootfs.join("usr/bin")).expect("mkdir usr/bin");
+        symlink("usr/bin", rootfs.join("bin")).expect("symlink bin");
+
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_hardlink(&layer, "bin/perl5", "usr/bin/perl", true);
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        assert_eq!(
+            fs::read(rootfs.join("usr/bin/perl5")).expect("read link"),
+            b"payload"
+        );
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
