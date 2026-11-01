@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
@@ -15,9 +15,9 @@ use crate::commands_extra::force_remove_dir_all;
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
     apply_layer_blob, blob_matches_digest, blob_path, blob_url, download_blob_with_bearer,
-    select_manifest_descriptor, OciDescriptor, OciManifest, OciPlatform,
-    DOCKER_MANIFEST_LIST_MEDIA_TYPE, DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE,
-    OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+    ensure_parent_inside_root, link_inside_root, sanitize_layer_path, select_manifest_descriptor,
+    OciDescriptor, OciManifest, OciPlatform, DOCKER_MANIFEST_LIST_MEDIA_TYPE,
+    DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MANIFEST_MEDIA_TYPE,
 };
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
@@ -711,17 +711,23 @@ fn populate_oci_container(
     write_oci_install_metadata(Path::new(&metadata_path), &metadata)
 }
 
+fn strip_archive_path(path: &Path, strip_components: usize) -> Result<Option<PathBuf>, String> {
+    let rest: PathBuf = path.components().skip(strip_components).collect();
+    let clean = sanitize_layer_path(&rest)?;
+    Ok((!clean.as_os_str().is_empty()).then_some(clean))
+}
+
 fn extract_tarball(
     archive_path: &str,
     dest: &str,
     strip_components: usize,
     exclude: &[&str],
 ) -> Result<(), String> {
+    let root = Path::new(dest);
+    fs::create_dir_all(root).map_err(|e| format!("create {}: {}", dest, e))?;
     let file = fs::File::open(archive_path).map_err(|e| format!("open archive: {}", e))?;
     let decompressor = xz2::read::XzDecoder::new(file);
     let mut archive = tar::Archive::new(decompressor);
-    archive.set_preserve_permissions(true);
-    archive.set_preserve_mtime(true);
 
     for entry in archive
         .entries()
@@ -729,85 +735,77 @@ fn extract_tarball(
     {
         let mut entry = entry.map_err(|e| format!("read tar entry: {}", e))?;
         let path = entry.path().map_err(|e| format!("get tar path: {}", e))?;
-        let path_str = path.to_string_lossy();
-
-        if exclude
-            .iter()
-            .any(|exc| path_str.starts_with(exc) || path_str.starts_with(&format!("./{}", exc)))
-        {
+        let Some(relative) = strip_archive_path(&path, strip_components)? else {
+            continue;
+        };
+        if exclude.iter().any(|exc| relative.starts_with(exc)) {
             continue;
         }
 
-        let stripped = if strip_components > 0 {
-            match path
-                .components()
-                .skip(strip_components)
-                .collect::<std::path::PathBuf>()
-                .as_path()
-                .to_str()
-            {
-                Some(s) if !s.is_empty() => s.to_string(),
-                _ => continue,
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_hard_link() {
+            let target = entry
+                .link_name()
+                .map_err(|e| format!("read hardlink target: {}", e))?
+                .ok_or_else(|| format!("hardlink {} has no target", relative.display()))?;
+            let Some(target) = strip_archive_path(&target, strip_components)? else {
+                continue;
+            };
+            if exclude.iter().any(|exc| target.starts_with(exc)) {
+                continue;
             }
-        } else {
-            path_str.to_string()
-        };
-
-        let dest_path = format!("{}/{}", dest, stripped);
-        let dest_path = std::path::Path::new(&dest_path);
-
-        if let Some(parent) = dest_path.parent() {
-            let _ = fs::create_dir_all(parent);
+            if !link_inside_root(root, &relative, &target)? {
+                return Err(format!(
+                    "extract {}: hardlink target missing {}",
+                    relative.display(),
+                    target.display()
+                ));
+            }
+            continue;
         }
 
-        let entry_type = entry.header().entry_type();
+        ensure_parent_inside_root(root, &relative)?;
+        let dest_path = root.join(&relative);
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create dir {}: {}", parent.display(), e))?;
+        }
+        let existing = fs::symlink_metadata(&dest_path).ok();
+        if let Some(meta) = &existing {
+            if !(entry_type.is_dir() && meta.is_dir()) {
+                if meta.is_dir() {
+                    fs::remove_dir_all(&dest_path)
+                } else {
+                    fs::remove_file(&dest_path)
+                }
+                .map_err(|e| format!("replace {}: {}", dest_path.display(), e))?;
+            }
+        }
+
         if entry_type.is_dir() {
-            fs::create_dir_all(dest_path)
+            fs::create_dir_all(&dest_path)
                 .map_err(|e| format!("create dir {}: {}", dest_path.display(), e))?;
             let mode = entry.header().mode().unwrap_or(0o755);
-            let _ = fs::set_permissions(dest_path, fs::Permissions::from_mode(mode));
+            let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode));
         } else if entry_type.is_symlink() {
             let target = entry
                 .link_name()
-                .map_err(|e| format!("read symlink target: {}", e))?;
-            let target = target
-                .map(|t| t.to_string_lossy().to_string())
+                .map_err(|e| format!("read symlink target: {}", e))?
+                .map(|t| t.into_owned())
                 .unwrap_or_default();
-            if dest_path.exists() {
-                let _ = fs::remove_file(dest_path);
-            }
-            std::os::unix::fs::symlink(&target, dest_path)
-                .map_err(|e| format!("symlink {} -> {}: {}", dest_path.display(), target, e))?;
-        } else if entry_type.is_hard_link() {
-            let target = entry
-                .link_name()
-                .map_err(|e| format!("read hardlink target: {}", e))?;
-            let target_str = target
-                .map(|t| t.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let link_target = if strip_components > 0 {
-                format!("{}/{}", dest, {
-                    let p = std::path::Path::new(&target_str);
-                    match p
-                        .components()
-                        .skip(strip_components)
-                        .collect::<std::path::PathBuf>()
-                        .as_path()
-                        .to_str()
-                    {
-                        Some(s) if !s.is_empty() => s.to_string(),
-                        _ => continue,
-                    }
-                })
-            } else {
-                format!("{}/{}", dest, target_str)
-            };
-            if dest_path.exists() {
-                let _ = fs::remove_file(dest_path);
-            }
-            let _ = fs::hard_link(&link_target, dest_path);
+            std::os::unix::fs::symlink(&target, &dest_path).map_err(|e| {
+                format!(
+                    "symlink {} -> {}: {}",
+                    dest_path.display(),
+                    target.display(),
+                    e
+                )
+            })?;
         } else {
-            let mut out = fs::File::create(dest_path)
+            let mut out = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&dest_path)
                 .map_err(|e| format!("create {}: {}", dest_path.display(), e))?;
             std::io::copy(&mut entry, &mut out)
                 .map_err(|e| format!("write {}: {}", dest_path.display(), e))?;
@@ -1583,6 +1581,145 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
+    }
+
+    enum RawEntry<'a> {
+        Dir(&'a str),
+        File(&'a str, &'a [u8], u32),
+        Symlink(&'a str, &'a str),
+        Hardlink(&'a str, &'a str),
+    }
+
+    fn write_raw_xz_tar(path: &Path, entries: &[RawEntry]) {
+        let file = fs::File::create(path).expect("create archive");
+        let encoder = xz2::write::XzEncoder::new(file, 1);
+        let mut builder = tar::Builder::new(encoder);
+        for entry in entries {
+            let mut header = tar::Header::new_gnu();
+            let (name, link, kind, data, mode): (&str, Option<&str>, _, &[u8], u32) = match entry {
+                RawEntry::Dir(n) => (n, None, tar::EntryType::Directory, &[], 0o755),
+                RawEntry::File(n, d, m) => (n, None, tar::EntryType::Regular, d, *m),
+                RawEntry::Symlink(n, t) => (n, Some(t), tar::EntryType::Symlink, &[], 0o777),
+                RawEntry::Hardlink(n, t) => (n, Some(t), tar::EntryType::Link, &[], 0o644),
+            };
+            let gnu = header.as_gnu_mut().expect("gnu header");
+            gnu.name[..name.len()].copy_from_slice(name.as_bytes());
+            if let Some(link) = link {
+                gnu.linkname[..link.len()].copy_from_slice(link.as_bytes());
+            }
+            header.set_entry_type(kind);
+            header.set_mode(mode);
+            header.set_size(data.len() as u64);
+            header.set_cksum();
+            builder.append(&header, data).expect("append entry");
+        }
+        builder
+            .into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish xz");
+    }
+
+    #[test]
+    fn extract_tarball_unpacks_a_rootfs_below_its_top_directory() {
+        let tmp = unique_temp_dir("pr-cli-extract-normal");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::Dir("top/"),
+                RawEntry::Dir("top/etc/"),
+                RawEntry::File("top/etc/os-release", b"ID=test\n", 0o644),
+                RawEntry::File("top/bin/sh", b"\x7fELFsh", 0o755),
+                RawEntry::Hardlink("top/bin/ash", "top/bin/sh"),
+                RawEntry::Symlink("top/sbin", "bin"),
+                RawEntry::File("top/dev/null", b"", 0o644),
+            ],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        extract_tarball(
+            archive.to_str().unwrap(),
+            rootfs.to_str().unwrap(),
+            1,
+            &["dev"],
+        )
+        .expect("extract");
+
+        assert_eq!(
+            fs::read(rootfs.join("etc/os-release")).unwrap(),
+            b"ID=test\n"
+        );
+        assert_eq!(fs::read(rootfs.join("bin/ash")).unwrap(), b"\x7fELFsh");
+        assert_eq!(
+            fs::read_link(rootfs.join("sbin")).unwrap(),
+            Path::new("bin")
+        );
+        let mode = fs::metadata(rootfs.join("bin/sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        assert!(!rootfs.join("dev").exists(), "dev/ is excluded");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_rejects_an_entry_that_climbs_out_of_the_rootfs() {
+        let tmp = unique_temp_dir("pr-cli-extract-dotdot");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(&archive, &[RawEntry::File("top/../escape", b"x", 0o644)]);
+        let rootfs = tmp.join("rootfs");
+
+        let result = extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[]);
+
+        assert!(result.is_err());
+        assert!(!tmp.join("escape").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_does_not_write_through_a_symlink_it_created() {
+        let tmp = unique_temp_dir("pr-cli-extract-symlink");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        let archive = tmp.join("rootfs.tar.xz");
+        let outside_str = outside.to_str().unwrap().to_string();
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::Symlink("top/foo", &outside_str),
+                RawEntry::File("top/foo/planted", b"x", 0o644),
+            ],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        let result = extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[]);
+
+        assert!(result.is_err());
+        assert!(!outside.join("planted").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_rejects_a_hardlink_to_a_file_outside_the_rootfs() {
+        let tmp = unique_temp_dir("pr-cli-extract-hardlink");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        fs::write(tmp.join("secret"), b"secret").expect("seed secret");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(
+            &archive,
+            &[RawEntry::Hardlink("top/stolen", "top/../secret")],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        let result = extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[]);
+
+        assert!(result.is_err());
+        assert!(!rootfs.join("stolen").exists());
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
