@@ -11,8 +11,8 @@ use crate::install_model::load_oci_install_metadata;
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
     get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_oci_container_dir,
-    get_oci_container_manifest_path, get_oci_containers_dir, get_plugins_dir, msg_error,
-    msg_status, resolve_installed_rootfs, InstalledSourceType,
+    get_oci_container_manifest_path, get_oci_containers_dir, get_plugins_dir,
+    is_valid_container_name, msg_error, msg_status, resolve_installed_rootfs, InstalledSourceType,
 };
 
 /// Remove a directory tree, handling 0000-permission proot bind-mount stubs.
@@ -512,11 +512,7 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
         msg_error("the new alias of distribution should not be empty.");
         return Err("empty alias".to_string());
     }
-    if !new_alias
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric())
-    {
+    if !is_valid_container_name(new_alias) {
         msg_error(
             "the new alias should start with an alphanumeric character and consist of alphanumeric characters including symbols '_.+-'.",
         );
@@ -814,6 +810,18 @@ mod tests {
     fn command_rename_rejects_same_alias() {
         let err = command_rename("debian", "debian").expect_err("must reject same alias");
         assert_eq!(err, "same alias");
+    }
+
+    #[test]
+    fn command_rename_rejects_a_new_alias_that_is_a_path() {
+        for alias in ["a/../../x", "a/b", "a..b", "a b", "a\\b"] {
+            assert_eq!(
+                command_rename("debian", alias).expect_err("path alias must fail"),
+                "invalid alias",
+                "{}",
+                alias
+            );
+        }
     }
 
     #[test]
