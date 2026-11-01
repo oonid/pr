@@ -473,6 +473,7 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
             continue;
         }
 
+        let is_dir = entry.header().entry_type().is_dir();
         let within_root = entry
             .unpack_in(rootfs)
             .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
@@ -481,6 +482,9 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
                 "extract blocked outside rootfs: {}",
                 relative_path.display()
             ));
+        }
+        if is_dir {
+            keep_dir_writable(&rootfs.join(&relative_path))?;
         }
 
         created_paths.insert(rootfs.join(&relative_path));
@@ -565,6 +569,17 @@ pub(crate) fn link_inside_root(
         let _ = fs::set_permissions(&destination, source_metadata.permissions());
     }
     Ok(true)
+}
+
+pub(crate) fn keep_dir_writable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::symlink_metadata(path).map_err(|e| format!("stat {}: {}", path.display(), e))?;
+    let mode = meta.permissions().mode();
+    if meta.is_dir() && mode & 0o700 != 0o700 {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700))
+            .map_err(|e| format!("chmod {}: {}", path.display(), e))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_in_root(
@@ -1090,6 +1105,59 @@ mod tests {
             .append_link(&mut header, link, target)
             .expect("append hardlink");
         builder.finish().expect("finish tar");
+    }
+
+    fn write_layer_tar_with_read_only_dir(path: &Path, dir: &str, file: Option<&str>) {
+        let out = fs::File::create(path).expect("create tar");
+        let mut builder = tar::Builder::new(out);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_mode(0o555);
+        header.set_size(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, dir, std::io::empty())
+            .expect("append dir");
+        if let Some(file) = file {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(2);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, file, &b"ok"[..])
+                .expect("append file");
+        }
+        builder.finish().expect("finish tar");
+    }
+
+    #[test]
+    fn layer_writes_into_a_read_only_directory_it_creates() {
+        let tmp = unique_tmp_dir("oci-read-only-dir");
+        let rootfs = tmp.join("rootfs");
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_read_only_dir(&layer, "etc/ro/", Some("etc/ro/f"));
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+
+        assert_eq!(fs::read(rootfs.join("etc/ro/f")).expect("read"), b"ok");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn later_layer_writes_into_a_read_only_directory_of_an_earlier_one() {
+        let tmp = unique_tmp_dir("oci-read-only-dir-two-layers");
+        let rootfs = tmp.join("rootfs");
+        let first = tmp.join("first.tar");
+        let second = tmp.join("second.tar");
+        write_layer_tar_with_read_only_dir(&first, "etc/ro/", None);
+        write_layer_tar(&second, &[("etc/ro/f", Some(b"ok"))]);
+
+        apply_layer_blob(&first, &rootfs).expect("apply first layer");
+        apply_layer_blob(&second, &rootfs).expect("apply second layer");
+
+        assert_eq!(fs::read(rootfs.join("etc/ro/f")).expect("read"), b"ok");
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
