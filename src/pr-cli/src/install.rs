@@ -1370,6 +1370,26 @@ fn render_override_plugin(plugin: &DistroPlugin, alias: &str) -> String {
     lines.join("\n") + "\n"
 }
 
+fn plugins_for_install(
+    plugins_dir: &str,
+    distro_name: &str,
+    tarball_override: bool,
+) -> Vec<DistroPlugin> {
+    let mut plugins = load_plugins(Path::new(plugins_dir));
+    if tarball_override && !plugins.iter().any(|p| p.alias == distro_name) {
+        if let Some(entry) = crate::catalog::catalog_entry(distro_name) {
+            plugins.push(DistroPlugin {
+                alias: entry.alias.to_string(),
+                name: entry.name.to_string(),
+                comment: None,
+                tarballs: std::collections::HashMap::new(),
+                has_setup: false,
+            });
+        }
+    }
+    plugins
+}
+
 fn oci_install_reference(
     distro_name: &str,
     plugins: &[DistroPlugin],
@@ -1393,9 +1413,11 @@ pub fn command_install(
 ) -> Result<(), String> {
     let requested_distro = distro_name.to_string();
     let plugins_dir = get_plugins_dir();
-    if let Some((reference, default_alias)) =
-        oci_install_reference(distro_name, &load_plugins(Path::new(&plugins_dir)))
-    {
+    let tarball_override = override_tarball_url.is_some();
+    if let Some((reference, default_alias)) = oci_install_reference(
+        distro_name,
+        &plugins_for_install(&plugins_dir, distro_name, tarball_override),
+    ) {
         if override_tarball_url.is_some() || override_tarball_sha256.is_some() {
             return Err(
                 "--override-tarball-url and --override-tarball-sha256 are not supported for OCI image installs"
@@ -1423,7 +1445,8 @@ pub fn command_install(
         validate_alias_format(alias)?;
 
         let override_alt = format!("{}/{}.override.sh", plugins_dir, alias);
-        let plugins = load_plugins(Path::new(&plugins_dir));
+        let plugins =
+            plugins_for_install(&plugins_dir, requested_distro.as_str(), tarball_override);
         if plugins.iter().any(|p| p.alias == alias) || Path::new(&override_alt).exists() {
             return Err(format!(
                 "distribution with alias '{}' already exists",
@@ -1448,7 +1471,7 @@ pub fn command_install(
         distro_name.to_string()
     };
 
-    let plugins = load_plugins(Path::new(&plugins_dir));
+    let plugins = plugins_for_install(&plugins_dir, &distro_name, tarball_override);
     if !plugins.iter().any(|p| p.alias == distro_name) {
         println!();
         msg_error(&format!(
@@ -1510,18 +1533,23 @@ pub fn command_install(
 
     // Determine tarball URL and SHA256
     let arch = device_arch.as_str();
-    let Some(tarball) = plugin.tarballs.get(arch) else {
+    let tarball = plugin.tarballs.get(arch);
+    if tarball.is_none() && override_tarball_url.is_none() {
         cleanup_on_failure(&rootfs, &distro_name);
         return Err(format!(
             "distribution download URL is not defined for CPU architecture '{}'",
             arch
         ));
-    };
+    }
 
-    let tarball_url = override_tarball_url.unwrap_or(&tarball.url).to_string();
+    let tarball_url = override_tarball_url
+        .map(str::to_string)
+        .or_else(|| tarball.map(|t| t.url.clone()))
+        .unwrap_or_default();
     let tarball_sha256 = override_tarball_sha256
-        .unwrap_or(&tarball.sha256)
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| tarball.map(|t| t.sha256.clone()))
+        .unwrap_or_default();
 
     if tarball_url.is_empty() {
         msg_error(&format!(
@@ -2410,6 +2438,35 @@ mod tests {
                 .join("var/lib/pr/installed-rootfs/testdistro")
                 .exists());
         });
+    }
+
+    #[test]
+    fn a_tarball_override_installs_a_catalog_name_from_the_tarball() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prefix = unique_temp_dir("pr-cli-install-catalog-tarball").join("usr");
+        let cache = prefix.join("var/lib/pr/dlcache");
+        fs::create_dir_all(&cache).expect("create cache");
+        fs::write(cache.join("broken.tar.xz"), b"not an archive").expect("seed archive");
+        std::env::set_var("APP_PREFIX", &prefix);
+        std::env::set_var("DISTRO_ARCH", "x86_64");
+
+        let result = command_install(
+            "debian",
+            None,
+            Some("https://example.invalid/broken.tar.xz"),
+            None,
+        );
+
+        std::env::remove_var("APP_PREFIX");
+        std::env::remove_var("DISTRO_ARCH");
+        let err = result.expect_err("the archive is broken");
+        assert!(!err.contains("not supported"), "{}", err);
+        assert!(
+            !cache.join("broken.tar.xz").exists(),
+            "extraction was not tried"
+        );
+        assert!(!prefix.join("var/lib/pr/installed-rootfs/debian").exists());
+        let _ = fs::remove_dir_all(prefix.parent().expect("base"));
     }
 
     #[test]

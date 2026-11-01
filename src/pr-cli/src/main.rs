@@ -211,9 +211,9 @@ fn command_list(verbose: bool) {
     let dir = get_plugins_dir();
     let plugins = load_plugins(&dir);
     let installed = collect_installed_entries();
-    let plugin_name_by_alias: BTreeMap<String, String> = plugins
-        .iter()
-        .map(|p| (p.alias.clone(), p.name.clone()))
+    let plugin_name_by_alias: BTreeMap<String, String> = supported_distributions(&plugins)
+        .into_iter()
+        .map(|(name, alias)| (alias, name))
         .collect();
 
     println!();
