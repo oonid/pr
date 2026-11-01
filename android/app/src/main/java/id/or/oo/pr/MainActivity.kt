@@ -65,10 +65,9 @@ private val OCI_IMAGE_SUGGESTIONS = listOf(
     OciImageSuggestion("Debian Stable", "docker.io/library/debian:stable", "debian"),
     OciImageSuggestion("Debian Testing", "docker.io/library/debian:testing", "debian-testing"),
     OciImageSuggestion("Fedora Latest", "registry.fedoraproject.org/fedora:latest", "fedora"),
-    OciImageSuggestion("Arch Linux", "docker.io/library/archlinux:latest", "archlinux"),
     OciImageSuggestion("Manjaro", "docker.io/manjarolinux/base:latest", "manjaro"),
     OciImageSuggestion("openSUSE Tumbleweed", "registry.opensuse.org/opensuse/tumbleweed:latest", "opensuse"),
-    OciImageSuggestion("Rocky Linux", "docker.io/library/rockylinux:latest", "rockylinux"),
+    OciImageSuggestion("Rocky Linux", "docker.io/rockylinux/rockylinux:9", "rockylinux"),
 )
 
 class MainActivity : ComponentActivity() {
