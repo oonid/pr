@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -50,11 +49,8 @@ fn find_user_in_passwd(passwd_path: &str, user: &str) -> Result<PasswdEntry, Str
 }
 
 fn update_etc_environment(rootfs: &str) {
-    let env_path = format!("{}/etc/environment", rootfs);
-    let _ = fs::set_permissions(&env_path, fs::Permissions::from_mode(0o644));
-
     let mut lines: Vec<String> = Vec::new();
-    if let Ok(content) = fs::read_to_string(&env_path) {
+    if let Some(content) = read_rootfs_file(Path::new(rootfs), "etc/environment") {
         for line in content.lines() {
             let key = line.split('=').next().unwrap_or("");
             if !key.is_empty()
@@ -84,7 +80,12 @@ fn update_etc_environment(rootfs: &str) {
         }
     }
 
-    let _ = fs::write(&env_path, lines.join("\n") + "\n");
+    let _ = write_rootfs_file(
+        Path::new(rootfs),
+        "etc/environment",
+        &(lines.join("\n") + "\n"),
+        Some(0o644),
+    );
 }
 
 pub fn command_login(
@@ -309,6 +310,29 @@ mod tests {
 
         std::env::remove_var("ANDROID_ROOT");
         std::env::remove_var("BOOTCLASSPATH");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn update_etc_environment_does_not_write_through_a_symlink() {
+        let tmp_dir = unique_temp_dir("pr-cli-login-env-symlink");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        fs::write(outside.join("environment"), "HOST=1\n").expect("seed host file");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        std::os::unix::fs::symlink(outside.join("environment"), rootfs.join("etc/environment"))
+            .expect("symlink environment");
+
+        update_etc_environment(rootfs.to_str().expect("path"));
+
+        assert_eq!(
+            fs::read_to_string(outside.join("environment")).unwrap(),
+            "HOST=1\n"
+        );
+        let inside = rootfs.join("etc/environment");
+        assert!(fs::symlink_metadata(&inside).unwrap().is_file());
+        assert!(!fs::read_to_string(&inside).unwrap().contains("HOST=1"));
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
