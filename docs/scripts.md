@@ -57,51 +57,6 @@ Output: build/assets/arm64-v8a/busybox
 
 Source: Alpine Linux `busybox-static` v1.37.0-r14 (GPL-2.0-only)
 
-## `scripts/download-bash.sh` — Download static bash
+## On-device tests
 
-Downloads a statically-linked bash binary from robxu9/bash-static.
-
-```
-scripts/download-bash.sh [OPTIONS]
-
-Options:
-  -f, --force       Re-download even if binary exists
-  --verify-only     Only verify existing binary, skip download
-  -h, --help        Show help
-
-Output: build/assets/arm64-v8a/bash
-```
-
-Source: robxu9/bash-static v5.2.015 (GPL-3.0-or-later)
-
-## `scripts/test-push.sh` — Push test environment to device
-
-Pushes built binaries and scripts to a connected Android device via adb for manual testing.
-
-```
-scripts/test-push.sh [ACTION]
-
-Actions:
-  (none)     Push files only
-  setup      Push + run bootstrap.sh on device
-  test       Push + bootstrap + run proot-distro list
-  shell      Push + bootstrap + start interactive bash
-
-Prerequisites:
-  - adb in PATH, device connected
-  - proot built:     scripts/build.sh --arch=arm64
-  - busybox ready:   scripts/download-busybox.sh
-  - bash ready:      scripts/download-bash.sh
-
-Device path: /data/local/tmp/pr-test/usr/
-```
-
-## `scripts/test-setup.sh` — On-device test setup
-
-POSIX shell script that runs **on the Android device** (not the host). Sets up the test directory structure, installs busybox applet symlinks, and copies scripts.
-
-```
-adb shell sh /data/local/tmp/test-setup.sh
-```
-
-This is a legacy script. `scripts/test-push.sh` with the `setup` action is preferred.
+The on-device integration suite runs inside a container through `pr-cli test <distro>`, from the app (Test in a container's menu) or over adb; see [integration-tests.md](integration-tests.md).

@@ -33,7 +33,6 @@ When writing adb commands in docs/scripts, use bare `adb` without `-s <serial>`.
 src/proot/                  # Patched proot C source (working copy, NOT vendor/)
 src/pr-cli/                 # Rust CLI (replaces proot-distro.sh)
 src/proot-integration-test/ # Guest-side test binary (runs inside proot, TAP output)
-src/scripts/                # Shell scripts: bootstrap.sh (POSIX)
 android/                    # Android APK (Kotlin + Compose + JNI)
 scripts/                    # Host-side build scripts (build.sh, download-*.sh)
 vendor/                     # Git submodules — READ ONLY, never modify
@@ -222,7 +221,7 @@ Commit message policy:
 1. **targetSdk is 35** — Play Store minimum. Works via PROOT_LOADER mechanism (unbundled loader binary in nativeLibraryDir).
 2. **W^X / SELinux** — Only nativeLibraryDir allows execve. Files in app data cannot be exec'd. The PROOT_LOADER mechanism works around this.
 3. **Zygote seccomp** blocks 18+ syscalls. Proot has SIGSYS handlers — never remove them. See `docs/important-notes.md` for full list.
-4. **bootstrap.sh must be POSIX sh** — runs before bash is available.
+4. **bootstrap.sh must be POSIX sh** — `android/session-core/src/main/assets/scripts/bootstrap.sh` runs under `/system/bin/sh` before any container exists.
 5. **ARM64 x0 clobber bug** — register x0 may be clobbered by kernel before proot reads it at SIGSYS time. All handlers use ORIGINAL register version.
 6. **TLS alignment** — proot needs 64-byte PT_TLS alignment for Bionic. Build script patches this.
 7. **Fake root required** — `--change-id=0:0` (proot `-0`) must always be passed. dpkg and other tools check `getuid() == 0`.

@@ -201,15 +201,13 @@ This is a pre-existing proot limitation, not a targetSdk regression. Tracked as 
 ```
 App.apk
 ├── jniLibs/arm64-v8a/
-│   ├── libproot.so            ← proot binary (static, ~650KB)
-│   ├── libproot-loader.so     ← proot's loader (separate, ~5.6KB)
-│   ├── libpr-cli.so           ← Rust CLI (static, ~2.5MB)
-│   ├── libbusybox.so          ← busybox (static, ~1.1MB)
-│   └── libbash.so             ← bash (static, ~1.3MB)
+│   ├── libproot.so            ← proot binary (static, ~2.6MB)
+│   ├── libproot-loader.so     ← proot's loader (separate, ~18KB)
+│   ├── libpr-cli.so           ← Rust CLI (static, ~3.4MB)
+│   └── libbusybox.so          ← busybox (static, ~1.1MB)
 └── assets/
     ├── bin/busybox.applets    ← busybox applet list
-    ├── scripts/bootstrap.sh   ← first-run setup
-    └── plugins/*.sh           ← 14 distro plugins
+    └── scripts/bootstrap.sh   ← first-run setup
 ```
 
 Flow at targetSdk 35:
