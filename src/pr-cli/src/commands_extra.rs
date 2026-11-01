@@ -149,7 +149,9 @@ pub fn command_reset(distro_name: &str) -> Result<(), String> {
     let plugins_dir = get_plugins_dir();
 
     let plugins = load_plugins(Path::new(&plugins_dir));
-    if !plugins.iter().any(|p| p.alias == distro_name) {
+    if !plugins.iter().any(|p| p.alias == distro_name)
+        && crate::catalog::catalog_entry(distro_name).is_none()
+    {
         println!();
         msg_error(&format!(
             "unknown distribution '{}' was requested to be reset.",
@@ -387,15 +389,6 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
     }
 
     let plugins = load_plugins(Path::new(&plugins_dir));
-    if !plugins.iter().any(|p| p.alias == old_alias) {
-        println!();
-        msg_error(&format!(
-            "unknown distribution '{}' was requested to be renamed.",
-            old_alias
-        ));
-        println!();
-        return Err("unknown distribution".to_string());
-    }
 
     let old_rootfs = format!("{}/{}", installed_rootfs_dir, old_alias);
     if !Path::new(&old_rootfs).is_dir() {
@@ -888,6 +881,17 @@ mod tests {
 
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn rename_moves_a_legacy_container_that_has_no_plugin() {
+        let env = TestPrefix::new("pr-cli-rename-no-plugin");
+        seed_rootfs(&env.legacy().join("mydistro"));
+
+        command_rename("mydistro", "mydistro-old").expect("rename");
+
+        assert!(!env.legacy().join("mydistro").exists());
+        assert_rootfs(&env.legacy().join("mydistro-old"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod catalog;
 pub mod cmd_test;
 pub mod color;
 pub mod commands_extra;

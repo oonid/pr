@@ -5,7 +5,7 @@ use pr_cli::commands_extra;
 use pr_cli::install::command_install;
 use pr_cli::install_model::load_oci_install_metadata;
 use pr_cli::login::command_login;
-use pr_cli::plugin::load_plugins;
+use pr_cli::plugin::{load_plugins, DistroPlugin};
 use pr_cli::shared;
 use std::collections::BTreeMap;
 use std::fs;
@@ -196,6 +196,17 @@ fn collect_installed_entries() -> Vec<InstalledEntry> {
     collect_installed_entries_with_dirs(&get_installed_rootfs_dir(), &get_oci_containers_dir())
 }
 
+fn supported_distributions(plugins: &[DistroPlugin]) -> Vec<(String, String)> {
+    let mut listed: Vec<(String, String)> = pr_cli::catalog::CATALOG
+        .iter()
+        .filter(|entry| !plugins.iter().any(|p| p.alias == entry.alias))
+        .map(|entry| (entry.name.to_string(), entry.alias.to_string()))
+        .collect();
+    listed.extend(plugins.iter().map(|p| (p.name.clone(), p.alias.clone())));
+    listed.sort_by(|a, b| a.1.cmp(&b.1));
+    listed
+}
+
 fn command_list(verbose: bool) {
     let dir = get_plugins_dir();
     let plugins = load_plugins(&dir);
@@ -207,55 +218,41 @@ fn command_list(verbose: bool) {
 
     println!();
 
-    if plugins.is_empty() {
-        println!("{}No distribution plug-ins found.{}", YELLOW, RESET);
-        println!();
+    if verbose {
+        println!("{}Supported distributions:{}", CYAN, RESET);
+    } else {
         println!(
-            "{}Please check the directory '{}' and create at least one distribution plug-in.{}",
-            YELLOW,
-            dir.display(),
-            RESET
+            "{}Supported distributions (format: name < alias >):{}",
+            CYAN, RESET
         );
         println!();
     }
 
-    if !plugins.is_empty() {
-        if verbose {
-            println!("{}Supported distributions:{}", CYAN, RESET);
-        } else {
+    for (name, alias) in supported_distributions(&plugins) {
+        if !verbose {
             println!(
-                "{}Supported distributions (format: name < alias >):{}",
-                CYAN, RESET
+                "  {}* {}{} {}< {}{}>",
+                CYAN, YELLOW, name, GREEN, alias, RESET
             );
-            println!();
+            continue;
         }
-
-        for p in &plugins {
-            if verbose {
-                println!();
-                println!("  {}* {}{}{}", CYAN, YELLOW, p.name, RESET);
-                println!();
-
-                println!("    {}Alias: {}{}{}", CYAN, GREEN, p.alias, RESET);
-
-                if is_installed(&p.alias) {
-                    println!("    {}Installed: {}yes{}", CYAN, GREEN, RESET);
-                } else {
-                    println!("    {}Installed: {}no{}", CYAN, RED, RESET);
-                }
-
-                if let Some(ref comment) = p.comment {
-                    println!("    {}Comment: {}{}{}", CYAN, RESET, comment, RESET);
-                }
-
-                let archs = p.supported_architectures().join(", ");
-                println!("    {}Architectures: {}{}{}", CYAN, RESET, archs, RESET);
-            } else {
-                println!(
-                    "  {}* {}{} {}< {}{}>{}",
-                    CYAN, YELLOW, p.name, GREEN, p.alias, RESET, ""
-                );
+        println!();
+        println!("  {}* {}{}{}", CYAN, YELLOW, name, RESET);
+        println!();
+        println!("    {}Alias: {}{}{}", CYAN, GREEN, alias, RESET);
+        if is_installed(&alias) {
+            println!("    {}Installed: {}yes{}", CYAN, GREEN, RESET);
+        } else {
+            println!("    {}Installed: {}no{}", CYAN, RED, RESET);
+        }
+        if let Some(p) = plugins.iter().find(|p| p.alias == alias) {
+            if let Some(ref comment) = p.comment {
+                println!("    {}Comment: {}{}{}", CYAN, RESET, comment, RESET);
             }
+            let archs = p.supported_architectures().join(", ");
+            println!("    {}Architectures: {}{}{}", CYAN, RESET, archs, RESET);
+        } else if let Some(entry) = pr_cli::catalog::catalog_entry(&alias) {
+            println!("    {}Image: {}{}{}", CYAN, RESET, entry.reference, RESET);
         }
     }
 
@@ -514,6 +511,25 @@ mod tests {
         assert_eq!(aliases, vec!["box"]);
 
         let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn supported_distributions_list_the_catalog_and_plugins() {
+        let plugin = pr_cli::plugin::DistroPlugin {
+            alias: "mine".to_string(),
+            name: "My Distro".to_string(),
+            comment: None,
+            tarballs: std::collections::HashMap::new(),
+            has_setup: false,
+        };
+        let listed = supported_distributions(&[plugin]);
+        assert!(listed.contains(&("Debian (stable)".to_string(), "debian".to_string())));
+        assert!(listed.contains(&("Manjaro".to_string(), "manjaro".to_string())));
+        assert!(listed.contains(&("My Distro".to_string(), "mine".to_string())));
+        assert_eq!(
+            listed.iter().filter(|(_, alias)| alias == "debian").count(),
+            1
+        );
     }
 
     #[test]

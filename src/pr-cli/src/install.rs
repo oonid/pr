@@ -1370,13 +1370,19 @@ fn render_override_plugin(plugin: &DistroPlugin, alias: &str) -> String {
     lines.join("\n") + "\n"
 }
 
-fn oci_install_reference(distro_name: &str, plugins: &[DistroPlugin]) -> Option<String> {
+fn oci_install_reference(
+    distro_name: &str,
+    plugins: &[DistroPlugin],
+) -> Option<(String, Option<String>)> {
     if plugins.iter().any(|plugin| plugin.alias == distro_name) {
         return None;
     }
+    if let Some(entry) = crate::catalog::catalog_entry(distro_name) {
+        return Some((entry.reference.to_string(), Some(entry.alias.to_string())));
+    }
     InstallSourceInput::classify(distro_name)
         .filter(|source| source.kind() == InstallSourceInputKind::OciImageReference)
-        .map(|source| source.source_text().into_owned())
+        .map(|source| (source.source_text().into_owned(), None))
 }
 
 pub fn command_install(
@@ -1387,7 +1393,7 @@ pub fn command_install(
 ) -> Result<(), String> {
     let requested_distro = distro_name.to_string();
     let plugins_dir = get_plugins_dir();
-    if let Some(reference) =
+    if let Some((reference, default_alias)) =
         oci_install_reference(distro_name, &load_plugins(Path::new(&plugins_dir)))
     {
         if override_tarball_url.is_some() || override_tarball_sha256.is_some() {
@@ -1399,7 +1405,7 @@ pub fn command_install(
         if let Some(alias) = override_alias {
             validate_alias_format(alias)?;
         }
-        return install_from_oci_reference(&reference, override_alias);
+        return install_from_oci_reference(&reference, override_alias.or(default_alias.as_deref()));
     }
     if !is_valid_container_name(distro_name) {
         msg_error(&format!(
@@ -2041,10 +2047,27 @@ mod tests {
     fn a_name_without_a_plugin_is_still_an_oci_reference() {
         let plugins = [plugin_with_alias("debian")];
         assert_eq!(
-            oci_install_reference("alpine:3.20", &plugins).as_deref(),
-            Some("alpine:3.20")
+            oci_install_reference("alpine:3.20", &plugins),
+            Some(("alpine:3.20".to_string(), None))
         );
         assert_eq!(oci_install_reference("debian", &plugins), None);
+    }
+
+    #[test]
+    fn a_catalog_name_installs_the_app_image_under_that_name() {
+        for (name, reference) in [
+            ("debian", "docker.io/library/debian:stable"),
+            ("manjaro", "docker.io/manjarolinux/base:latest"),
+            ("fedora", "registry.fedoraproject.org/fedora:latest"),
+            ("alpine-edge", "docker.io/library/alpine:edge"),
+        ] {
+            assert_eq!(
+                oci_install_reference(name, &[]),
+                Some((reference.to_string(), Some(name.to_string()))),
+                "{}",
+                name
+            );
+        }
     }
 
     #[test]
