@@ -1,14 +1,17 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::rc::Rc;
 
 use crate::commands_extra::force_remove_dir_all;
 use crate::install::unpack_entry;
-use crate::oci::{link_inside_root, sanitize_layer_path};
+use crate::oci::{decompressed_reader, link_inside_root, sanitize_layer_path};
 use crate::shared::is_valid_container_name;
 
 pub struct BackupDirs {
+    pub staging: PathBuf,
     pub plugins: PathBuf,
     pub legacy: PathBuf,
     pub containers: PathBuf,
@@ -40,11 +43,20 @@ impl Write for Output {
 
 impl Output {
     fn create(path: &Path) -> std::io::Result<Self> {
+        let name = path.to_string_lossy().to_ascii_lowercase();
+        let unsupported = [
+            ".bz2", ".tbz", ".tbz2", ".zst", ".tzst", ".lz4", ".lz", ".lzma", ".z",
+        ];
+        if unsupported.iter().any(|suffix| name.ends_with(suffix)) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported compression; use .tar, .tar.gz or .tar.xz",
+            ));
+        }
         let file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)?;
-        let name = path.to_string_lossy();
         Ok(if name.ends_with(".gz") || name.ends_with(".tgz") {
             Output::Gz(flate2::write::GzEncoder::new(
                 file,
@@ -64,6 +76,23 @@ impl Output {
             Output::Xz(w) => w.finish()?,
         };
         file.sync_all()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_tree_skips_a_file_that_vanished() {
+        let missing = std::env::temp_dir().join(format!(
+            "pr-cli-backup-vanished-{}-does-not-exist",
+            std::process::id()
+        ));
+        let mut builder = tar::Builder::new(Vec::new());
+        append_tree(&mut builder, &missing, Path::new("x")).expect("skip vanished file");
+        let bytes = builder.into_inner().expect("finish");
+        assert!(bytes.iter().all(|b| *b == 0));
     }
 }
 
@@ -91,36 +120,44 @@ fn append_tree<W: Write>(
     source: &Path,
     name: &Path,
 ) -> Result<(), String> {
-    let meta =
-        fs::symlink_metadata(source).map_err(|e| format!("stat {}: {}", source.display(), e))?;
+    match append_entry(builder, source, name) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("archive {}: {}", source.display(), e)),
+        Ok(None) => Ok(()),
+        Ok(Some(children)) => {
+            for child in children {
+                append_tree(builder, &source.join(&child), &name.join(&child))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn append_entry<W: Write>(
+    builder: &mut tar::Builder<W>,
+    source: &Path,
+    name: &Path,
+) -> std::io::Result<Option<Vec<std::ffi::OsString>>> {
+    let meta = fs::symlink_metadata(source)?;
     let file_type = meta.file_type();
-    let failed = |e: std::io::Error| format!("archive {}: {}", source.display(), e);
     if file_type.is_symlink() {
-        let target = fs::read_link(source).map_err(failed)?;
+        let target = fs::read_link(source)?;
         let mut header = tar::Header::new_gnu();
         header.set_metadata(&meta);
         header.set_entry_type(tar::EntryType::Symlink);
         header.set_size(0);
-        builder
-            .append_link(&mut header, name, &target)
-            .map_err(failed)?;
+        builder.append_link(&mut header, name, &target)?;
     } else if file_type.is_dir() {
-        builder.append_dir(name, source).map_err(failed)?;
-        let mut children: Vec<_> = fs::read_dir(source)
-            .map_err(failed)?
+        let mut children: Vec<_> = fs::read_dir(source)?
             .map(|entry| entry.map(|e| e.file_name()))
-            .collect::<Result<_, _>>()
-            .map_err(failed)?;
+            .collect::<Result<_, _>>()?;
         children.sort();
-        for child in children {
-            append_tree(builder, &source.join(&child), &name.join(&child))?;
-        }
+        builder.append_dir(name, source)?;
+        return Ok(Some(children));
     } else if file_type.is_file() {
-        builder
-            .append_path_with_name(source, name)
-            .map_err(failed)?;
+        builder.append_path_with_name(source, name)?;
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,58 +235,120 @@ fn place(path: &Path) -> Result<Target, String> {
     }
 }
 
-fn open_backup(path: &Path) -> Result<Box<dyn Read>, String> {
-    let failed = |e: std::io::Error| format!("read backup {}: {}", path.display(), e);
-    let mut file = fs::File::open(path).map_err(failed)?;
-    let mut magic = [0u8; 6];
-    let read = file.read(&mut magic).map_err(failed)?;
-    file.rewind().map_err(failed)?;
-    Ok(if read >= 2 && magic[..2] == [0x1f, 0x8b] {
-        Box::new(flate2::read::GzDecoder::new(file))
-    } else if read >= 6 && magic == [0xfd, b'7', b'z', b'X', b'Z', 0x00] {
-        Box::new(xz2::read::XzDecoder::new(file))
-    } else {
-        Box::new(file)
-    })
+struct Counted {
+    inner: Box<dyn Read>,
+    count: Rc<Cell<u64>>,
+}
+
+impl Read for Counted {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.count.set(self.count.get() + read as u64);
+        Ok(read)
+    }
+}
+
+fn open_backup(path: &Path, count: Rc<Cell<u64>>) -> Result<Counted, String> {
+    let failed = |e: String| format!("read backup {}: {}", path.display(), e);
+    let file = fs::File::open(path).map_err(|e| failed(e.to_string()))?;
+    let inner = decompressed_reader(file).map_err(failed)?;
+    Ok(Counted { inner, count })
+}
+
+struct Staged {
+    staging: PathBuf,
+    root: PathBuf,
+}
+
+fn kind_label(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Legacy => "legacy",
+        Kind::Oci => "oci",
+    }
+}
+
+fn plugin_alias(file: &str) -> &str {
+    file.strip_suffix(".override.sh")
+        .or_else(|| file.strip_suffix(".sh"))
+        .unwrap_or(file)
 }
 
 pub fn restore_backup(archive: &Path, dirs: &BackupDirs) -> Result<Vec<String>, String> {
-    let mut staged: BTreeMap<(Kind, String), PathBuf> = BTreeMap::new();
+    let mut staged: BTreeMap<(Kind, String), Staged> = BTreeMap::new();
     let mut plugins: Vec<(String, Vec<u8>)> = Vec::new();
-    let result = unpack_backup(archive, dirs, &mut staged, &mut plugins);
-    if let Err(e) = result {
-        for staging in staged.values() {
-            force_remove_dir_all(staging);
-        }
-        return Err(e);
+    let result = unpack_backup(archive, dirs, &mut staged, &mut plugins)
+        .and_then(|_| check_plugins(&staged, &plugins))
+        .and_then(|_| move_into_place(dirs, &mut staged, &plugins));
+    for entry in staged.values() {
+        force_remove_dir_all(&entry.staging);
     }
-    if staged.is_empty() {
-        return Err(format!("no container in backup {}", archive.display()));
-    }
+    let _ = fs::remove_dir(&dirs.staging);
+    result
+}
 
+fn check_plugins(
+    staged: &BTreeMap<(Kind, String), Staged>,
+    plugins: &[(String, Vec<u8>)],
+) -> Result<(), String> {
+    if staged.is_empty() {
+        return Err("no container in backup".to_string());
+    }
+    for (file, _) in plugins {
+        if !staged.contains_key(&(Kind::Legacy, plugin_alias(file).to_string())) {
+            return Err(format!("plugin {} has no container in the backup", file));
+        }
+    }
+    Ok(())
+}
+
+fn move_into_place(
+    dirs: &BackupDirs,
+    staged: &mut BTreeMap<(Kind, String), Staged>,
+    plugins: &[(String, Vec<u8>)],
+) -> Result<Vec<String>, String> {
     let mut restored = Vec::new();
-    for ((kind, name), staging) in &staged {
+    let keys: Vec<(Kind, String)> = staged.keys().cloned().collect();
+    for key in keys {
+        let (kind, name) = &key;
         let base = if *kind == Kind::Oci {
             &dirs.containers
         } else {
             &dirs.legacy
         };
+        fs::create_dir_all(base).map_err(|e| format!("create {}: {}", base.display(), e))?;
         let destination = base.join(name);
-        if fs::symlink_metadata(&destination).is_ok() {
-            force_remove_dir_all(&destination);
+        let old = dirs
+            .staging
+            .join(format!("{}-{}.old", kind_label(*kind), name));
+        if fs::symlink_metadata(&old).is_ok() {
+            force_remove_dir_all(&old);
         }
-        fs::rename(staging, &destination)
-            .map_err(|e| format!("move {} into place: {}", name, e))?;
+        let had_old = fs::symlink_metadata(&destination).is_ok();
+        if had_old {
+            fs::rename(&destination, &old)
+                .map_err(|e| format!("move the current {} aside: {}", name, e))?;
+        }
+        let staging = staged[&key].staging.clone();
+        if let Err(e) = fs::rename(&staging, &destination) {
+            if had_old {
+                let _ = fs::rename(&old, &destination);
+            }
+            return Err(format!("move {} into place: {}", name, e));
+        }
+        if had_old {
+            force_remove_dir_all(&old);
+        }
+        staged.remove(&key);
         restored.push(name.clone());
     }
     fs::create_dir_all(&dirs.plugins)
         .map_err(|e| format!("create {}: {}", dirs.plugins.display(), e))?;
     for (file, contents) in plugins {
-        let path = dirs.plugins.join(&file);
+        let path = dirs.plugins.join(file);
         let tmp = dirs
             .plugins
             .join(format!(".{}.pr-cli.{}", file, std::process::id()));
-        fs::write(&tmp, &contents)
+        fs::write(&tmp, contents)
             .and_then(|_| fs::rename(&tmp, &path))
             .map_err(|e| {
                 let _ = fs::remove_file(&tmp);
@@ -262,13 +361,16 @@ pub fn restore_backup(archive: &Path, dirs: &BackupDirs) -> Result<Vec<String>, 
 fn unpack_backup(
     archive: &Path,
     dirs: &BackupDirs,
-    staged: &mut BTreeMap<(Kind, String), PathBuf>,
+    staged: &mut BTreeMap<(Kind, String), Staged>,
     plugins: &mut Vec<(String, Vec<u8>)>,
 ) -> Result<(), String> {
     let failed = |e: std::io::Error| format!("read backup {}: {}", archive.display(), e);
-    let mut tar = tar::Archive::new(open_backup(archive)?);
+    let count = Rc::new(Cell::new(0u64));
+    let mut tar = tar::Archive::new(open_backup(archive, count.clone())?);
+    let mut entries_end = 0u64;
     for entry in tar.entries().map_err(failed)? {
         let mut entry = entry.map_err(failed)?;
+        entries_end = entry.raw_file_position() + entry.size().div_ceil(512) * 512;
         let path = entry.path().map_err(failed)?.into_owned();
         let placement = match place(&path)? {
             Target::Skip => continue,
@@ -285,30 +387,26 @@ fn unpack_backup(
         };
 
         let key = (placement.kind, placement.name.clone());
-        let staging = match staged.get(&key) {
-            Some(staging) => staging.clone(),
-            None => {
-                let base = if placement.kind == Kind::Oci {
-                    &dirs.containers
-                } else {
-                    &dirs.legacy
-                };
-                let staging = base.join(format!(".{}.pr-cli-restore", placement.name));
-                if fs::symlink_metadata(&staging).is_ok() {
-                    force_remove_dir_all(&staging);
-                }
-                fs::create_dir_all(&staging)
-                    .map_err(|e| format!("create {}: {}", staging.display(), e))?;
-                staged.insert(key, staging.clone());
-                staging
+        if !staged.contains_key(&key) {
+            let staging =
+                dirs.staging
+                    .join(format!("{}-{}", kind_label(placement.kind), placement.name));
+            if fs::symlink_metadata(&staging).is_ok() {
+                force_remove_dir_all(&staging);
             }
-        };
-        let root = if placement.kind == Kind::Oci && placement.in_rootfs {
-            staging.join("rootfs")
+            let root = if placement.kind == Kind::Oci {
+                staging.join("rootfs")
+            } else {
+                staging.clone()
+            };
+            fs::create_dir_all(&root).map_err(|e| format!("create {}: {}", root.display(), e))?;
+            staged.insert(key.clone(), Staged { staging, root });
+        }
+        let root = if placement.kind == Kind::Oci && !placement.in_rootfs {
+            staged[&key].staging.clone()
         } else {
-            staging.clone()
+            staged[&key].root.clone()
         };
-        fs::create_dir_all(&root).map_err(|e| format!("create {}: {}", root.display(), e))?;
         if placement.relative.as_os_str().is_empty() {
             continue;
         }
@@ -337,6 +435,12 @@ fn unpack_backup(
             continue;
         }
         unpack_entry(&root, &placement.relative, &mut entry)?;
+    }
+    if count.get() < entries_end + 512 {
+        return Err(format!(
+            "backup {} ends before its end-of-archive marker; it may be truncated",
+            archive.display()
+        ));
     }
     Ok(())
 }

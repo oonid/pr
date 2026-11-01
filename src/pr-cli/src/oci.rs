@@ -1,7 +1,7 @@
 use sha2::Digest;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 pub const OCI_IMAGE_INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -408,24 +408,26 @@ async fn download_to_partial(
 pub fn apply_layer_blob(blob_path: &Path, rootfs: &Path) -> Result<(), String> {
     let blob = fs::File::open(blob_path)
         .map_err(|e| format!("open layer blob {}: {}", blob_path.display(), e))?;
-    let mut probe = [0u8; 6];
-    let mut reader = std::io::BufReader::new(blob);
-    let read_len = reader
-        .read(&mut probe)
-        .map_err(|e| format!("read layer blob header {}: {}", blob_path.display(), e))?;
-    reader
-        .rewind()
-        .map_err(|e| format!("rewind blob reader {}: {}", blob_path.display(), e))?;
+    let reader = decompressed_reader(blob)
+        .map_err(|e| format!("read layer blob {}: {}", blob_path.display(), e))?;
+    apply_layer_tar_stream(reader, rootfs)
+}
 
-    let boxed_reader: Box<dyn Read> = if read_len >= 2 && probe[0..2] == [0x1f, 0x8b] {
+pub(crate) fn decompressed_reader(file: fs::File) -> Result<Box<dyn Read>, String> {
+    use std::io::BufRead;
+    let mut reader = std::io::BufReader::new(file);
+    let magic = reader.fill_buf().map_err(|e| e.to_string())?;
+    Ok(if magic.starts_with(&[0x1f, 0x8b]) {
         Box::new(flate2::read::GzDecoder::new(reader))
-    } else if read_len >= 6 && probe[0..6] == [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00] {
+    } else if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         Box::new(xz2::read::XzDecoder::new(reader))
+    } else if magic.starts_with(b"BZh") {
+        return Err("bzip2 compression is not supported; use gzip or xz".to_string());
+    } else if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        return Err("zstd compression is not supported; use gzip or xz".to_string());
     } else {
         Box::new(reader)
-    };
-
-    apply_layer_tar_stream(boxed_reader, rootfs)
+    })
 }
 
 fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), String> {
