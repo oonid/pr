@@ -1354,6 +1354,15 @@ fn render_override_plugin(plugin: &DistroPlugin, alias: &str) -> String {
     lines.join("\n") + "\n"
 }
 
+fn oci_install_reference(distro_name: &str, plugins: &[DistroPlugin]) -> Option<String> {
+    if plugins.iter().any(|plugin| plugin.alias == distro_name) {
+        return None;
+    }
+    InstallSourceInput::classify(distro_name)
+        .filter(|source| source.kind() == InstallSourceInputKind::OciImageReference)
+        .map(|source| source.source_text().into_owned())
+}
+
 pub fn command_install(
     distro_name: &str,
     override_alias: Option<&str>,
@@ -1361,22 +1370,22 @@ pub fn command_install(
     override_tarball_sha256: Option<&str>,
 ) -> Result<(), String> {
     let requested_distro = distro_name.to_string();
-    if let Some(source) = InstallSourceInput::classify(distro_name) {
-        if source.kind() == InstallSourceInputKind::OciImageReference {
-            if override_tarball_url.is_some() || override_tarball_sha256.is_some() {
-                return Err(
-                    "--override-tarball-url and --override-tarball-sha256 are not supported for OCI image installs"
-                        .to_string(),
-                );
-            }
-            if let Some(alias) = override_alias {
-                validate_alias_format(alias)?;
-            }
-            return install_from_oci_reference(source.source_text().as_ref(), override_alias);
+    let plugins_dir = get_plugins_dir();
+    if let Some(reference) =
+        oci_install_reference(distro_name, &load_plugins(Path::new(&plugins_dir)))
+    {
+        if override_tarball_url.is_some() || override_tarball_sha256.is_some() {
+            return Err(
+                "--override-tarball-url and --override-tarball-sha256 are not supported for OCI image installs"
+                    .to_string(),
+            );
         }
+        if let Some(alias) = override_alias {
+            validate_alias_format(alias)?;
+        }
+        return install_from_oci_reference(&reference, override_alias);
     }
 
-    let plugins_dir = get_plugins_dir();
     let installed_rootfs_dir = get_installed_rootfs_dir();
     let download_cache_dir = get_download_cache_dir();
 
@@ -1923,6 +1932,32 @@ mod tests {
         assert!(rootfs.join("sys/.empty").is_dir());
 
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    fn plugin_with_alias(alias: &str) -> DistroPlugin {
+        DistroPlugin {
+            alias: alias.to_string(),
+            name: alias.to_string(),
+            comment: None,
+            tarballs: std::collections::HashMap::new(),
+            has_setup: false,
+        }
+    }
+
+    #[test]
+    fn a_plugin_alias_wins_over_oci_classification() {
+        let plugins = [plugin_with_alias("debian.old")];
+        assert_eq!(oci_install_reference("debian.old", &plugins), None);
+    }
+
+    #[test]
+    fn a_name_without_a_plugin_is_still_an_oci_reference() {
+        let plugins = [plugin_with_alias("debian")];
+        assert_eq!(
+            oci_install_reference("alpine:3.20", &plugins).as_deref(),
+            Some("alpine:3.20")
+        );
+        assert_eq!(oci_install_reference("debian", &plugins), None);
     }
 
     #[test]
