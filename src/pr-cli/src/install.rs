@@ -36,11 +36,12 @@ fn detect_device_arch() -> String {
         }
     }
 
-    let path = "/proc/self/exe";
+    let mut data = [0u8; 20];
+    let header = fs::File::open("/proc/self/exe").and_then(|mut f| f.read_exact(&mut data));
 
-    match std::fs::read(path) {
-        Ok(data) => {
-            if data.len() > 20 && &data[1..4] == b"ELF" {
+    match header {
+        Ok(()) => {
+            if &data[1..4] == b"ELF" {
                 let machine = &data[18..20];
                 match machine {
                     [0xb7, _] => "aarch64".to_string(),

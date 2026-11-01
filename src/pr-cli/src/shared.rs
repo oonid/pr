@@ -153,17 +153,37 @@ pub struct Identity {
     pub groups: Vec<(String, u32)>,
 }
 
-pub fn current_identity() -> Identity {
+fn lookup_name<T>(
+    lookup: impl Fn(&mut T, &mut [libc::c_char], &mut *mut T) -> libc::c_int,
+    name_of: impl Fn(&T) -> *const libc::c_char,
+) -> Option<String> {
     use std::ffi::CStr;
+    let mut entry: T = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 4096];
+    loop {
+        let mut result: *mut T = std::ptr::null_mut();
+        let ret = lookup(&mut entry, &mut buf, &mut result);
+        if ret == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if ret != 0 || result.is_null() {
+            return None;
+        }
+        let name = unsafe { CStr::from_ptr(name_of(&entry)) };
+        return Some(name.to_string_lossy().into_owned());
+    }
+}
+
+pub fn current_identity() -> Identity {
     let uid = unsafe { libc::getuid() };
-    let pw = unsafe { libc::getpwuid(uid) };
-    let user = if pw.is_null() {
-        uid.to_string()
-    } else {
-        unsafe { CStr::from_ptr((*pw).pw_name) }
-            .to_string_lossy()
-            .into_owned()
-    };
+    let user = lookup_name(
+        |pw: &mut libc::passwd, buf, result| unsafe {
+            libc::getpwuid_r(uid, pw, buf.as_mut_ptr(), buf.len(), result)
+        },
+        |pw| pw.pw_name,
+    )
+    .unwrap_or_else(|| uid.to_string());
 
     let mut gids = vec![unsafe { libc::getgid() }];
     let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
@@ -180,14 +200,13 @@ pub fn current_identity() -> Identity {
     let groups = gids
         .into_iter()
         .map(|gid| {
-            let gr = unsafe { libc::getgrgid(gid) };
-            let name = if gr.is_null() {
-                gid.to_string()
-            } else {
-                unsafe { CStr::from_ptr((*gr).gr_name) }
-                    .to_string_lossy()
-                    .into_owned()
-            };
+            let name = lookup_name(
+                |gr: &mut libc::group, buf, result| unsafe {
+                    libc::getgrgid_r(gid, gr, buf.as_mut_ptr(), buf.len(), result)
+                },
+                |gr| gr.gr_name,
+            )
+            .unwrap_or_else(|| gid.to_string());
             (name, gid)
         })
         .collect();
@@ -213,6 +232,17 @@ pub fn get_prefix() -> String {
 /// The other path of the same primary-user app data directory. L2S links store absolute host
 /// paths, so links made from the app (`/data/user/0/<pkg>`) and from `adb run-as`
 /// (`/data/data/<pkg>`) only resolve when both paths are bound.
+pub fn path_alias(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let (from, to) = if path.starts_with("/data/data") {
+        ("/data/data", "/data/user/0")
+    } else if path.starts_with("/data/user/0") {
+        ("/data/user/0", "/data/data")
+    } else {
+        return None;
+    };
+    Some(std::path::Path::new(to).join(path.strip_prefix(from).ok()?))
+}
+
 pub fn app_dir_alias(app_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let pkg = app_dir.file_name()?;
     let parent = app_dir.parent()?;
@@ -304,7 +334,7 @@ pub fn get_download_cache_dir() -> String {
 }
 
 pub fn get_default_path_env() -> String {
-    format!("{}:{}", DEFAULT_PATH_ENV_SUFFIX, get_prefix())
+    DEFAULT_PATH_ENV_SUFFIX.to_string()
 }
 
 pub fn get_native_lib_dir() -> String {
@@ -833,10 +863,7 @@ mod tests {
             get_download_cache_dir(),
             format!("{}/var/lib/pr/dlcache", prefix_str)
         );
-        assert_eq!(
-            get_default_path_env(),
-            format!("{}:{}", DEFAULT_PATH_ENV_SUFFIX, prefix_str)
-        );
+        assert_eq!(get_default_path_env(), DEFAULT_PATH_ENV_SUFFIX);
         assert_eq!(
             get_oci_containers_dir(),
             format!("{}/var/lib/pr/containers", prefix_str)
