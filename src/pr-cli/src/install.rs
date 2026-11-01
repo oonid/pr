@@ -1330,6 +1330,9 @@ fn cleanup_on_failure(rootfs: &str, distro_name: &str) {
         .arg0("busybox")
         .args(["rm", "-rf", rootfs])
         .status();
+    if Path::new(rootfs).exists() {
+        force_remove_dir_all(Path::new(rootfs));
+    }
 
     let override_path = format!("{}/{}.override.sh", get_plugins_dir(), distro_name);
     if Path::new(&override_path).exists() {
@@ -1481,12 +1484,13 @@ pub fn command_install(
 
     // Determine tarball URL and SHA256
     let arch = device_arch.as_str();
-    let tarball = plugin.tarballs.get(arch).ok_or_else(|| {
-        format!(
+    let Some(tarball) = plugin.tarballs.get(arch) else {
+        cleanup_on_failure(&rootfs, &distro_name);
+        return Err(format!(
             "distribution download URL is not defined for CPU architecture '{}'",
             arch
-        )
-    })?;
+        ));
+    };
 
     let tarball_url = override_tarball_url.unwrap_or(&tarball.url).to_string();
     let tarball_sha256 = override_tarball_sha256
@@ -1542,7 +1546,12 @@ pub fn command_install(
     // Extract
     msg_status("Extracting rootfs, please wait...");
 
-    extract_tarball(&archive_path, &rootfs, 1, &["dev"])?;
+    if let Err(e) = extract_tarball(&archive_path, &rootfs, 1, &["dev"]) {
+        msg_error(&format!("Extracting the rootfs failed: {}", e));
+        let _ = fs::remove_file(&archive_path);
+        cleanup_on_failure(&rootfs, &distro_name);
+        return Err(e);
+    }
 
     // Validate rootfs structure
     if !Path::new(&format!("{}/etc", rootfs)).exists() {
@@ -1556,7 +1565,10 @@ pub fn command_install(
     }
 
     // Write config files
-    write_config_files(&rootfs, Some(&requested_distro))?;
+    if let Err(e) = write_config_files(&rootfs, Some(&requested_distro)) {
+        cleanup_on_failure(&rootfs, &distro_name);
+        return Err(e);
+    }
 
     msg_status("Finished.");
     println!();
@@ -2194,6 +2206,48 @@ mod tests {
         let err = command_install("debian", Some("../escape"), None, None)
             .expect_err("must reject invalid alias");
         assert!(err.contains("--override-alias"));
+    }
+
+    fn with_test_prefix(label: &str, plugin: &str, body: impl FnOnce(&Path)) {
+        let _guard = env_lock().lock().expect("lock env");
+        let prefix = unique_temp_dir(label).join("usr");
+        fs::create_dir_all(prefix.join("etc/pr")).expect("create plugins dir");
+        fs::write(prefix.join("etc/pr/testdistro.sh"), plugin).expect("write plugin");
+        std::env::set_var("APP_PREFIX", &prefix);
+        std::env::set_var("DISTRO_ARCH", "x86_64");
+        body(&prefix);
+        std::env::remove_var("APP_PREFIX");
+        std::env::remove_var("DISTRO_ARCH");
+        let _ = fs::remove_dir_all(prefix.parent().expect("base"));
+    }
+
+    #[test]
+    fn command_install_leaves_no_rootfs_when_the_arch_has_no_tarball() {
+        let plugin =
+            "DISTRO_NAME=\"Test\"\nTARBALL_URL_aarch64=\"https://example.invalid/a.tar.xz\"\n";
+        with_test_prefix("pr-cli-install-no-arch", plugin, |prefix| {
+            assert!(command_install("testdistro", None, None, None).is_err());
+            assert!(!prefix
+                .join("var/lib/pr/installed-rootfs/testdistro")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn command_install_removes_the_rootfs_when_extraction_fails() {
+        let plugin =
+            "DISTRO_NAME=\"Test\"\nTARBALL_URL_x86_64=\"https://example.invalid/broken.tar.xz\"\n";
+        with_test_prefix("pr-cli-install-broken-archive", plugin, |prefix| {
+            let cache = prefix.join("var/lib/pr/dlcache");
+            fs::create_dir_all(&cache).expect("create cache");
+            fs::write(cache.join("broken.tar.xz"), b"not an archive").expect("seed archive");
+
+            assert!(command_install("testdistro", None, None, None).is_err());
+            assert!(!prefix
+                .join("var/lib/pr/installed-rootfs/testdistro")
+                .exists());
+            assert!(!cache.join("broken.tar.xz").exists());
+        });
     }
 
     #[test]
