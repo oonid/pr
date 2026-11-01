@@ -16,11 +16,6 @@ pub const CATALOG: &[CatalogEntry] = &[
         reference: "docker.io/library/alpine:edge",
     },
     CatalogEntry {
-        alias: "archlinux",
-        name: "Arch Linux",
-        reference: "docker.io/library/archlinux:latest",
-    },
-    CatalogEntry {
         alias: "debian",
         name: "Debian (stable)",
         reference: "docker.io/library/debian:stable",
@@ -48,7 +43,7 @@ pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         alias: "rockylinux",
         name: "Rocky Linux",
-        reference: "docker.io/library/rockylinux:latest",
+        reference: "docker.io/rockylinux/rockylinux:9",
     },
     CatalogEntry {
         alias: "ubuntu",
@@ -68,6 +63,15 @@ mod tests {
 
     fn quoted(line: &str) -> Vec<&str> {
         line.split('"').skip(1).step_by(2).collect()
+    }
+
+    #[test]
+    fn offers_only_images_with_an_arm64_build() {
+        assert!(catalog_entry("archlinux").is_none());
+        assert_eq!(
+            catalog_entry("rockylinux").map(|e| e.reference),
+            Some("docker.io/rockylinux/rockylinux:9")
+        );
     }
 
     #[test]
