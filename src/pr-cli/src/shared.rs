@@ -148,6 +148,52 @@ pub fn resolv_conf_is_managed(existing: Option<&str>) -> bool {
 pub const DEFAULT_PATH_ENV_SUFFIX: &str =
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/games:/usr/games";
 
+pub struct Identity {
+    pub user: String,
+    pub groups: Vec<(String, u32)>,
+}
+
+pub fn current_identity() -> Identity {
+    use std::ffi::CStr;
+    let uid = unsafe { libc::getuid() };
+    let pw = unsafe { libc::getpwuid(uid) };
+    let user = if pw.is_null() {
+        uid.to_string()
+    } else {
+        unsafe { CStr::from_ptr((*pw).pw_name) }
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    let mut gids = vec![unsafe { libc::getgid() }];
+    let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if count > 0 {
+        let mut buf = vec![0 as libc::gid_t; count as usize];
+        let got = unsafe { libc::getgroups(count, buf.as_mut_ptr()) };
+        buf.truncate(got.max(0) as usize);
+        for gid in buf {
+            if !gids.contains(&gid) {
+                gids.push(gid);
+            }
+        }
+    }
+    let groups = gids
+        .into_iter()
+        .map(|gid| {
+            let gr = unsafe { libc::getgrgid(gid) };
+            let name = if gr.is_null() {
+                gid.to_string()
+            } else {
+                unsafe { CStr::from_ptr((*gr).gr_name) }
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            (name, gid)
+        })
+        .collect();
+    Identity { user, groups }
+}
+
 pub fn global_test_env_lock() -> &'static std::sync::Mutex<()> {
     use std::sync::{Mutex, OnceLock};
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -266,10 +312,6 @@ pub fn get_native_lib_dir() -> String {
         .ok()
         .and_then(|p| p.parent().map(|p| p.display().to_string()))
         .unwrap_or_else(|| get_bin_dir())
-}
-
-pub fn get_native_busybox() -> String {
-    format!("{}/libbusybox.so", get_native_lib_dir())
 }
 
 pub fn get_native_proot() -> String {
@@ -820,10 +862,6 @@ mod tests {
     fn native_binary_paths_are_based_on_native_lib_dir() {
         let native_lib_dir = get_native_lib_dir();
         assert_eq!(
-            get_native_busybox(),
-            format!("{}/libbusybox.so", native_lib_dir)
-        );
-        assert_eq!(
             get_native_proot(),
             format!("{}/libproot.so", native_lib_dir)
         );
@@ -848,6 +886,41 @@ mod tests {
 
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(base);
+    }
+
+    fn id_output(args: &[&str]) -> String {
+        let out = std::process::Command::new("id")
+            .args(args)
+            .output()
+            .expect("run id");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn current_identity_matches_the_id_command() {
+        let identity = current_identity();
+        assert_eq!(identity.user, id_output(&["-un"]));
+        let mut ids: Vec<u32> = identity.groups.iter().map(|(_, gid)| *gid).collect();
+        let mut expected: Vec<u32> = id_output(&["-G"])
+            .split_whitespace()
+            .map(|g| g.parse().unwrap())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(ids, expected);
+        let mut names: Vec<String> = identity.groups.iter().map(|(n, _)| n.clone()).collect();
+        let mut expected_names: Vec<String> = id_output(&["-Gn"])
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        expected_names.sort();
+        expected_names.dedup();
+        assert_eq!(names, expected_names);
+        assert_eq!(identity.groups[0].1, unsafe { libc::getgid() });
     }
 
     #[test]

@@ -1,9 +1,7 @@
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use libc;
 
@@ -11,7 +9,7 @@ use crate::backup::{restore_backup, write_backup, BackupDirs};
 use crate::install_model::load_oci_install_metadata;
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
-    get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_oci_container_dir,
+    get_download_cache_dir, get_installed_rootfs_dir, get_oci_container_dir,
     get_oci_container_manifest_path, get_oci_containers_dir, get_plugins_dir,
     is_valid_container_name, msg_error, msg_status, resolve_installed_rootfs, InstalledSourceType,
 };
@@ -19,7 +17,7 @@ use crate::shared::{
 /// Remove a directory tree, handling 0000-permission proot bind-mount stubs.
 ///
 /// proot creates empty placeholder dirs (apex, odm, product, sdcard, system,
-/// system_ext, vendor) with mode 0000.  `busybox rm -rf` bails on them because
+/// system_ext, vendor) with mode 0000.  A plain recursive remove bails on them because
 /// it tries `opendir()` which requires execute permission.  `libc::rmdir()` only
 /// needs write permission on the *parent*, so it succeeds even on 0000-perms
 /// empty dirs.  For non-empty dirs we chmod 0700 first, then recurse.
@@ -97,17 +95,6 @@ pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
         rootfs.clone()
     };
 
-    // Use busybox rm -rf for the bulk of the tree (fast, handles symlinks, etc.).
-    // Ignore its exit code: it exits 1 on proot's 0000-permission bind-mount
-    // stub dirs (apex, odm, product, sdcard, system, system_ext, vendor) because
-    // it can't opendir() them.  We clean those up with force_remove_dir_all().
-    let busybox = get_native_busybox();
-    let _ = Command::new(&busybox)
-        .arg0("busybox")
-        .args(["rm", "-rf", &install_path])
-        .status();
-
-    // Sweep anything busybox left behind (empty 0000-perms dirs, etc.).
     let rootfs_path = Path::new(&install_path);
     if rootfs_path.exists() {
         force_remove_dir_all(rootfs_path);
@@ -468,6 +455,59 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn copy_times(meta: &fs::Metadata, path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let times = [
+        libc::timespec {
+            tv_sec: meta.atime() as libc::time_t,
+            tv_nsec: meta.atime_nsec() as _,
+        },
+        libc::timespec {
+            tv_sec: meta.mtime() as libc::time_t,
+            tv_nsec: meta.mtime_nsec() as _,
+        },
+    ];
+    let c_path = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let ret = unsafe {
+        libc::utimensat(
+            libc::AT_FDCWD,
+            c_path.as_ptr(),
+            times.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let meta = fs::symlink_metadata(source)?;
+    let file_type = meta.file_type();
+    if file_type.is_symlink() {
+        std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
+    } else if file_type.is_dir() {
+        if !destination.is_dir() {
+            fs::create_dir(destination)?;
+        }
+        fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        fs::set_permissions(destination, meta.permissions())?;
+    } else if file_type.is_file() {
+        fs::copy(source, destination)?;
+    } else {
+        return Ok(());
+    }
+    let _ = copy_times(&meta, destination);
+    Ok(())
+}
+
 pub fn command_copy(src: &str, dst: &str) -> Result<(), String> {
     let (src_dist, src_path) = parse_dist_path(src);
     let (dst_dist, dst_path) = parse_dist_path(dst);
@@ -495,16 +535,16 @@ pub fn command_copy(src: &str, dst: &str) -> Result<(), String> {
 
     msg_status("Copying files, this may take a while...");
 
-    let busybox = get_native_busybox();
-    let status = Command::new(&busybox)
-        .arg0("busybox")
-        .args(["cp", "-a", &src_full, &dst_full])
-        .status()
-        .map_err(|e| format!("exec cp: {}", e))?;
-
-    if !status.success() {
+    let source = Path::new(&src_full);
+    let mut destination = PathBuf::from(&dst_full);
+    if destination.is_dir() {
+        if let Some(name) = source.file_name() {
+            destination.push(name);
+        }
+    }
+    if let Err(e) = copy_tree(source, &destination) {
         msg_error("Copy failed.");
-        return Err("cp failed".to_string());
+        return Err(format!("copy: {}", e));
     }
 
     msg_status("Finished.");
@@ -704,6 +744,46 @@ mod tests {
                 alias
             );
         }
+    }
+
+    fn mtime_of(path: &Path) -> i64 {
+        use std::os::unix::fs::MetadataExt;
+        fs::symlink_metadata(path).expect("stat").mtime()
+    }
+
+    #[test]
+    fn command_copy_copies_a_tree_like_cp_a() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-tree");
+        let src = tmp_dir.join("src");
+        fs::create_dir_all(src.join("bin")).expect("create src");
+        fs::write(src.join("bin/tool"), b"\x7fELF").expect("write tool");
+        fs::set_permissions(src.join("bin/tool"), fs::Permissions::from_mode(0o750))
+            .expect("chmod tool");
+        std::os::unix::fs::symlink("bin/tool", src.join("link")).expect("symlink");
+        let old = libc::timespec {
+            tv_sec: 1_000_000_000,
+            tv_nsec: 0,
+        };
+        let times = [old, old];
+        let c = std::ffi::CString::new(src.join("bin/tool").to_str().unwrap()).unwrap();
+        unsafe { libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0) };
+        let dst = tmp_dir.join("dst");
+
+        command_copy(src.to_str().unwrap(), dst.to_str().unwrap()).expect("copy");
+
+        assert_eq!(fs::read(dst.join("bin/tool")).unwrap(), b"\x7fELF");
+        assert_eq!(mode_of(&dst.join("bin/tool")), 0o750);
+        assert_eq!(mtime_of(&dst.join("bin/tool")), 1_000_000_000);
+        assert_eq!(
+            fs::read_link(dst.join("link")).unwrap(),
+            Path::new("bin/tool")
+        );
+
+        let into = tmp_dir.join("into");
+        fs::create_dir_all(&into).expect("create into");
+        command_copy(src.to_str().unwrap(), into.to_str().unwrap()).expect("copy into dir");
+        assert_eq!(fs::read(into.join("src/bin/tool")).unwrap(), b"\x7fELF");
+        let _ = fs::remove_dir_all(tmp_dir);
     }
 
     #[test]

@@ -53,10 +53,14 @@ fn update_etc_environment(rootfs: &str) {
     let Ok(existing) = read_rootfs_file(Path::new(rootfs), "etc/environment") else {
         return;
     };
+    let app_bin = format!("{}/bin", get_prefix());
     if let Some(content) = existing {
         for line in content.lines() {
             let key = line.split('=').next().unwrap_or("");
-            if !key.is_empty()
+            if let Some(path) = line.strip_prefix("PATH=") {
+                let kept: Vec<&str> = path.split(':').filter(|dir| *dir != app_bin).collect();
+                lines.push(format!("PATH={}", kept.join(":")));
+            } else if !key.is_empty()
                 && !key.starts_with("ANDROID_")
                 && key != "BOOTCLASSPATH"
                 && key != "DEX2OATBOOTCLASSPATH"
@@ -319,6 +323,29 @@ mod tests {
 
         std::env::remove_var("ANDROID_ROOT");
         std::env::remove_var("BOOTCLASSPATH");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn update_etc_environment_drops_the_app_bin_from_path() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_dir = unique_temp_dir("pr-cli-login-env-path");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        let prefix = "/data/data/id.or.oo.pr/files/usr";
+        std::env::set_var("APP_PREFIX", prefix);
+        fs::write(
+            rootfs.join("etc/environment"),
+            format!("PATH=/usr/bin:/bin:{}/bin\nKEEP=1\n", prefix),
+        )
+        .expect("seed environment");
+
+        update_etc_environment(rootfs.to_str().expect("path"));
+
+        std::env::remove_var("APP_PREFIX");
+        let content = fs::read_to_string(rootfs.join("etc/environment")).expect("read");
+        assert!(content.contains("PATH=/usr/bin:/bin\n"), "{}", content);
+        assert!(content.contains("KEEP=1"));
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
