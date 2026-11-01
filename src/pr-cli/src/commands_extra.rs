@@ -1055,6 +1055,67 @@ mod tests {
         assert!(env.prefix.join("etc/pr/up.sh").is_file());
     }
 
+    fn write_gz_backup_with_hardlink(path: &Path, file: &str, link: &str, target: &str) {
+        let out = fs::File::create(path).expect("create backup");
+        let encoder = flate2::write::GzEncoder::new(out, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o755);
+        header.set_size(4);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, file, &b"perl"[..])
+            .expect("append file");
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Link);
+        header.set_size(0);
+        header.set_cksum();
+        builder
+            .append_link(&mut header, link, target)
+            .expect("append hardlink");
+        builder
+            .into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish gz");
+    }
+
+    #[test]
+    fn restore_recreates_a_hardlink_inside_its_container() {
+        let env = TestPrefix::new("pr-cli-restore-hardlink");
+        let output = env.base.join("up.tar.gz");
+        write_gz_backup_with_hardlink(
+            &output,
+            "installed-rootfs/up/usr/bin/perl",
+            "installed-rootfs/up/usr/bin/perl5",
+            "installed-rootfs/up/usr/bin/perl",
+        );
+
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_eq!(
+            fs::read(env.legacy().join("up/usr/bin/perl5")).unwrap(),
+            b"perl"
+        );
+    }
+
+    #[test]
+    fn restore_refuses_a_hardlink_into_another_container() {
+        let env = TestPrefix::new("pr-cli-restore-hardlink-other");
+        let output = env.base.join("up.tar.gz");
+        write_gz_backup_with_hardlink(
+            &output,
+            "installed-rootfs/one/secret",
+            "installed-rootfs/two/stolen",
+            "installed-rootfs/one/secret",
+        );
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+        assert!(!env.legacy().join("two").exists());
+        assert!(!env.legacy().join("one").exists());
+    }
+
     #[test]
     fn restore_refuses_entries_outside_the_backup_layout() {
         for bad in [
