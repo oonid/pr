@@ -888,7 +888,6 @@ fn download_file(url: &str, output_path: &str, max_retries: u32) -> Result<(), S
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .connect_timeout(std::time::Duration::from_secs(30))
-                .danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|e| format!("build HTTP client: {}", e))?;
 
