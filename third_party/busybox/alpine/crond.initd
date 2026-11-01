@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+
+name="busybox $RC_SVCNAME"
+command="/usr/sbin/$SVCNAME"
+pidfile="/run/$RC_SVCNAME.pid"
+command_args="$CRON_OPTS -f"
+command_background=true
+
+depend() {
+	need localmount
+	need logger
+}

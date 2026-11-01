@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+name="busybox $SVCNAME"
+command="/usr/sbin/$SVCNAME"
+command_args="$HTTPD_OPTS -f"
+pidfile="/run/$RC_SVCNAME.pid"
+command_background=true
+
+depend() {
+	need net localmount
+	after firewall
+}
+

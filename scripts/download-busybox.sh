@@ -7,6 +7,7 @@ BUILD_DIR="${PROJECT_ROOT}/build"
 
 # Alpine busybox-static package details
 # Source: https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/
+# GPL corresponding source: third_party/busybox/ (replace it when the version changes)
 BB_VERSION="1.37.0"
 BB_RELEASE="r14"
 BB_ALPINE="v3.21"
