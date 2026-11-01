@@ -155,6 +155,9 @@ fn collect_installed_entries_with_dirs(
     let mut entries = Vec::new();
 
     for alias in list_subdirs(installed_rootfs_dir) {
+        if !shared::is_valid_container_name(&alias) {
+            continue;
+        }
         entries.push(InstalledEntry {
             alias,
             source: InstalledSource::Legacy,
@@ -165,6 +168,9 @@ fn collect_installed_entries_with_dirs(
     }
 
     for alias in list_subdirs(oci_containers_dir) {
+        if !shared::is_valid_container_name(&alias) {
+            continue;
+        }
         if oci_containers_dir.join(&alias).join("rootfs").is_dir() {
             let metadata_path = oci_containers_dir.join(&alias).join("manifest.json");
             let metadata = load_oci_install_metadata(&metadata_path).ok();
@@ -489,6 +495,23 @@ mod tests {
         assert_eq!(entries[0].alias, "debian");
         assert_eq!(entries[0].install_name, None);
         assert_eq!(entries[0].source, InstalledSource::Oci);
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn skips_directories_that_are_not_container_names() {
+        let base = unique_temp_dir("pr-cli-list-staging");
+        let legacy = base.join("installed-rootfs");
+        let containers = base.join("containers");
+        fs::create_dir_all(legacy.join(".old.pr-cli-restore")).expect("create legacy staging");
+        fs::create_dir_all(containers.join(".box.pr-cli-restore/rootfs"))
+            .expect("create oci staging");
+        fs::create_dir_all(containers.join("box/rootfs")).expect("create oci rootfs");
+
+        let entries = collect_installed_entries_with_dirs(&legacy, &containers);
+        let aliases: Vec<_> = entries.iter().map(|e| e.alias.as_str()).collect();
+        assert_eq!(aliases, vec!["box"]);
 
         let _ = fs::remove_dir_all(base);
     }
