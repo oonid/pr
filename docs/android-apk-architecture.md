@@ -281,7 +281,7 @@ Compose-based distro management UI (270 lines):
 - **Coroutine safety**: all PTY I/O on `Dispatchers.IO`, state updates via `withContext(Dispatchers.Main)`
 
 Current behaviour: the list is a fixed catalog (Alpine latest and edge, Debian stable and testing,
-Fedora, Ubuntu) plus any other installed container; Arch Linux, Manjaro, openSUSE and Rocky Linux
+Fedora, Ubuntu) plus any other installed container; Manjaro, openSUSE and Rocky Linux
 are suggestions under **Images** on the custom-image card. Install, remove and test run `pr-cli`
 through `DistroOperations` (see "Session lifetime and Back").
 
