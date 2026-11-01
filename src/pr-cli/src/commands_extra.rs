@@ -207,21 +207,22 @@ pub fn command_clear_cache() -> Result<(), String> {
 }
 
 fn chmod_readable_recursive(path: &Path) {
-    fn inner(p: &Path) {
-        if let Ok(entries) = fs::read_dir(p) {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    let mode = meta.permissions().mode();
+    if meta.is_dir() {
+        if mode & 0o500 != 0o500 {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o500));
+        }
+        if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
-                let ep = entry.path();
-                if ep.is_dir() {
-                    let _ = fs::set_permissions(&ep, fs::Permissions::from_mode(0o755));
-                    inner(&ep);
-                } else {
-                    let _ = fs::set_permissions(&ep, fs::Permissions::from_mode(0o644));
-                }
+                chmod_readable_recursive(&entry.path());
             }
         }
+    } else if meta.is_file() && mode & 0o400 == 0 {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o400));
     }
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
-    inner(path);
 }
 
 fn render_override_plugin(plugin: &DistroPlugin, alias: &str) -> String {
@@ -822,34 +823,55 @@ mod tests {
         assert_eq!(err, "source not found");
     }
 
+    fn mode_of(path: &Path) -> u32 {
+        fs::symlink_metadata(path)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
     #[test]
-    fn chmod_readable_recursive_sets_readable_permissions() {
+    fn chmod_readable_recursive_only_adds_owner_read_and_search() {
         let tmp_dir = unique_temp_dir("pr-cli-commands-extra-chmod-readable");
         let nested = tmp_dir.join("nested");
-        let file = nested.join("note.txt");
+        let unreadable = nested.join("unreadable");
+        let program = nested.join("program");
         fs::create_dir_all(&nested).expect("create nested dir");
-        fs::write(&file, b"hello").expect("write file");
-        fs::set_permissions(&tmp_dir, fs::Permissions::from_mode(0o700)).expect("chmod root");
-        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).expect("chmod nested");
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).expect("chmod file");
+        fs::write(&unreadable, b"hello").expect("write file");
+        fs::write(&program, b"\x7fELF").expect("write program");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o200)).expect("chmod");
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("chmod");
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o300)).expect("chmod");
 
         chmod_readable_recursive(&tmp_dir);
 
-        let root_mode = fs::metadata(&tmp_dir)
-            .expect("root meta")
-            .permissions()
-            .mode()
-            & 0o777;
-        let nested_mode = fs::metadata(&nested)
-            .expect("nested meta")
-            .permissions()
-            .mode()
-            & 0o777;
-        let file_mode = fs::metadata(&file).expect("file meta").permissions().mode() & 0o777;
-        assert_eq!(root_mode, 0o755);
-        assert_eq!(nested_mode, 0o755);
-        assert_eq!(file_mode, 0o644);
+        assert_eq!(mode_of(&nested), 0o700);
+        assert_eq!(mode_of(&unreadable), 0o600);
+        assert_eq!(mode_of(&program), 0o755);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
 
+    #[test]
+    fn chmod_readable_recursive_does_not_follow_symlinks() {
+        let tmp_dir = unique_temp_dir("pr-cli-commands-extra-chmod-symlink");
+        let outside = tmp_dir.join("outside");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&outside).expect("create outside");
+        fs::create_dir_all(&rootfs).expect("create rootfs");
+        fs::write(outside.join("file"), b"x").expect("write file");
+        fs::set_permissions(outside.join("file"), fs::Permissions::from_mode(0o200))
+            .expect("chmod file");
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o300)).expect("chmod dir");
+        std::os::unix::fs::symlink(outside.join("file"), rootfs.join("file-link"))
+            .expect("symlink file");
+        std::os::unix::fs::symlink(&outside, rootfs.join("dir-link")).expect("symlink dir");
+
+        chmod_readable_recursive(&rootfs);
+
+        assert_eq!(mode_of(&outside), 0o300);
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o700)).expect("chmod dir");
+        assert_eq!(mode_of(&outside.join("file")), 0o200);
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
