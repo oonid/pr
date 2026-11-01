@@ -24,6 +24,10 @@ use crate::shared::{
 /// needs write permission on the *parent*, so it succeeds even on 0000-perms
 /// empty dirs.  For non-empty dirs we chmod 0700 first, then recurse.
 pub(crate) fn force_remove_dir_all(path: &Path) {
+    if fs::symlink_metadata(path).is_ok_and(|meta| !meta.is_dir()) {
+        let _ = fs::remove_file(path);
+        return;
+    }
     // Fast path: try rmdir first.  For empty dirs (even 0000-perms) this works
     // because the kernel only checks write permission on the parent directory.
     if let Ok(cstr) = CString::new(path.to_string_lossy().as_bytes()) {
@@ -334,6 +338,10 @@ pub fn command_restore(tarball_path: &str) -> Result<(), String> {
 
     msg_status("Restoring containers from the tarball...");
     let dirs = BackupDirs {
+        staging: Path::new(&installed_rootfs_dir)
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .join(".restore"),
         plugins: PathBuf::from(&plugins_dir),
         legacy: PathBuf::from(&installed_rootfs_dir),
         containers: PathBuf::from(&oci_containers_dir),
@@ -1114,6 +1122,121 @@ mod tests {
         assert!(command_restore(output.to_str().unwrap()).is_err());
         assert!(!env.legacy().join("two").exists());
         assert!(!env.legacy().join("one").exists());
+    }
+
+    #[test]
+    fn restore_refuses_a_plain_tar_without_its_end_marker() {
+        let env = TestPrefix::new("pr-cli-restore-truncated");
+        seed_rootfs(&env.containers().join("box/rootfs"));
+        let output = env.base.join("box.tar");
+        command_backup("box", Some(output.to_str().unwrap())).expect("backup");
+        let bytes = fs::read(&output).expect("read backup");
+        assert!(bytes[bytes.len() - 1024..].iter().all(|b| *b == 0));
+        fs::write(&output, &bytes[..bytes.len() - 1024]).expect("truncate");
+        fs::write(env.containers().join("box/rootfs/keep"), b"data").expect("seed keep");
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+        assert_eq!(
+            fs::read(env.containers().join("box/rootfs/keep")).unwrap(),
+            b"data"
+        );
+    }
+
+    #[test]
+    fn restore_keeps_the_existing_container_when_moving_it_aside_fails() {
+        let env = TestPrefix::new("pr-cli-restore-move-fails");
+        let rootfs = env.containers().join("box/rootfs");
+        seed_rootfs(&rootfs);
+        let output = env.base.join("box.tar.gz");
+        command_backup("box", Some(output.to_str().unwrap())).expect("backup");
+        fs::write(rootfs.join("keep"), b"data").expect("seed keep");
+        fs::set_permissions(env.containers(), fs::Permissions::from_mode(0o555))
+            .expect("chmod containers");
+
+        let result = command_restore(output.to_str().unwrap());
+
+        fs::set_permissions(env.containers(), fs::Permissions::from_mode(0o755))
+            .expect("chmod containers back");
+        assert!(result.is_err());
+        assert_eq!(fs::read(rootfs.join("keep")).unwrap(), b"data");
+        assert_rootfs(&rootfs);
+    }
+
+    #[test]
+    fn restore_replaces_a_symlinked_container_without_touching_its_target() {
+        let env = TestPrefix::new("pr-cli-restore-symlink-destination");
+        seed_rootfs(&env.legacy().join("old"));
+        let output = env.base.join("old.tar.gz");
+        command_backup("old", Some(output.to_str().unwrap())).expect("backup");
+        let elsewhere = env.base.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("create elsewhere");
+        fs::write(elsewhere.join("precious"), b"data").expect("seed precious");
+        force_remove_dir_all(&env.legacy().join("old"));
+        std::os::unix::fs::symlink(&elsewhere, env.legacy().join("old")).expect("symlink");
+
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_eq!(fs::read(elsewhere.join("precious")).unwrap(), b"data");
+        assert!(!fs::symlink_metadata(env.legacy().join("old"))
+            .unwrap()
+            .is_symlink());
+        assert_rootfs(&env.legacy().join("old"));
+    }
+
+    #[test]
+    fn force_remove_dir_all_removes_a_symlink_without_following_it() {
+        let tmp_dir = unique_temp_dir("pr-cli-force-remove-symlink");
+        let target = tmp_dir.join("target");
+        fs::create_dir_all(&target).expect("create target");
+        fs::write(target.join("precious"), b"data").expect("seed");
+        std::os::unix::fs::symlink(&target, tmp_dir.join("link")).expect("symlink");
+
+        force_remove_dir_all(&tmp_dir.join("link"));
+
+        assert!(fs::symlink_metadata(tmp_dir.join("link")).is_err());
+        assert_eq!(fs::read(target.join("precious")).unwrap(), b"data");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn restore_refuses_a_plugin_without_its_container() {
+        let env = TestPrefix::new("pr-cli-restore-stray-plugin");
+        let output = env.base.join("box.tar.gz");
+        write_gz_backup(
+            &output,
+            &[
+                ("containers/box/rootfs/f", Some(b"x")),
+                ("pr/ubuntu.sh", Some(b"DISTRO_NAME=\"Evil\"\n")),
+            ],
+        );
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+        assert!(!env.prefix.join("etc/pr/ubuntu.sh").exists());
+        assert!(!env.containers().join("box").exists());
+    }
+
+    #[test]
+    fn backup_refuses_a_compression_it_cannot_write() {
+        let env = TestPrefix::new("pr-cli-backup-bz2");
+        seed_rootfs(&env.containers().join("box/rootfs"));
+        for name in ["box.tar.bz2", "box.tar.zst", "box.TAR.BZ2"] {
+            let output = env.base.join(name);
+            assert!(command_backup("box", Some(output.to_str().unwrap())).is_err());
+            assert!(!output.exists(), "{}", name);
+        }
+        let upper = env.base.join("box.TAR.GZ");
+        command_backup("box", Some(upper.to_str().unwrap())).expect("backup .TAR.GZ");
+        assert_eq!(&fs::read(&upper).unwrap()[..2], &[0x1f, 0x8b]);
+    }
+
+    #[test]
+    fn restore_names_a_compression_it_cannot_read() {
+        let env = TestPrefix::new("pr-cli-restore-bz2");
+        let output = env.base.join("box.tar.bz2");
+        fs::write(&output, b"BZh91AY&SYxxxxxxxxxxxxxxxxxxxx").expect("write bz2");
+
+        let err = command_restore(output.to_str().unwrap()).expect_err("must fail");
+        assert!(err.contains("bzip2"), "{}", err);
     }
 
     #[test]
