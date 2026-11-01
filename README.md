@@ -4,7 +4,7 @@ Android app that runs Linux distributions via [proot](https://github.com/proot-m
 
 ## What it does
 
-- Install and run Linux distributions on any Android device: the list offers Alpine, Debian, Fedora and Ubuntu, and the custom-image card installs any OCI image, with Arch Linux, Manjaro, openSUSE and Rocky Linux one tap away under **Images** (see [Supported distributions](#supported-distributions))
+- Install and run Linux distributions on any Android device: the list offers Alpine, Debian, Fedora and Ubuntu, and the custom-image card installs any OCI image, with Manjaro, openSUSE and Rocky Linux one tap away under **Images** (see [Supported distributions](#supported-distributions))
 - Native OCI container image support (`docker.io/library/...`), with a layer cache that is verified before reuse
 - Background sessions: a session keeps running after its screen closes, for example a long-running agent or server, under a `specialUse` foreground service with an ongoing notification (End all, Keep CPU awake)
   - the notification counts the running sessions and names a session being ended as "Stopping <name>…" until it exits
@@ -27,9 +27,9 @@ The core execution environment has been decoupled into a standalone Android Libr
 
 ## Supported distributions
 
-The container list offers Alpine (latest & edge), Debian (stable & testing), Fedora and Ubuntu. Arch Linux, Manjaro, openSUSE and Rocky Linux are one tap away under **Images** on the custom-image card, which installs any OCI image reference.
+The container list offers Alpine (latest & edge), Debian (stable & testing), Fedora and Ubuntu. Manjaro, openSUSE and Rocky Linux are one tap away under **Images** on the custom-image card, which installs any OCI image reference. Every image in the list has an arm64 build; Arch Linux is not offered because its official image is published for amd64 only.
 
-On the command line, `pr-cli install <alias>` installs the same images under the same names: `alpine`, `alpine-edge`, `debian`, `debian-testing`, `fedora`, `ubuntu`, `archlinux`, `manjaro`, `opensuse` and `rockylinux`. A plugin file `etc/pr/<alias>.sh` takes precedence over a catalog name.
+On the command line, `pr-cli install <alias>` installs the same images under the same names: `alpine`, `alpine-edge`, `debian`, `debian-testing`, `fedora`, `ubuntu`, `manjaro`, `opensuse` and `rockylinux`. A plugin file `etc/pr/<alias>.sh` takes precedence over a catalog name.
 
 ## How it works
 
