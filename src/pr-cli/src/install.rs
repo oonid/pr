@@ -24,8 +24,9 @@ use crate::shared::{
     get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_native_loader,
     get_native_proot, get_oci_container_dir, get_oci_container_manifest_path,
     get_oci_container_rootfs_dir, get_oci_containers_dir, get_plugins_dir, get_prefix, msg_error,
-    msg_status, network_dns_servers, resolv_conf_contents, resolve_installed_rootfs,
-    DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION,
+    msg_status, network_dns_servers, read_rootfs_file, resolv_conf_contents,
+    resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
+    DEFAULT_FAKE_KERNEL_VERSION,
 };
 use crate::source_parse::{InstallSourceInput, InstallSourceInputKind};
 
@@ -991,39 +992,37 @@ fn verify_sha256(expected: &str, filepath: &str) -> Result<(), String> {
 }
 
 fn setup_fake_sysdata(rootfs: &str) -> Result<(), String> {
+    let root = Path::new(rootfs);
     for d in &["proc", "sys", "sys/.empty"] {
+        ensure_parent_inside_root(root, &Path::new(d).join("x"))?;
         let path = format!("{}/{}", rootfs, d);
         fs::create_dir_all(&path).map_err(|e| format!("failed to create {}: {}", path, e))?;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o700));
     }
 
     let loadavg = "0.12 0.07 0.02 2/165 765\n";
-    fs::write(format!("{}/proc/.loadavg", rootfs), loadavg)
-        .map_err(|e| format!("write .loadavg: {}", e))?;
+    write_rootfs_file(root, "proc/.loadavg", &loadavg, None)?;
 
     let stat = "cpu  1957 0 2877 93280 262 342 254 87 0 0\ncpu0 31 0 226 12027 82 10 4 9 0 0\ncpu1 45 0 664 11144 21 263 233 12 0 0\ncpu2 494 0 537 11283 27 10 3 8 0 0\ncpu3 359 0 234 11723 24 26 5 7 0 0\ncpu4 295 0 268 11772 10 12 2 12 0 0\ncpu5 270 0 251 11833 15 3 1 10 0 0\ncpu6 430 0 520 11386 30 8 1 12 0 0\ncpu7 30 0 172 12108 50 8 1 13 0 0\nintr 127541\nctxt 140223\nbtime 1680020856\nprocesses 772\nprocs_running 2\nprocs_blocked 0\nsoftirq 75663 0 5903 6 25375 10774 0 243 11685 0 21677\n";
-    fs::write(format!("{}/proc/.stat", rootfs), stat).map_err(|e| format!("write .stat: {}", e))?;
+    write_rootfs_file(root, "proc/.stat", stat, None)?;
 
     let uptime = "124.08 932.80\n";
-    fs::write(format!("{}/proc/.uptime", rootfs), uptime)
-        .map_err(|e| format!("write .uptime: {}", e))?;
+    write_rootfs_file(root, "proc/.uptime", &uptime, None)?;
 
     let version = format!(
         "Linux version {} (proot@pr) (gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) {}\n",
         DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION
     );
-    fs::write(format!("{}/proc/.version", rootfs), version)
-        .map_err(|e| format!("write .version: {}", e))?;
+    write_rootfs_file(root, "proc/.version", &version, None)?;
 
     let vmstat = "nr_free_pages 1743136\nnr_zone_inactive_anon 179281\nnr_zone_active_anon 7183\nnr_zone_inactive_file 22858\nnr_zone_active_file 51328\nnr_zone_unevictable 642\nnr_zone_write_pending 0\nnr_mlock 0\nnr_bounce 0\n";
-    fs::write(format!("{}/proc/.vmstat", rootfs), vmstat)
-        .map_err(|e| format!("write .vmstat: {}", e))?;
+    write_rootfs_file(root, "proc/.vmstat", &vmstat, None)?;
 
     Ok(())
 }
 
-fn append_line_if_missing(path: &Path, line: &str) -> Result<(), String> {
-    let mut content = fs::read_to_string(path).unwrap_or_default();
+fn append_line_if_missing(rootfs: &Path, relative: &str, line: &str) -> Result<(), String> {
+    let mut content = read_rootfs_file(rootfs, relative).unwrap_or_default();
     if !content
         .lines()
         .any(|existing| existing.trim() == line.trim())
@@ -1033,15 +1032,15 @@ fn append_line_if_missing(path: &Path, line: &str) -> Result<(), String> {
         }
         content.push_str(line);
         content.push('\n');
-        fs::write(path, content).map_err(|e| format!("write {}: {}", path.display(), e))?;
+        write_rootfs_file(rootfs, relative, &content, None)?;
     }
     Ok(())
 }
 
 fn uncomment_en_us_locale(rootfs: &str) -> Result<(), String> {
     let locale_gen_path = Path::new(rootfs).join("etc/locale.gen");
-    let content = fs::read_to_string(&locale_gen_path)
-        .map_err(|e| format!("read {}: {}", locale_gen_path.display(), e))?;
+    let content = read_rootfs_file(Path::new(rootfs), "etc/locale.gen")
+        .ok_or_else(|| format!("read {}: not found", locale_gen_path.display()))?;
     let updated = content
         .lines()
         .map(|line| {
@@ -1056,8 +1055,12 @@ fn uncomment_en_us_locale(rootfs: &str) -> Result<(), String> {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&locale_gen_path, format!("{}\n", updated))
-        .map_err(|e| format!("write {}: {}", locale_gen_path.display(), e))
+    write_rootfs_file(
+        Path::new(rootfs),
+        "etc/locale.gen",
+        &format!("{}\n", updated),
+        None,
+    )
 }
 
 fn run_guest_shell_command(
@@ -1123,21 +1126,23 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
                 "add-apt-repository --yes --no-update ppa:mozillateam/ppa",
                 &[],
             );
-            let pin_path = Path::new(rootfs).join("etc/apt/preferences.d/pin-mozilla-ppa");
-            if let Some(parent) = pin_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("create {}: {}", parent.display(), e))?;
-            }
-            fs::write(
-                &pin_path,
+            let pin = "etc/apt/preferences.d/pin-mozilla-ppa";
+            ensure_parent_inside_root(Path::new(rootfs), Path::new(pin))?;
+            let pin_dir = Path::new(rootfs).join("etc/apt/preferences.d");
+            fs::create_dir_all(&pin_dir)
+                .map_err(|e| format!("create {}: {}", pin_dir.display(), e))?;
+            write_rootfs_file(
+                Path::new(rootfs),
+                pin,
                 "Package: *\nPin: release o=LP-PPA-mozillateam\nPin-Priority: 9999\n",
-            )
-            .map_err(|e| format!("write {}: {}", pin_path.display(), e))?;
+                None,
+            )?;
         }
         "archlinux" => {
             for file in ["su", "su-l", "system-local-login", "system-remote-login"] {
                 append_line_if_missing(
-                    &Path::new(rootfs).join("etc/pam.d").join(file),
+                    Path::new(rootfs),
+                    &format!("etc/pam.d/{}", file),
                     "session  required  pam_env.so readenv=1",
                 )?;
             }
@@ -1147,7 +1152,8 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
         "manjaro" => {
             for file in ["su", "su-l", "system-local-login", "system-remote-login"] {
                 append_line_if_missing(
-                    &Path::new(rootfs).join("etc/pam.d").join(file),
+                    Path::new(rootfs),
+                    &format!("etc/pam.d/{}", file),
                     "session  required  pam_env.so readenv=1",
                 )?;
             }
@@ -1155,7 +1161,8 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
         "fedora" => {
             run_guest_shell_command(rootfs, "authselect opt-out", &[])?;
             append_line_if_missing(
-                &Path::new(rootfs).join("etc/pam.d/system-auth"),
+                Path::new(rootfs),
+                "etc/pam.d/system-auth",
                 "session  required  pam_env.so readenv=1",
             )?;
         }
@@ -1182,22 +1189,20 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     );
 
     // /etc/resolv.conf
+    let root = Path::new(rootfs);
     let resolv_path = format!("{}/etc/resolv.conf", rootfs);
-    let _ = fs::remove_file(&resolv_path);
     let resolv = resolv_conf_contents(&network_dns_servers());
-    fs::write(&resolv_path, &resolv).map_err(|e| format!("write resolv.conf: {}", e))?;
+    write_rootfs_file(root, "etc/resolv.conf", &resolv, Some(0o644))?;
     msg_status(&format!("Creating file '{}'...", resolv_path));
 
     // /etc/hosts
     let hosts_path = format!("{}/etc/hosts", rootfs);
-    let _ = fs::set_permissions(&hosts_path, fs::Permissions::from_mode(0o644));
     let hosts = "# IPv4.\n127.0.0.1   localhost.localdomain localhost\n\n# IPv6.\n::1         localhost.localdomain localhost ip6-localhost ip6-loopback\nfe00::0     ip6-localnet\nff00::0     ip6-mcastprefix\nff02::1     ip6-allnodes\nff02::2     ip6-allrouters\nff02::3     ip6-allhosts\n";
-    fs::write(&hosts_path, hosts).map_err(|e| format!("write hosts: {}", e))?;
+    write_rootfs_file(root, "etc/hosts", hosts, Some(0o644))?;
     msg_status(&format!("Creating file '{}'...", hosts_path));
 
     // /etc/environment
     let env_path = format!("{}/etc/environment", rootfs);
-    let _ = fs::set_permissions(&env_path, fs::Permissions::from_mode(0o644));
     let mut env_content = String::new();
     for var in &[
         "ANDROID_ART_ROOT",
@@ -1221,13 +1226,13 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
         "LANG=en_US.UTF-8\nMOZ_FAKE_NO_SANDBOX=1\nPATH={}\nPULSE_SERVER=127.0.0.1\nTERM={}\nTMPDIR=/tmp\n",
         default_path_env, term
     ));
-    fs::write(&env_path, &env_content).map_err(|e| format!("write environment: {}", e))?;
+    write_rootfs_file(root, "etc/environment", &env_content, Some(0o644))?;
     msg_status(&format!("Writing file '{}'...", env_path));
 
     // Fix PATH in common shell config files
     for f in &["/etc/bash.bashrc", "/etc/profile", "/etc/login.defs"] {
         let fp = format!("{}/{}", rootfs, f);
-        if !Path::new(&fp).exists() {
+        if !fs::symlink_metadata(&fp).is_ok_and(|meta| meta.is_file()) {
             continue;
         }
         msg_status(&format!("Updating PATH in '{}' if needed...", fp));
@@ -1252,27 +1257,20 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     let gid = unsafe { libc::getgid() };
     let username = run_cmd("id", &["-un"]).unwrap_or_else(|_| "root".to_string());
 
-    for f in &["passwd", "shadow", "group", "gshadow"] {
-        let fp = format!("{}/etc/{}", rootfs, f);
-        let _ = fs::set_permissions(&fp, fs::Permissions::from_mode(0o644));
-    }
-
     // passwd entry
-    let passwd_path = format!("{}/etc/passwd", rootfs);
     let passwd_entry = format!(
         "aid_{}:x:{}:{}:proot-distro:/:/sbin/nologin\n",
         username, uid, gid
     );
-    let mut passwd = fs::read_to_string(&passwd_path).unwrap_or_default();
+    let mut passwd = read_rootfs_file(root, "etc/passwd").unwrap_or_default();
     passwd.push_str(&passwd_entry);
-    fs::write(&passwd_path, &passwd).map_err(|e| format!("write passwd: {}", e))?;
+    write_rootfs_file(root, "etc/passwd", &passwd, Some(0o644))?;
 
     // shadow entry
-    let shadow_path = format!("{}/etc/shadow", rootfs);
     let shadow_entry = format!("aid_{}:*:18446:0:99999:7:::\n", username);
-    let mut shadow = fs::read_to_string(&shadow_path).unwrap_or_default();
+    let mut shadow = read_rootfs_file(root, "etc/shadow").unwrap_or_default();
     shadow.push_str(&shadow_entry);
-    fs::write(&shadow_path, &shadow).map_err(|e| format!("write shadow: {}", e))?;
+    write_rootfs_file(root, "etc/shadow", &shadow, Some(0o644))?;
 
     // group entries
     let group_names_str = run_cmd("id", &["-Gn"]).unwrap_or_else(|_| "root".to_string());
@@ -1281,8 +1279,7 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     let group_names: Vec<&str> = group_names_str.split_whitespace().collect();
     let group_ids: Vec<&str> = group_ids_str.split_whitespace().collect();
 
-    let group_path = format!("{}/etc/group", rootfs);
-    let mut group = fs::read_to_string(&group_path).unwrap_or_default();
+    let mut group = read_rootfs_file(root, "etc/group").unwrap_or_default();
     for (i, gname) in group_names.iter().enumerate() {
         let gid_val = group_ids.get(i).unwrap_or(&"0");
         group.push_str(&format!(
@@ -1290,16 +1287,16 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
             gname, gid_val, username
         ));
     }
-    fs::write(&group_path, &group).map_err(|e| format!("write group: {}", e))?;
+    write_rootfs_file(root, "etc/group", &group, Some(0o644))?;
 
     // gshadow entries
     let gshadow_path = format!("{}/etc/gshadow", rootfs);
-    if Path::new(&gshadow_path).exists() {
-        let mut gshadow = fs::read_to_string(&gshadow_path).unwrap_or_default();
+    if fs::symlink_metadata(&gshadow_path).is_ok() {
+        let mut gshadow = read_rootfs_file(root, "etc/gshadow").unwrap_or_default();
         for gname in &group_names {
             gshadow.push_str(&format!("aid_{}:*::root,aid_{}\n", gname, username));
         }
-        fs::write(&gshadow_path, &gshadow).map_err(|e| format!("write gshadow: {}", e))?;
+        write_rootfs_file(root, "etc/gshadow", &gshadow, Some(0o644))?;
     }
 
     // Fake /proc and /sys
@@ -1930,6 +1927,103 @@ mod tests {
     }
 
     #[test]
+    fn write_config_files_replaces_symlinked_files_instead_of_following_them() {
+        let tmp_dir = unique_temp_dir("pr-cli-write-config-symlinks");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        for name in [
+            "passwd",
+            "shadow",
+            "group",
+            "gshadow",
+            "hosts",
+            "environment",
+        ] {
+            fs::write(outside.join(name), "host-data\n").expect("seed host file");
+            std::os::unix::fs::symlink(outside.join(name), rootfs.join("etc").join(name))
+                .expect("symlink etc file");
+        }
+
+        write_config_files(rootfs.to_str().expect("path"), None).expect("write config");
+
+        for name in [
+            "passwd",
+            "shadow",
+            "group",
+            "gshadow",
+            "hosts",
+            "environment",
+        ] {
+            assert_eq!(
+                fs::read_to_string(outside.join(name)).expect("read host file"),
+                "host-data\n",
+                "{} outside the rootfs changed",
+                name
+            );
+            let inside = rootfs.join("etc").join(name);
+            assert!(fs::symlink_metadata(&inside).expect("stat").is_file());
+            assert!(!fs::read_to_string(&inside).unwrap().contains("host-data"));
+        }
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn write_config_files_refuses_an_etc_that_leaves_the_rootfs() {
+        let tmp_dir = unique_temp_dir("pr-cli-write-config-etc-symlink");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("create rootfs");
+        std::os::unix::fs::symlink(&outside, rootfs.join("etc")).expect("symlink etc");
+
+        assert!(write_config_files(rootfs.to_str().expect("path"), None).is_err());
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn setup_fake_sysdata_refuses_a_proc_that_leaves_the_rootfs() {
+        let tmp_dir = unique_temp_dir("pr-cli-fake-sysdata-symlink");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("create rootfs");
+        std::os::unix::fs::symlink(&outside, rootfs.join("proc")).expect("symlink proc");
+
+        assert!(setup_fake_sysdata(rootfs.to_str().expect("path")).is_err());
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn distro_setup_edits_do_not_follow_symlinks_out_of_the_rootfs() {
+        let tmp_dir = unique_temp_dir("pr-cli-distro-setup-symlink");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc/pam.d")).expect("create pam.d");
+        fs::write(outside.join("locale.gen"), "# en_US.UTF-8 UTF-8\n").expect("seed");
+        fs::write(outside.join("su"), "host\n").expect("seed");
+        std::os::unix::fs::symlink(outside.join("locale.gen"), rootfs.join("etc/locale.gen"))
+            .expect("symlink locale.gen");
+        std::os::unix::fs::symlink(outside.join("su"), rootfs.join("etc/pam.d/su"))
+            .expect("symlink su");
+        let rootfs_str = rootfs.to_str().expect("path");
+
+        let _ = uncomment_en_us_locale(rootfs_str);
+        let _ = append_line_if_missing(&rootfs, "etc/pam.d/su", "session required x");
+
+        assert_eq!(
+            fs::read_to_string(outside.join("locale.gen")).unwrap(),
+            "# en_US.UTF-8 UTF-8\n"
+        );
+        assert_eq!(fs::read_to_string(outside.join("su")).unwrap(), "host\n");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
     fn validate_alias_format_accepts_and_rejects_expected_values() {
         assert!(validate_alias_format("debian").is_ok());
         assert!(validate_alias_format("Ubuntu_24.04+custom").is_ok());
@@ -1981,9 +2075,9 @@ mod tests {
         let file_path = tmp_dir.join("config.txt");
         fs::write(&file_path, "first=line").expect("seed file");
 
-        append_line_if_missing(&file_path, "session required pam_env.so")
+        append_line_if_missing(&tmp_dir, "config.txt", "session required pam_env.so")
             .expect("append first time");
-        append_line_if_missing(&file_path, "session required pam_env.so")
+        append_line_if_missing(&tmp_dir, "config.txt", "session required pam_env.so")
             .expect("append second time");
 
         let content = fs::read_to_string(&file_path).expect("read file");
@@ -2200,7 +2294,7 @@ mod tests {
         fs::create_dir_all(&tmp_dir).expect("create temp dir");
         let file_path = tmp_dir.join("new.conf");
 
-        append_line_if_missing(&file_path, "line=value").expect("append line");
+        append_line_if_missing(&tmp_dir, "new.conf", "line=value").expect("append line");
         let content = fs::read_to_string(&file_path).expect("read file");
         assert_eq!(content, "line=value\n");
 
