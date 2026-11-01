@@ -518,16 +518,14 @@ pub(crate) fn link_inside_root(
     relative_path: &Path,
     link_target: &Path,
 ) -> Result<bool, String> {
-    ensure_parent_inside_root(rootfs, link_target)
+    let source = resolve_in_root(rootfs, link_target, false)
         .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
-    let source = rootfs.join(link_target);
     let Ok(source_metadata) = fs::symlink_metadata(&source) else {
         return Ok(false);
     };
 
-    ensure_parent_inside_root(rootfs, relative_path)
+    let destination = resolve_in_root(rootfs, relative_path, false)
         .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
-    let destination = rootfs.join(relative_path);
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("create hardlink parent {}: {}", parent.display(), e))?;
@@ -569,40 +567,55 @@ pub(crate) fn link_inside_root(
     Ok(true)
 }
 
-pub(crate) fn ensure_parent_inside_root(rootfs: &Path, relative: &Path) -> Result<(), String> {
-    let Some(parent) = relative.parent() else {
-        return Ok(());
-    };
-    let root = fs::canonicalize(rootfs)
-        .map_err(|e| format!("resolve rootfs {}: {}", rootfs.display(), e))?;
-    let mut current = rootfs.to_path_buf();
-    for component in parent.components() {
-        let Component::Normal(part) = component else {
-            return Err(format!("unsafe path {}", relative.display()));
-        };
-        current.push(part);
-        match fs::symlink_metadata(&current) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(format!("stat {}: {}", current.display(), e)),
+pub(crate) fn resolve_in_root(
+    rootfs: &Path,
+    relative: &Path,
+    follow_last: bool,
+) -> Result<PathBuf, String> {
+    let mut pending: Vec<std::ffi::OsString> = Vec::new();
+    push_components(&mut pending, relative);
+    let mut resolved = PathBuf::new();
+    let mut links = 0;
+    while let Some(part) = pending.pop() {
+        if part == ".." {
+            resolved.pop();
+            continue;
         }
-        let resolved = fs::canonicalize(&current).map_err(|e| {
-            format!(
-                "{} leaves the rootfs: resolve {}: {}",
-                relative.display(),
-                current.display(),
-                e
-            )
-        })?;
-        if !resolved.starts_with(&root) {
-            return Err(format!(
-                "{} leaves the rootfs through {}",
-                relative.display(),
-                current.display()
-            ));
+        let candidate = resolved.join(&part);
+        if pending.is_empty() && !follow_last {
+            resolved = candidate;
+            break;
+        }
+        let host = rootfs.join(&candidate);
+        match fs::symlink_metadata(&host) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                links += 1;
+                if links > 40 {
+                    return Err(format!("too many symlinks in {}", relative.display()));
+                }
+                let target = fs::read_link(&host)
+                    .map_err(|e| format!("read symlink {}: {}", host.display(), e))?;
+                if target.is_absolute() {
+                    resolved = PathBuf::new();
+                }
+                push_components(&mut pending, &target);
+            }
+            Ok(_) => resolved = candidate,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => resolved = candidate,
+            Err(e) => return Err(format!("stat {}: {}", host.display(), e)),
         }
     }
-    Ok(())
+    Ok(rootfs.join(resolved))
+}
+
+fn push_components(pending: &mut Vec<std::ffi::OsString>, path: &Path) {
+    for component in path.components().rev() {
+        match component {
+            Component::Normal(part) => pending.push(part.to_os_string()),
+            Component::ParentDir => pending.push("..".into()),
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
+        }
+    }
 }
 
 pub(crate) fn sanitize_layer_path(path: &Path) -> Result<PathBuf, String> {
@@ -1080,6 +1093,22 @@ mod tests {
     }
 
     #[test]
+    fn hardlink_below_an_absolute_symlink_lands_inside_the_rootfs() {
+        let tmp = unique_tmp_dir("oci-hardlink-absolute-symlink");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(rootfs.join("run")).expect("mkdir run");
+        fs::create_dir_all(rootfs.join("var")).expect("mkdir var");
+        symlink("/run", rootfs.join("var/run")).expect("symlink var/run");
+
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_hardlink(&layer, "var/run/perl", "usr/bin/perl", true);
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        assert_eq!(fs::read(rootfs.join("run/perl")).expect("read"), b"payload");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn hardlink_is_not_created_through_a_symlinked_parent() {
         let tmp = unique_tmp_dir("oci-hardlink-symlink-destination");
         let outside = tmp.join("outside");
@@ -1092,7 +1121,11 @@ mod tests {
         let layer = tmp.join("layer.tar");
         write_layer_tar_with_hardlink(&layer, "etc/victim", "usr/bin/perl", true);
 
-        assert!(apply_layer_blob(&layer, &rootfs).is_err());
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        let rerooted = rootfs
+            .join(outside.strip_prefix("/").unwrap())
+            .join("victim");
+        assert_eq!(fs::read(rerooted).expect("read re-rooted link"), b"payload");
         assert_eq!(
             fs::read(outside.join("victim")).expect("read victim"),
             b"victim"

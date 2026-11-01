@@ -15,7 +15,7 @@ use crate::commands_extra::force_remove_dir_all;
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
     apply_layer_blob, blob_matches_digest, blob_path, blob_url, download_blob_with_bearer,
-    ensure_parent_inside_root, link_inside_root, sanitize_layer_path, select_manifest_descriptor,
+    link_inside_root, resolve_in_root, sanitize_layer_path, select_manifest_descriptor,
     OciDescriptor, OciManifest, OciPlatform, DOCKER_MANIFEST_LIST_MEDIA_TYPE,
     DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MANIFEST_MEDIA_TYPE,
 };
@@ -23,9 +23,9 @@ use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
     get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_native_loader,
     get_native_proot, get_oci_container_dir, get_oci_container_manifest_path,
-    get_oci_container_rootfs_dir, get_oci_containers_dir, get_plugins_dir, get_prefix, msg_error,
-    msg_status, network_dns_servers, read_rootfs_file, resolv_conf_contents,
-    resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
+    get_oci_container_rootfs_dir, get_oci_containers_dir, get_plugins_dir, get_prefix,
+    is_valid_container_name, msg_error, msg_status, network_dns_servers, read_rootfs_file,
+    resolv_conf_contents, resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
 };
 use crate::source_parse::{InstallSourceInput, InstallSourceInputKind};
@@ -765,8 +765,7 @@ fn extract_tarball(
             continue;
         }
 
-        ensure_parent_inside_root(root, &relative)?;
-        let dest_path = root.join(&relative);
+        let dest_path = resolve_in_root(root, &relative, false)?;
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("create dir {}: {}", parent.display(), e))?;
@@ -993,20 +992,20 @@ fn verify_sha256(expected: &str, filepath: &str) -> Result<(), String> {
 fn setup_fake_sysdata(rootfs: &str) -> Result<(), String> {
     let root = Path::new(rootfs);
     for d in &["proc", "sys", "sys/.empty"] {
-        ensure_parent_inside_root(root, &Path::new(d).join("x"))?;
-        let path = format!("{}/{}", rootfs, d);
-        fs::create_dir_all(&path).map_err(|e| format!("failed to create {}: {}", path, e))?;
+        let path = resolve_in_root(root, Path::new(d), true)?;
+        fs::create_dir_all(&path)
+            .map_err(|e| format!("failed to create {}: {}", path.display(), e))?;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o700));
     }
 
     let loadavg = "0.12 0.07 0.02 2/165 765\n";
-    write_rootfs_file(root, "proc/.loadavg", &loadavg, None)?;
+    write_rootfs_file(root, "proc/.loadavg", loadavg, None)?;
 
     let stat = "cpu  1957 0 2877 93280 262 342 254 87 0 0\ncpu0 31 0 226 12027 82 10 4 9 0 0\ncpu1 45 0 664 11144 21 263 233 12 0 0\ncpu2 494 0 537 11283 27 10 3 8 0 0\ncpu3 359 0 234 11723 24 26 5 7 0 0\ncpu4 295 0 268 11772 10 12 2 12 0 0\ncpu5 270 0 251 11833 15 3 1 10 0 0\ncpu6 430 0 520 11386 30 8 1 12 0 0\ncpu7 30 0 172 12108 50 8 1 13 0 0\nintr 127541\nctxt 140223\nbtime 1680020856\nprocesses 772\nprocs_running 2\nprocs_blocked 0\nsoftirq 75663 0 5903 6 25375 10774 0 243 11685 0 21677\n";
     write_rootfs_file(root, "proc/.stat", stat, None)?;
 
     let uptime = "124.08 932.80\n";
-    write_rootfs_file(root, "proc/.uptime", &uptime, None)?;
+    write_rootfs_file(root, "proc/.uptime", uptime, None)?;
 
     let version = format!(
         "Linux version {} (proot@pr) (gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) {}\n",
@@ -1015,13 +1014,21 @@ fn setup_fake_sysdata(rootfs: &str) -> Result<(), String> {
     write_rootfs_file(root, "proc/.version", &version, None)?;
 
     let vmstat = "nr_free_pages 1743136\nnr_zone_inactive_anon 179281\nnr_zone_active_anon 7183\nnr_zone_inactive_file 22858\nnr_zone_active_file 51328\nnr_zone_unevictable 642\nnr_zone_write_pending 0\nnr_mlock 0\nnr_bounce 0\n";
-    write_rootfs_file(root, "proc/.vmstat", &vmstat, None)?;
+    write_rootfs_file(root, "proc/.vmstat", vmstat, None)?;
 
     Ok(())
 }
 
+fn followed_relative(rootfs: &Path, relative: &str) -> Result<String, String> {
+    resolve_in_root(rootfs, Path::new(relative), true)?
+        .strip_prefix(rootfs)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| format!("resolve {}", relative))
+}
+
 fn append_line_if_missing(rootfs: &Path, relative: &str, line: &str) -> Result<(), String> {
-    let mut content = read_rootfs_file(rootfs, relative).unwrap_or_default();
+    let target = followed_relative(rootfs, relative)?;
+    let mut content = read_rootfs_file(rootfs, &target)?.unwrap_or_default();
     if !content
         .lines()
         .any(|existing| existing.trim() == line.trim())
@@ -1031,15 +1038,16 @@ fn append_line_if_missing(rootfs: &Path, relative: &str, line: &str) -> Result<(
         }
         content.push_str(line);
         content.push('\n');
-        write_rootfs_file(rootfs, relative, &content, None)?;
+        write_rootfs_file(rootfs, &target, &content, None)?;
     }
     Ok(())
 }
 
 fn uncomment_en_us_locale(rootfs: &str) -> Result<(), String> {
-    let locale_gen_path = Path::new(rootfs).join("etc/locale.gen");
-    let content = read_rootfs_file(Path::new(rootfs), "etc/locale.gen")
-        .ok_or_else(|| format!("read {}: not found", locale_gen_path.display()))?;
+    let root = Path::new(rootfs);
+    let target = followed_relative(root, "etc/locale.gen")?;
+    let content = read_rootfs_file(root, &target)?
+        .ok_or_else(|| format!("read {}/etc/locale.gen: not found", rootfs))?;
     let updated = content
         .lines()
         .map(|line| {
@@ -1054,12 +1062,7 @@ fn uncomment_en_us_locale(rootfs: &str) -> Result<(), String> {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    write_rootfs_file(
-        Path::new(rootfs),
-        "etc/locale.gen",
-        &format!("{}\n", updated),
-        None,
-    )
+    write_rootfs_file(root, &target, &format!("{}\n", updated), None)
 }
 
 fn run_guest_shell_command(
@@ -1126,8 +1129,8 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
                 &[],
             );
             let pin = "etc/apt/preferences.d/pin-mozilla-ppa";
-            ensure_parent_inside_root(Path::new(rootfs), Path::new(pin))?;
-            let pin_dir = Path::new(rootfs).join("etc/apt/preferences.d");
+            let pin_dir =
+                resolve_in_root(Path::new(rootfs), Path::new("etc/apt/preferences.d"), true)?;
             fs::create_dir_all(&pin_dir)
                 .map_err(|e| format!("create {}: {}", pin_dir.display(), e))?;
             write_rootfs_file(
@@ -1261,13 +1264,13 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
         "aid_{}:x:{}:{}:proot-distro:/:/sbin/nologin\n",
         username, uid, gid
     );
-    let mut passwd = read_rootfs_file(root, "etc/passwd").unwrap_or_default();
+    let mut passwd = read_rootfs_file(root, "etc/passwd")?.unwrap_or_default();
     passwd.push_str(&passwd_entry);
     write_rootfs_file(root, "etc/passwd", &passwd, Some(0o644))?;
 
     // shadow entry
     let shadow_entry = format!("aid_{}:*:18446:0:99999:7:::\n", username);
-    let mut shadow = read_rootfs_file(root, "etc/shadow").unwrap_or_default();
+    let mut shadow = read_rootfs_file(root, "etc/shadow")?.unwrap_or_default();
     shadow.push_str(&shadow_entry);
     write_rootfs_file(root, "etc/shadow", &shadow, Some(0o644))?;
 
@@ -1278,7 +1281,7 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     let group_names: Vec<&str> = group_names_str.split_whitespace().collect();
     let group_ids: Vec<&str> = group_ids_str.split_whitespace().collect();
 
-    let mut group = read_rootfs_file(root, "etc/group").unwrap_or_default();
+    let mut group = read_rootfs_file(root, "etc/group")?.unwrap_or_default();
     for (i, gname) in group_names.iter().enumerate() {
         let gid_val = group_ids.get(i).unwrap_or(&"0");
         group.push_str(&format!(
@@ -1291,7 +1294,7 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     // gshadow entries
     let gshadow_path = format!("{}/etc/gshadow", rootfs);
     if fs::symlink_metadata(&gshadow_path).is_ok() {
-        let mut gshadow = read_rootfs_file(root, "etc/gshadow").unwrap_or_default();
+        let mut gshadow = read_rootfs_file(root, "etc/gshadow")?.unwrap_or_default();
         for gname in &group_names {
             gshadow.push_str(&format!("aid_{}:*::root,aid_{}\n", gname, username));
         }
@@ -1387,6 +1390,13 @@ pub fn command_install(
             validate_alias_format(alias)?;
         }
         return install_from_oci_reference(&reference, override_alias);
+    }
+    if !is_valid_container_name(distro_name) {
+        msg_error(&format!(
+            "'{}' is not a valid distribution name: use alphanumerics and '_.+-'.",
+            distro_name
+        ));
+        return Err("invalid distribution name".to_string());
     }
 
     let installed_rootfs_dir = get_installed_rootfs_dir();
@@ -1713,10 +1723,42 @@ mod tests {
         );
         let rootfs = tmp.join("rootfs");
 
-        let result = extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[]);
+        extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[])
+            .expect("extract");
 
-        assert!(result.is_err());
         assert!(!outside.join("planted").exists());
+        let rerooted = rootfs
+            .join(outside.strip_prefix("/").unwrap())
+            .join("planted");
+        assert!(rerooted.is_file());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_writes_below_an_absolute_symlink_inside_the_rootfs() {
+        let tmp = unique_temp_dir("pr-cli-extract-absolute-symlink");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::Dir("top/run/"),
+                RawEntry::Dir("top/var/"),
+                RawEntry::Symlink("top/var/run", "/run"),
+                RawEntry::File("top/var/run/lock", b"x", 0o644),
+                RawEntry::Hardlink("top/var/run/lock2", "top/var/run/lock"),
+            ],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[])
+            .expect("extract");
+
+        assert_eq!(fs::read(rootfs.join("run/lock")).unwrap(), b"x");
+        assert_eq!(fs::read(rootfs.join("run/lock2")).unwrap(), b"x");
+        assert!(fs::symlink_metadata(rootfs.join("var/run"))
+            .unwrap()
+            .is_symlink());
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -2016,21 +2058,23 @@ mod tests {
     }
 
     #[test]
-    fn write_config_files_refuses_an_etc_that_leaves_the_rootfs() {
+    fn write_config_files_keeps_an_absolute_etc_symlink_inside_the_rootfs() {
         let tmp_dir = unique_temp_dir("pr-cli-write-config-etc-symlink");
         let outside = tmp_dir.join("outside");
         fs::create_dir_all(&outside).expect("create outside");
         let rootfs = tmp_dir.join("rootfs");
-        fs::create_dir_all(&rootfs).expect("create rootfs");
+        let rerooted = rootfs.join(outside.strip_prefix("/").unwrap());
+        fs::create_dir_all(&rerooted).expect("create re-rooted etc");
         std::os::unix::fs::symlink(&outside, rootfs.join("etc")).expect("symlink etc");
 
-        assert!(write_config_files(rootfs.to_str().expect("path"), None).is_err());
+        write_config_files(rootfs.to_str().expect("path"), None).expect("write config");
         assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        assert!(rerooted.join("hosts").is_file());
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
     #[test]
-    fn setup_fake_sysdata_refuses_a_proc_that_leaves_the_rootfs() {
+    fn setup_fake_sysdata_keeps_an_absolute_proc_symlink_inside_the_rootfs() {
         let tmp_dir = unique_temp_dir("pr-cli-fake-sysdata-symlink");
         let outside = tmp_dir.join("outside");
         fs::create_dir_all(&outside).expect("create outside");
@@ -2038,9 +2082,88 @@ mod tests {
         fs::create_dir_all(&rootfs).expect("create rootfs");
         std::os::unix::fs::symlink(&outside, rootfs.join("proc")).expect("symlink proc");
 
-        assert!(setup_fake_sysdata(rootfs.to_str().expect("path")).is_err());
+        setup_fake_sysdata(rootfs.to_str().expect("path")).expect("setup");
         assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        let rerooted = rootfs.join(outside.strip_prefix("/").unwrap());
+        assert!(rerooted.join(".loadavg").is_file());
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn write_config_files_keeps_the_entries_of_an_unreadable_shadow() {
+        let tmp_dir = unique_temp_dir("pr-cli-write-config-shadow-0000");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        for (name, line) in [
+            ("passwd", "root:x:0:0:root:/root:/bin/sh\n"),
+            ("group", "root:x:0:\n"),
+            ("shadow", "root:*:19000:0:99999:7:::\n"),
+            ("gshadow", "root:::\n"),
+        ] {
+            let path = rootfs.join("etc").join(name);
+            fs::write(&path, line).expect("seed");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).expect("chmod");
+        }
+
+        write_config_files(rootfs.to_str().expect("path"), None).expect("write config");
+
+        let shadow = fs::read_to_string(rootfs.join("etc/shadow")).expect("read shadow");
+        assert!(shadow.starts_with("root:*:19000:"), "{}", shadow);
+        let gshadow = fs::read_to_string(rootfs.join("etc/gshadow")).expect("read gshadow");
+        assert!(gshadow.starts_with("root:::"), "{}", gshadow);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn append_line_follows_an_absolute_symlink_inside_the_rootfs() {
+        let tmp_dir = unique_temp_dir("pr-cli-append-absolute-symlink");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc/pam.d")).expect("create pam.d");
+        fs::create_dir_all(rootfs.join("etc/authselect")).expect("create authselect");
+        fs::write(
+            rootfs.join("etc/authselect/system-auth"),
+            "auth required x\n",
+        )
+        .expect("seed");
+        std::os::unix::fs::symlink(
+            "/etc/authselect/system-auth",
+            rootfs.join("etc/pam.d/system-auth"),
+        )
+        .expect("symlink");
+
+        append_line_if_missing(&rootfs, "etc/pam.d/system-auth", "session y").expect("append");
+
+        assert_eq!(
+            fs::read_to_string(rootfs.join("etc/authselect/system-auth")).unwrap(),
+            "auth required x\nsession y\n"
+        );
+        assert!(fs::symlink_metadata(rootfs.join("etc/pam.d/system-auth"))
+            .unwrap()
+            .is_symlink());
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_install_refuses_a_plugin_alias_that_is_not_a_valid_name() {
+        let plugin =
+            "DISTRO_NAME=\"Test\"\nTARBALL_URL_aarch64=\"https://example.invalid/a.tar.xz\"\n";
+        let _guard = env_lock().lock().expect("lock env");
+        let prefix = unique_temp_dir("pr-cli-install-bad-alias").join("usr");
+        fs::create_dir_all(prefix.join("etc/pr")).expect("create plugins dir");
+        fs::write(prefix.join("etc/pr/x@y.sh"), plugin).expect("write plugin");
+        let existing = prefix.join("var/lib/pr/installed-rootfs/x@y");
+        fs::create_dir_all(&existing).expect("create existing rootfs");
+        fs::write(existing.join("keep"), b"data").expect("seed existing");
+        std::env::set_var("APP_PREFIX", &prefix);
+        std::env::set_var("DISTRO_ARCH", "x86_64");
+
+        let result = command_install("x@y", None, None, None);
+
+        std::env::remove_var("APP_PREFIX");
+        std::env::remove_var("DISTRO_ARCH");
+        assert!(result.is_err());
+        assert!(existing.join("keep").exists());
+        let _ = fs::remove_dir_all(prefix.parent().expect("base"));
     }
 
     #[test]
