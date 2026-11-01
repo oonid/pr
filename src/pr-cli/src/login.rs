@@ -50,7 +50,10 @@ fn find_user_in_passwd(passwd_path: &str, user: &str) -> Result<PasswdEntry, Str
 
 fn update_etc_environment(rootfs: &str) {
     let mut lines: Vec<String> = Vec::new();
-    if let Some(content) = read_rootfs_file(Path::new(rootfs), "etc/environment") {
+    let Ok(existing) = read_rootfs_file(Path::new(rootfs), "etc/environment") else {
+        return;
+    };
+    if let Some(content) = existing {
         for line in content.lines() {
             let key = line.split('=').next().unwrap_or("");
             if !key.is_empty()
@@ -88,6 +91,20 @@ fn update_etc_environment(rootfs: &str) {
     );
 }
 
+fn refresh_resolv_conf(rootfs: &Path) {
+    let Ok(path) = crate::oci::resolve_in_root(rootfs, Path::new("etc/resolv.conf"), false) else {
+        return;
+    };
+    let resolv_conf_path = path.to_string_lossy().into_owned();
+    let existing = read_existing_resolv_conf(&resolv_conf_path);
+    if resolv_conf_is_managed(existing.as_deref()) {
+        let _ = write_resolv_conf(
+            &resolv_conf_path,
+            &resolv_conf_contents(&network_dns_servers()),
+        );
+    }
+}
+
 pub fn command_login(
     distro_name: &str,
     user: &str,
@@ -113,15 +130,7 @@ pub fn command_login(
         return Err("no /etc/passwd".to_string());
     }
 
-    // Follow the network the device is on now; a resolv.conf the user wrote is left alone.
-    let resolv_conf_path = format!("{}/etc/resolv.conf", rootfs);
-    let existing = read_existing_resolv_conf(&resolv_conf_path);
-    if resolv_conf_is_managed(existing.as_deref()) {
-        let _ = write_resolv_conf(
-            &resolv_conf_path,
-            &resolv_conf_contents(&network_dns_servers()),
-        );
-    }
+    refresh_resolv_conf(Path::new(&rootfs));
 
     let entry = find_user_in_passwd(&passwd_path, user)?;
 
@@ -310,6 +319,26 @@ mod tests {
 
         std::env::remove_var("ANDROID_ROOT");
         std::env::remove_var("BOOTCLASSPATH");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn refresh_resolv_conf_does_not_write_through_an_etc_symlink() {
+        let tmp_dir = unique_temp_dir("pr-cli-login-resolv-symlink");
+        let outside = tmp_dir.join("outside");
+        fs::create_dir_all(&outside).expect("create outside");
+        let managed = "nameserver 8.8.8.8\nnameserver 8.8.4.4\n";
+        fs::write(outside.join("resolv.conf"), managed).expect("seed host file");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("create rootfs");
+        std::os::unix::fs::symlink(&outside, rootfs.join("etc")).expect("symlink etc");
+
+        refresh_resolv_conf(&rootfs);
+
+        assert_eq!(
+            fs::read_to_string(outside.join("resolv.conf")).unwrap(),
+            managed
+        );
         let _ = fs::remove_dir_all(tmp_dir);
     }
 

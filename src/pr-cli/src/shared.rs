@@ -65,22 +65,30 @@ pub fn write_resolv_conf(path: &str, contents: &str) -> std::io::Result<()> {
     })
 }
 
-/// The current resolv.conf for [`resolv_conf_is_managed`]: None only when the file is missing. A file
-/// that cannot be read as text (not UTF-8, no permission) is the user's, so it reads as unmanaged.
-pub fn read_rootfs_file(rootfs: &std::path::Path, relative: &str) -> Option<String> {
-    crate::oci::ensure_parent_inside_root(rootfs, std::path::Path::new(relative)).ok()?;
-    let path = rootfs.join(relative);
-    if std::fs::symlink_metadata(&path)
-        .ok()?
-        .file_type()
-        .is_symlink()
-    {
-        let root = std::fs::canonicalize(rootfs).ok()?;
-        if !std::fs::canonicalize(&path).ok()?.starts_with(root) {
-            return None;
+pub fn read_rootfs_file(
+    rootfs: &std::path::Path,
+    relative: &str,
+) -> Result<Option<String>, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = crate::oci::resolve_in_root(rootfs, std::path::Path::new(relative), true)?;
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => return Ok(Some(contents)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|e| format!("stat {}: {}", path.display(), e))?;
+            if !meta.is_file() {
+                return Err(format!("read {}: {}", path.display(), e));
+            }
+            let mode = meta.permissions().mode() | 0o400;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .map_err(|e| format!("chmod {}: {}", path.display(), e))?;
         }
+        Err(e) => return Err(format!("read {}: {}", path.display(), e)),
     }
-    std::fs::read_to_string(&path).ok()
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("read {}: {}", path.display(), e))
 }
 
 pub fn write_rootfs_file(
@@ -90,9 +98,7 @@ pub fn write_rootfs_file(
     mode: Option<u32>,
 ) -> Result<(), String> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let relative_path = std::path::Path::new(relative);
-    crate::oci::ensure_parent_inside_root(rootfs, relative_path)?;
-    let path = rootfs.join(relative_path);
+    let path = crate::oci::resolve_in_root(rootfs, std::path::Path::new(relative), false)?;
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("no file name in {}", relative))?
@@ -120,6 +126,8 @@ pub fn write_rootfs_file(
     })
 }
 
+/// The current resolv.conf for [`resolv_conf_is_managed`]: None only when the file is missing. A file
+/// that cannot be read as text (not UTF-8, no permission) is the user's, so it reads as unmanaged.
 pub fn read_existing_resolv_conf(path: &str) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(contents) => Some(contents),
