@@ -53,13 +53,9 @@ fn update_etc_environment(rootfs: &str) {
     let Ok(existing) = read_rootfs_file(Path::new(rootfs), "etc/environment") else {
         return;
     };
-    let prefix = std::path::PathBuf::from(get_prefix());
-    let mut app_bins = vec![prefix.join("bin")];
-    if let Some(app_dir) = prefix.parent().and_then(|files| files.parent()) {
-        if let Some(alias) = app_dir_alias(app_dir) {
-            app_bins.push(alias.join("files/usr/bin"));
-        }
-    }
+    let app_bin = std::path::PathBuf::from(get_prefix()).join("bin");
+    let mut app_bins = vec![app_bin.clone()];
+    app_bins.extend(path_alias(&app_bin));
     if let Some(content) = existing {
         for line in content.lines() {
             let key = line.split('=').next().unwrap_or("");
@@ -368,6 +364,27 @@ mod tests {
         fs::write(
             rootfs.join("etc/environment"),
             "PATH=/usr/bin:/data/user/0/id.or.oo.pr/files/usr/bin:/bin\n",
+        )
+        .expect("seed environment");
+
+        update_etc_environment(rootfs.to_str().expect("path"));
+
+        std::env::remove_var("APP_PREFIX");
+        let content = fs::read_to_string(rootfs.join("etc/environment")).expect("read");
+        assert!(content.contains("PATH=/usr/bin:/bin\n"), "{}", content);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn update_etc_environment_drops_the_app_bin_of_a_custom_prefix() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_dir = unique_temp_dir("pr-cli-login-env-path-custom");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        std::env::set_var("APP_PREFIX", "/data/data/id.or.oo.pr/custom/usr");
+        fs::write(
+            rootfs.join("etc/environment"),
+            "PATH=/usr/bin:/data/user/0/id.or.oo.pr/custom/usr/bin:/bin\n",
         )
         .expect("seed environment");
 

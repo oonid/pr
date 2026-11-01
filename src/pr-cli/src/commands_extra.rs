@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -28,7 +29,7 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
     }
     // Fast path: try rmdir first.  For empty dirs (even 0000-perms) this works
     // because the kernel only checks write permission on the parent directory.
-    if let Ok(cstr) = CString::new(path.to_string_lossy().as_bytes()) {
+    if let Ok(cstr) = CString::new(path.as_os_str().as_bytes()) {
         let ret = unsafe { libc::rmdir(cstr.as_ptr()) };
         if ret == 0 {
             return;
@@ -37,7 +38,7 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
 
     // rmdir failed — directory is non-empty or we can't stat it.
     // chmod 0700 so we can list and enter it.
-    if let Ok(cstr) = CString::new(path.to_string_lossy().as_bytes()) {
+    if let Ok(cstr) = CString::new(path.as_os_str().as_bytes()) {
         unsafe {
             libc::chmod(cstr.as_ptr(), 0o700);
         }
@@ -49,7 +50,7 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
             match fs::symlink_metadata(&p) {
                 Ok(m) if m.is_dir() => force_remove_dir_all(&p),
                 _ => {
-                    if let Ok(cstr) = CString::new(p.to_string_lossy().as_bytes()) {
+                    if let Ok(cstr) = CString::new(p.as_os_str().as_bytes()) {
                         unsafe {
                             libc::unlink(cstr.as_ptr());
                         }
@@ -60,7 +61,7 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
     }
 
     // rmdir after children are cleared
-    if let Ok(cstr) = CString::new(path.to_string_lossy().as_bytes()) {
+    if let Ok(cstr) = CString::new(path.as_os_str().as_bytes()) {
         unsafe {
             libc::rmdir(cstr.as_ptr());
         }
@@ -484,28 +485,82 @@ fn copy_times(meta: &fs::Metadata, path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
-    let meta = fs::symlink_metadata(source)?;
-    let file_type = meta.file_type();
-    if file_type.is_symlink() {
-        std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
-    } else if file_type.is_dir() {
-        if !destination.is_dir() {
-            fs::create_dir(destination)?;
+fn copy_tree(source: &Path, destination: &Path, failures: &mut Vec<String>) {
+    use std::os::unix::fs::FileTypeExt;
+    let result = (|| -> std::io::Result<()> {
+        let meta = fs::symlink_metadata(source)?;
+        let file_type = meta.file_type();
+        if !file_type.is_dir() {
+            if let Ok(existing) = fs::symlink_metadata(destination) {
+                if existing.is_dir() {
+                    return Err(std::io::Error::other("cannot overwrite a directory"));
+                }
+                fs::remove_file(destination)?;
+            }
         }
-        fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        if file_type.is_symlink() {
+            std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
+        } else if file_type.is_dir() {
+            if !destination.is_dir() {
+                fs::create_dir(destination)?;
+            }
+            fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
+            match fs::read_dir(source) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => copy_tree(
+                                &entry.path(),
+                                &destination.join(entry.file_name()),
+                                failures,
+                            ),
+                            Err(e) => failures.push(format!("{}: {}", source.display(), e)),
+                        }
+                    }
+                }
+                Err(e) => failures.push(format!("{}: {}", source.display(), e)),
+            }
+            fs::set_permissions(destination, meta.permissions())?;
+        } else if file_type.is_file() {
+            fs::copy(source, destination)?;
+        } else if file_type.is_fifo() {
+            let path =
+                CString::new(destination.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+            let mode = (meta.permissions().mode() & 0o7777) as libc::mode_t;
+            if unsafe { libc::mkfifo(path.as_ptr(), mode) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            fs::set_permissions(destination, meta.permissions())?;
+        } else {
+            return Err(std::io::Error::other(
+                "sockets and device files are not copied",
+            ));
         }
-        fs::set_permissions(destination, meta.permissions())?;
-    } else if file_type.is_file() {
-        fs::copy(source, destination)?;
-    } else {
-        return Ok(());
+        let _ = copy_times(&meta, destination);
+        Ok(())
+    })();
+    if let Err(e) = result {
+        failures.push(format!("{}: {}", source.display(), e));
     }
-    let _ = copy_times(&meta, destination);
-    Ok(())
+}
+
+fn resolved_target(path: &Path) -> std::io::Result<PathBuf> {
+    let mut existing = path;
+    let mut rest = Vec::new();
+    while fs::symlink_metadata(existing).is_err() {
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => break,
+        }
+    }
+    let mut resolved = fs::canonicalize(existing)?;
+    for name in rest.iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
 }
 
 pub fn command_copy(src: &str, dst: &str) -> Result<(), String> {
@@ -526,13 +581,6 @@ pub fn command_copy(src: &str, dst: &str) -> Result<(), String> {
     msg_status(&format!("Source: '{}'", src_full));
     msg_status(&format!("Destination: '{}'", dst_full));
 
-    if let Some(parent) = Path::new(&dst_full).parent() {
-        if !parent.exists() {
-            msg_status(&format!("Creating directory '{}'...", parent.display()));
-            fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
-        }
-    }
-
     msg_status("Copying files, this may take a while...");
 
     let source = Path::new(&src_full);
@@ -542,9 +590,31 @@ pub fn command_copy(src: &str, dst: &str) -> Result<(), String> {
             destination.push(name);
         }
     }
-    if let Err(e) = copy_tree(source, &destination) {
-        msg_error("Copy failed.");
-        return Err(format!("copy: {}", e));
+    let real_source = fs::canonicalize(source).map_err(|e| format!("resolve source: {}", e))?;
+    let real_destination =
+        resolved_target(&destination).map_err(|e| format!("resolve destination: {}", e))?;
+    if real_destination == real_source {
+        msg_error("source and destination are the same file.");
+        return Err("same file".to_string());
+    }
+    if real_source.is_dir() && real_destination.starts_with(&real_source) {
+        msg_error("cannot copy a directory into itself.");
+        return Err("copy into itself".to_string());
+    }
+    if let Some(parent) = destination.parent() {
+        if !parent.exists() {
+            msg_status(&format!("Creating directory '{}'...", parent.display()));
+            fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
+        }
+    }
+    let mut failures = Vec::new();
+    copy_tree(source, &destination, &mut failures);
+    if !failures.is_empty() {
+        for failure in &failures {
+            msg_error(failure);
+        }
+        msg_error("Copy failed for the entries above; the rest was copied.");
+        return Err(format!("copy: {} entries failed", failures.len()));
     }
 
     msg_status("Finished.");
@@ -783,6 +853,116 @@ mod tests {
         fs::create_dir_all(&into).expect("create into");
         command_copy(src.to_str().unwrap(), into.to_str().unwrap()).expect("copy into dir");
         assert_eq!(fs::read(into.join("src/bin/tool")).unwrap(), b"\x7fELF");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_copy_refuses_to_copy_onto_the_source() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-onto-itself");
+        let proj = tmp_dir.join("proj");
+        fs::create_dir_all(&proj).expect("create proj");
+        fs::write(proj.join("data"), b"keep").expect("seed");
+
+        assert!(command_copy(proj.to_str().unwrap(), tmp_dir.to_str().unwrap()).is_err());
+        assert!(command_copy(
+            proj.join("data").to_str().unwrap(),
+            proj.join("data").to_str().unwrap()
+        )
+        .is_err());
+
+        assert_eq!(fs::read(proj.join("data")).unwrap(), b"keep");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_copy_refuses_to_copy_a_directory_into_itself() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-into-itself");
+        let a = tmp_dir.join("a");
+        fs::create_dir_all(&a).expect("create a");
+        fs::write(a.join("f"), b"x").expect("seed");
+
+        assert!(command_copy(a.to_str().unwrap(), a.join("b").to_str().unwrap()).is_err());
+
+        assert!(!a.join("b").exists());
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_copy_replaces_symlinks_when_copying_again() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-again");
+        let src = tmp_dir.join("src");
+        fs::create_dir_all(&src).expect("create src");
+        fs::write(src.join("f"), b"x").expect("seed");
+        std::os::unix::fs::symlink("f", src.join("link")).expect("symlink");
+        let parent = tmp_dir.join("out");
+        fs::create_dir_all(&parent).expect("create out");
+
+        command_copy(src.to_str().unwrap(), parent.to_str().unwrap()).expect("first copy");
+        command_copy(src.to_str().unwrap(), parent.to_str().unwrap()).expect("second copy");
+
+        assert_eq!(
+            fs::read_link(parent.join("src/link")).unwrap(),
+            Path::new("f")
+        );
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_copy_copies_what_it_can_and_reports_the_rest() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-partial");
+        let src = tmp_dir.join("src");
+        fs::create_dir_all(src.join("locked")).expect("create locked");
+        fs::write(src.join("locked/secret"), b"x").expect("seed secret");
+        for name in ["a", "m", "z"] {
+            fs::write(src.join(name), name).expect("seed file");
+        }
+        fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o000))
+            .expect("chmod locked");
+        let dst = tmp_dir.join("dst");
+
+        let result = command_copy(src.to_str().unwrap(), dst.to_str().unwrap());
+
+        fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o755))
+            .expect("chmod back");
+        assert!(result.is_err());
+        for name in ["a", "m", "z"] {
+            assert_eq!(fs::read(dst.join(name)).unwrap(), name.as_bytes());
+        }
+        assert_eq!(mode_of(&dst.join("locked")), 0o000);
+        fs::set_permissions(dst.join("locked"), fs::Permissions::from_mode(0o755)).ok();
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_copy_recreates_fifos() {
+        let tmp_dir = unique_temp_dir("pr-cli-copy-fifo");
+        let src = tmp_dir.join("src");
+        fs::create_dir_all(&src).expect("create src");
+        let fifo = std::ffi::CString::new(src.join("pipe").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o640) }, 0);
+        let dst = tmp_dir.join("dst");
+
+        command_copy(src.to_str().unwrap(), dst.to_str().unwrap()).expect("copy");
+
+        use std::os::unix::fs::FileTypeExt;
+        let meta = fs::symlink_metadata(dst.join("pipe")).expect("stat pipe");
+        assert!(meta.file_type().is_fifo());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o640);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn force_remove_dir_all_removes_names_that_are_not_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp_dir = unique_temp_dir("pr-cli-force-remove-bytes");
+        let dir = tmp_dir.join("tree");
+        let odd = dir.join(std::ffi::OsStr::from_bytes(b"bad\xff"));
+        fs::create_dir_all(&odd).expect("create odd dir");
+        fs::write(odd.join(std::ffi::OsStr::from_bytes(b"f\xfe")), b"x").expect("seed");
+
+        force_remove_dir_all(&dir);
+
+        assert!(fs::symlink_metadata(&dir).is_err());
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
