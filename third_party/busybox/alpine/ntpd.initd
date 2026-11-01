@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+
+name="busybox $RC_SVCNAME"
+command="/usr/sbin/$RC_SVCNAME"
+command_args="${NTPD_OPTS:--N -p pool.ntp.org} -n"
+command_user="ntp"
+pidfile="/run/$SVCNAME.pid"
+command_background=true
+capabilities="^cap_sys_time,^cap_net_bind_service"
+
+depend() {
+	need net
+	provide ntp-client
+	use dns
+}

@@ -37,7 +37,8 @@ Prebuilt binaries in android/proot-engine/src/main/jniLibs/
   libpr-cli.so                      built from src/pr-cli/; GPL-3.0-or-later
   libbusybox.so                     Alpine Linux busybox-static 1.37.0-r14
                                     (scripts/download-busybox.sh);
-                                    GPL-2.0-only
+                                    GPL-2.0-only; corresponding source
+                                    in third_party/busybox/
 
 The Android code runs these as separate programs, so it keeps its own
 license.

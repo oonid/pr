@@ -55,7 +55,7 @@ Options:
 Output: build/assets/arm64-v8a/busybox
 ```
 
-Source: Alpine Linux `busybox-static` v1.37.0-r14 (GPL-2.0-only)
+Source: Alpine Linux `busybox-static` v1.37.0-r14 (GPL-2.0-only). Its corresponding source, the upstream tarball and Alpine's build recipe, patches and configuration, is in `third_party/busybox/`; replace it when the version changes.
 
 ## On-device tests
 
