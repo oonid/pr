@@ -218,7 +218,20 @@ pub fn get_oci_container_manifest_path(name: &str) -> String {
     get_oci_container_manifest_path_for_prefix(&get_prefix(), name)
 }
 
+pub fn is_valid_container_name(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '+' | '-'))
+}
+
 pub fn resolve_installed_rootfs(name: &str) -> Option<(String, InstalledSourceType)> {
+    if !is_valid_container_name(name) {
+        return None;
+    }
     let legacy_rootfs = format!("{}/{}", get_installed_rootfs_dir(), name);
     if std::path::Path::new(&legacy_rootfs).is_dir() {
         return Some((legacy_rootfs, InstalledSourceType::Legacy));
@@ -824,6 +837,25 @@ mod tests {
         let resolved = resolve_installed_rootfs("debian").expect("resolve installed rootfs");
         assert_eq!(resolved.1, InstalledSourceType::Oci);
         assert_eq!(resolved.0, oci_rootfs.to_string_lossy());
+
+        std::env::remove_var("APP_PREFIX");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn resolve_installed_rootfs_refuses_names_that_are_paths() {
+        let _guard = env_lock().lock().expect("lock env");
+        let base = unique_temp_dir("pr-cli-shared-rootfs-path-name");
+        let prefix = base.join("usr");
+        fs::create_dir_all(prefix.join("var/lib/pr/installed-rootfs")).expect("create legacy");
+        fs::create_dir_all(prefix.join("var/lib/pr/containers/debian/rootfs"))
+            .expect("create oci rootfs");
+
+        std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+        for name in ["../containers", "debian/../debian", "..", ".", "", "a b"] {
+            assert!(resolve_installed_rootfs(name).is_none(), "{:?}", name);
+        }
+        assert!(resolve_installed_rootfs("debian").is_some());
 
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(base);
