@@ -123,7 +123,7 @@ pr-cli embeds the guest test binary (`include_bytes!` in `cmd_test.rs`), so buil
 ```bash
 (cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
 (cd src/pr-cli && cargo test)
-# 206 tests: 181 library unit + 11 binary (9 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
+# 214 tests: 188 library unit + 12 binary (10 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
 ```
 
 ### On-device integration tests
