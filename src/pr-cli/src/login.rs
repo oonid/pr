@@ -53,12 +53,21 @@ fn update_etc_environment(rootfs: &str) {
     let Ok(existing) = read_rootfs_file(Path::new(rootfs), "etc/environment") else {
         return;
     };
-    let app_bin = format!("{}/bin", get_prefix());
+    let prefix = std::path::PathBuf::from(get_prefix());
+    let mut app_bins = vec![prefix.join("bin")];
+    if let Some(app_dir) = prefix.parent().and_then(|files| files.parent()) {
+        if let Some(alias) = app_dir_alias(app_dir) {
+            app_bins.push(alias.join("files/usr/bin"));
+        }
+    }
     if let Some(content) = existing {
         for line in content.lines() {
             let key = line.split('=').next().unwrap_or("");
             if let Some(path) = line.strip_prefix("PATH=") {
-                let kept: Vec<&str> = path.split(':').filter(|dir| *dir != app_bin).collect();
+                let kept: Vec<&str> = path
+                    .split(':')
+                    .filter(|dir| !app_bins.iter().any(|bin| Path::new(dir) == bin))
+                    .collect();
                 lines.push(format!("PATH={}", kept.join(":")));
             } else if !key.is_empty()
                 && !key.starts_with("ANDROID_")
@@ -346,6 +355,27 @@ mod tests {
         let content = fs::read_to_string(rootfs.join("etc/environment")).expect("read");
         assert!(content.contains("PATH=/usr/bin:/bin\n"), "{}", content);
         assert!(content.contains("KEEP=1"));
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn update_etc_environment_drops_the_app_bin_under_its_other_name() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp_dir = unique_temp_dir("pr-cli-login-env-path-alias");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+        std::env::set_var("APP_PREFIX", "/data/data/id.or.oo.pr/files/usr");
+        fs::write(
+            rootfs.join("etc/environment"),
+            "PATH=/usr/bin:/data/user/0/id.or.oo.pr/files/usr/bin:/bin\n",
+        )
+        .expect("seed environment");
+
+        update_etc_environment(rootfs.to_str().expect("path"));
+
+        std::env::remove_var("APP_PREFIX");
+        let content = fs::read_to_string(rootfs.join("etc/environment")).expect("read");
+        assert!(content.contains("PATH=/usr/bin:/bin\n"), "{}", content);
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
