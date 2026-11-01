@@ -3,6 +3,7 @@ name = "pr-cli"
 version = "0.1.0"
 edition = "2021"
 description = "proot-distro replacement for Android (id.or.oo.pr)"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

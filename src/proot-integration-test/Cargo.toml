@@ -2,6 +2,7 @@
 name = "proot-integration-test"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Integration tests for proot behavior inside Linux distros"
 
 [dependencies]
