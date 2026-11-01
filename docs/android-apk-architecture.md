@@ -512,6 +512,7 @@ Two installation methods produce rootfs in different locations:
 | Method | Command | Rootfs location |
 |--------|---------|-----------------|
 | OCI reference | `pr-cli install docker.io/library/alpine:latest` | `var/lib/pr/containers/<alias>/rootfs/` |
-| Legacy plugin | `proot-distro.sh install alpine` | `var/lib/pr/installed-rootfs/<distro>/` |
+| Catalog name | `pr-cli install debian` (the app's image for that name, see `catalog.rs`) | `var/lib/pr/containers/<alias>/rootfs/` |
+| Plugin file | `pr-cli install <alias>` with `etc/pr/<alias>.sh` present | `var/lib/pr/installed-rootfs/<alias>/` |
 
 Code checking for distro existence (e.g. MainActivity's `isInstalled` check) must use the path corresponding to the installation method. The OCI path is used by `pr-cli`; the legacy path is used by the shell-script era (Phase 2). If both methods are in use, check both paths.

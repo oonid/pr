@@ -29,6 +29,8 @@ The core execution environment has been decoupled into a standalone Android Libr
 
 The container list offers Alpine (latest & edge), Debian (stable & testing), Fedora and Ubuntu. Arch Linux, Manjaro, openSUSE and Rocky Linux are one tap away under **Images** on the custom-image card, which installs any OCI image reference.
 
+On the command line, `pr-cli install <alias>` installs the same images under the same names: `alpine`, `alpine-edge`, `debian`, `debian-testing`, `fedora`, `ubuntu`, `archlinux`, `manjaro`, `opensuse` and `rockylinux`. A plugin file `etc/pr/<alias>.sh` takes precedence over a catalog name.
+
 ## How it works
 
 **proot** uses Linux `ptrace()` to intercept syscalls and translate filesystem paths, creating a virtual root filesystem without actual root privileges.
