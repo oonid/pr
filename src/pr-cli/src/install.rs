@@ -785,7 +785,7 @@ fn extract_tarball(
         if entry_type.is_dir() {
             fs::create_dir_all(&dest_path)
                 .map_err(|e| format!("create dir {}: {}", dest_path.display(), e))?;
-            let mode = entry.header().mode().unwrap_or(0o755);
+            let mode = entry.header().mode().unwrap_or(0o755) | 0o700;
             let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode));
         } else if entry_type.is_symlink() {
             let target = entry
@@ -1612,6 +1612,7 @@ mod tests {
 
     enum RawEntry<'a> {
         Dir(&'a str),
+        DirMode(&'a str, u32),
         File(&'a str, &'a [u8], u32),
         Symlink(&'a str, &'a str),
         Hardlink(&'a str, &'a str),
@@ -1625,6 +1626,7 @@ mod tests {
             let mut header = tar::Header::new_gnu();
             let (name, link, kind, data, mode): (&str, Option<&str>, _, &[u8], u32) = match entry {
                 RawEntry::Dir(n) => (n, None, tar::EntryType::Directory, &[], 0o755),
+                RawEntry::DirMode(n, m) => (n, None, tar::EntryType::Directory, &[], *m),
                 RawEntry::File(n, d, m) => (n, None, tar::EntryType::Regular, d, *m),
                 RawEntry::Symlink(n, t) => (n, Some(t), tar::EntryType::Symlink, &[], 0o777),
                 RawEntry::Hardlink(n, t) => (n, Some(t), tar::EntryType::Link, &[], 0o644),
@@ -1731,6 +1733,27 @@ mod tests {
             .join(outside.strip_prefix("/").unwrap())
             .join("planted");
         assert!(rerooted.is_file());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_writes_into_a_read_only_directory_it_creates() {
+        let tmp = unique_temp_dir("pr-cli-extract-read-only-dir");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::DirMode("top/ro/", 0o555),
+                RawEntry::File("top/ro/f", b"ok", 0o644),
+            ],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[])
+            .expect("extract");
+
+        assert_eq!(fs::read(rootfs.join("ro/f")).unwrap(), b"ok");
         let _ = fs::remove_dir_all(&tmp);
     }
 
