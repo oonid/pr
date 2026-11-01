@@ -3,7 +3,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,11 +20,11 @@ use crate::oci::{
 };
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
-    get_download_cache_dir, get_installed_rootfs_dir, get_native_busybox, get_native_loader,
-    get_native_proot, get_oci_container_dir, get_oci_container_manifest_path,
-    get_oci_container_rootfs_dir, get_oci_containers_dir, get_plugins_dir, get_prefix,
-    is_valid_container_name, msg_error, msg_status, network_dns_servers, read_rootfs_file,
-    resolv_conf_contents, resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
+    get_download_cache_dir, get_installed_rootfs_dir, get_native_loader, get_native_proot,
+    get_oci_container_dir, get_oci_container_manifest_path, get_oci_container_rootfs_dir,
+    get_oci_containers_dir, get_plugins_dir, get_prefix, is_valid_container_name, msg_error,
+    msg_status, network_dns_servers, read_rootfs_file, resolv_conf_contents,
+    resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
     DEFAULT_FAKE_KERNEL_VERSION,
 };
 use crate::source_parse::{InstallSourceInput, InstallSourceInputKind};
@@ -37,13 +36,7 @@ fn detect_device_arch() -> String {
         }
     }
 
-    let prefix = get_prefix();
-    let bin_path = format!("{}/bin/busybox", prefix);
-    let path = if Path::new(&bin_path).exists() {
-        &bin_path
-    } else {
-        "/system/bin/sh"
-    };
+    let path = "/proc/self/exe";
 
     match std::fs::read(path) {
         Ok(data) => {
@@ -63,49 +56,6 @@ fn detect_device_arch() -> String {
             }
         }
         Err(_) => "unknown".to_string(),
-    }
-}
-
-fn run_cmd(bin: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(bin)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to execute {}: {}", bin, e))?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if stderr.is_empty() {
-            format!("{} exited with code {:?}", bin, output.status.code())
-        } else {
-            stderr
-        })
-    }
-}
-
-fn run_busybox_cmd(applet: &str, args: &[&str]) -> Result<String, String> {
-    let busybox = get_native_busybox();
-    let mut full_args = vec![applet.to_string()];
-    full_args.extend(args.iter().map(|s| s.to_string()));
-    let output = Command::new(&busybox)
-        .arg0("busybox")
-        .args(&full_args)
-        .output()
-        .map_err(|e| format!("failed to execute busybox {}: {}", applet, e))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if stderr.is_empty() {
-            format!(
-                "busybox {} exited with code {:?}",
-                applet,
-                output.status.code()
-            )
-        } else {
-            stderr
-        })
     }
 }
 
@@ -1194,11 +1144,7 @@ fn has_rust_owned_distro_setup(distro_alias: &str) -> bool {
 }
 
 fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), String> {
-    let prefix = get_prefix();
-    let default_path_env = format!(
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/games:/usr/games:{}/bin",
-        prefix
-    );
+    let default_path_env = crate::shared::DEFAULT_PATH_ENV_SUFFIX;
 
     // /etc/resolv.conf
     let root = Path::new(rootfs);
@@ -1241,33 +1187,13 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     write_rootfs_file(root, "etc/environment", &env_content, Some(0o644))?;
     msg_status(&format!("Writing file '{}'...", env_path));
 
-    // Fix PATH in common shell config files
-    for f in &["/etc/bash.bashrc", "/etc/profile", "/etc/login.defs"] {
-        let fp = format!("{}/{}", rootfs, f);
-        if !fs::symlink_metadata(&fp).is_ok_and(|meta| meta.is_file()) {
-            continue;
-        }
-        msg_status(&format!("Updating PATH in '{}' if needed...", fp));
-        let _ = run_busybox_cmd(
-            "sed",
-            &[
-                "-i",
-                "-E",
-                &format!(
-                    "s@<(PATH=)(\"?[^\"[:space:]]+(\"|>|$))@{}\"{}\"@g",
-                    "\\1", default_path_env
-                ),
-                &fp,
-            ],
-        );
-    }
-
     // /etc/passwd, /etc/group, /etc/shadow, /etc/gshadow - register Android UIDs
     msg_status("Registering Android-specific UIDs and GIDs...");
 
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
-    let username = run_cmd("id", &["-un"]).unwrap_or_else(|_| "root".to_string());
+    let identity = crate::shared::current_identity();
+    let username = identity.user.as_str();
 
     // passwd entry
     let passwd_entry = format!(
@@ -1285,15 +1211,10 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
     write_rootfs_file(root, "etc/shadow", &shadow, Some(0o644))?;
 
     // group entries
-    let group_names_str = run_cmd("id", &["-Gn"]).unwrap_or_else(|_| "root".to_string());
-    let group_ids_str = run_cmd("id", &["-G"]).unwrap_or_else(|_| "0".to_string());
-
-    let group_names: Vec<&str> = group_names_str.split_whitespace().collect();
-    let group_ids: Vec<&str> = group_ids_str.split_whitespace().collect();
+    let group_names: Vec<&str> = identity.groups.iter().map(|(n, _)| n.as_str()).collect();
 
     let mut group = read_rootfs_file(root, "etc/group")?.unwrap_or_default();
-    for (i, gname) in group_names.iter().enumerate() {
-        let gid_val = group_ids.get(i).unwrap_or(&"0");
+    for (gname, gid_val) in &identity.groups {
         group.push_str(&format!(
             "aid_{}:x:{}:root,aid_{}\n",
             gname, gid_val, username
@@ -1336,14 +1257,7 @@ fn write_config_files(rootfs: &str, distro_name: Option<&str>) -> Result<(), Str
 }
 
 fn cleanup_on_failure(rootfs: &str, distro_name: &str) {
-    // Use busybox rm -rf: fast, reliable for large trees, no chmod pre-pass needed
-    // since the app owns every file it created.
-    let busybox = get_native_busybox();
-    let _ = Command::new(&busybox)
-        .arg0("busybox")
-        .args(["rm", "-rf", rootfs])
-        .status();
-    if Path::new(rootfs).exists() {
+    if fs::symlink_metadata(rootfs).is_ok() {
         force_remove_dir_all(Path::new(rootfs));
     }
 
@@ -2099,6 +2013,34 @@ mod tests {
     }
 
     #[test]
+    fn detect_device_arch_reads_the_running_binary() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("DISTRO_ARCH");
+        let expected = match std::env::consts::ARCH {
+            "x86" => "i686",
+            other => other,
+        };
+        assert_eq!(detect_device_arch(), expected);
+    }
+
+    #[test]
+    fn write_config_files_keeps_the_app_bin_out_of_the_container_path() {
+        let tmp_dir = unique_temp_dir("pr-cli-write-config-path");
+        let rootfs = tmp_dir.join("rootfs");
+        fs::create_dir_all(rootfs.join("etc")).expect("create etc");
+
+        write_config_files(rootfs.to_str().expect("path"), None).expect("write config");
+
+        let env = fs::read_to_string(rootfs.join("etc/environment")).expect("read env");
+        let path = env
+            .lines()
+            .find_map(|l| l.strip_prefix("PATH="))
+            .expect("PATH line");
+        assert_eq!(path, crate::shared::DEFAULT_PATH_ENV_SUFFIX);
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
     fn write_config_files_replaces_symlinked_files_instead_of_following_them() {
         let tmp_dir = unique_temp_dir("pr-cli-write-config-symlinks");
         let outside = tmp_dir.join("outside");
@@ -2521,26 +2463,6 @@ mod tests {
         std::env::set_var("DISTRO_ARCH", "armv7");
         assert_eq!(detect_device_arch(), "armv7");
         std::env::remove_var("DISTRO_ARCH");
-    }
-
-    #[test]
-    fn run_cmd_reports_missing_binary_error() {
-        let err = run_cmd("/path/that/does/not/exist-pr-cli", &[])
-            .expect_err("must report missing binary");
-        assert!(err.contains("failed to execute"));
-    }
-
-    #[test]
-    fn run_cmd_reports_stderr_for_nonzero_exit() {
-        let err = run_cmd("/bin/sh", &["-c", "echo fail-msg 1>&2; exit 7"])
-            .expect_err("must return stderr");
-        assert_eq!(err, "fail-msg");
-    }
-
-    #[test]
-    fn run_busybox_cmd_reports_missing_binary_error() {
-        let err = run_busybox_cmd("echo", &["hello"]).expect_err("busybox should be missing");
-        assert!(err.contains("failed to execute busybox"));
     }
 
     #[test]
