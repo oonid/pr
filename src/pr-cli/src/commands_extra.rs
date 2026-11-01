@@ -160,6 +160,21 @@ pub fn command_reset(distro_name: &str) -> Result<(), String> {
         println!();
         return Err("unknown distribution".to_string());
     }
+    if !plugins.iter().any(|p| p.alias == distro_name) {
+        if let Some(entry) = crate::catalog::catalog_entry(distro_name) {
+            if Path::new(&get_oci_container_dir(distro_name)).exists() {
+                msg_error(&format!(
+                    "an OCI container named '{}' already exists; remove it before resetting the legacy one.",
+                    distro_name
+                ));
+                return Err("name taken".to_string());
+            }
+            msg_status(&format!(
+                "Reinstalling '{}' from {}.",
+                distro_name, entry.reference
+            ));
+        }
+    }
 
     command_remove(distro_name, true)?;
 
@@ -391,6 +406,17 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
     let plugins = load_plugins(Path::new(&plugins_dir));
 
     let old_rootfs = format!("{}/{}", installed_rootfs_dir, old_alias);
+    if !Path::new(&old_rootfs).is_dir()
+        && Path::new(&get_oci_container_dir(old_alias))
+            .join("rootfs")
+            .is_dir()
+    {
+        msg_error(&format!(
+            "'{}' is an OCI container; rename handles legacy containers only.",
+            old_alias
+        ));
+        return Err("not a legacy container".to_string());
+    }
     if !Path::new(&old_rootfs).is_dir() {
         println!();
         msg_error(&format!(
@@ -401,7 +427,7 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
     }
 
     let new_rootfs = format!("{}/{}", installed_rootfs_dir, new_alias);
-    if Path::new(&new_rootfs).is_dir() {
+    if Path::new(&new_rootfs).is_dir() || Path::new(&get_oci_container_dir(new_alias)).exists() {
         msg_error(&format!(
             "cannot rename because rootfs directory for '{}' already exists.",
             new_alias
@@ -881,6 +907,39 @@ mod tests {
 
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn reset_keeps_a_legacy_container_when_its_catalog_name_is_taken() {
+        let env = TestPrefix::new("pr-cli-reset-catalog-taken");
+        seed_rootfs(&env.legacy().join("debian"));
+        seed_rootfs(&env.containers().join("debian/rootfs"));
+
+        assert!(command_reset("debian").is_err());
+
+        assert_rootfs(&env.legacy().join("debian"));
+        assert_rootfs(&env.containers().join("debian/rootfs"));
+    }
+
+    #[test]
+    fn rename_refuses_a_name_another_container_has() {
+        let env = TestPrefix::new("pr-cli-rename-taken");
+        seed_rootfs(&env.legacy().join("mydistro"));
+        seed_rootfs(&env.containers().join("box/rootfs"));
+
+        assert!(command_rename("mydistro", "box").is_err());
+
+        assert_rootfs(&env.legacy().join("mydistro"));
+        assert!(!env.legacy().join("box").exists());
+    }
+
+    #[test]
+    fn rename_says_it_handles_legacy_containers_only() {
+        let env = TestPrefix::new("pr-cli-rename-oci");
+        seed_rootfs(&env.containers().join("box/rootfs"));
+
+        let err = command_rename("box", "box2").expect_err("must refuse");
+        assert_eq!(err, "not a legacy container");
     }
 
     #[test]
