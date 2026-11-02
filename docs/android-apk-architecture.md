@@ -32,7 +32,6 @@ android/                                    # Android project root
 ├── session-core/                           # Android library: background sessions, pr-cli runner, bootstrap
 │   ├── build.gradle.kts                    # api :proot-engine, :termlib, coroutines; test fixtures; unit-test coverage
 │   └── src/
-│       ├── main/assets/                    # bin/busybox.applets, scripts/bootstrap.sh (POSIX sh setup)
 │       ├── main/java/id/or/oo/pr/session/  # SessionManager, ManagedSession, SessionService, SessionHost,
 │       │                                   # CommandSessionFactory, PrCliCommand, ProcessRunner, PrBootstrap
 │       ├── test/                           # JVM unit tests (:session-core:testDebugUnitTest)
@@ -41,7 +40,7 @@ android/                                    # Android project root
 │   ├── build.gradle.kts                    # CMake for libptyjni.so
 │   └── src/
 │       ├── main/cpp/                       # ptyjni.c: PTY fork/exec with /dev/ptmx
-│       ├── main/jniLibs/arm64-v8a/         # libproot, libproot-loader, libpr-cli, libbusybox (.so)
+│       ├── main/jniLibs/arm64-v8a/         # libproot, libproot-loader, libpr-cli (.so)
 │       ├── test/                           # JVM unit tests
 │       └── androidTest/                    # Instrumented tests (PTY bridge, session reaping)
 ├── termlib/
@@ -62,8 +61,8 @@ to `session-core/` (`docs/design/session-core.md`).
 
 `:session-core` holds what an app needs to run PRoot sessions in the background: `SessionManager`,
 `ManagedSession`, `SessionService` and its notifications, End's `/proc` scan, `PrCliCommand` over
-`ProcessRunner`, and `PrBootstrap`, which prepares `files/usr` (prefix directories, links to the
-native libraries and busybox applets, `bootstrap.sh`). Everything is in package
+`ProcessRunner`, and `PrBootstrap`, which prepares `files/usr` (prefix directories and links to
+the native libraries) without starting a shell. Everything is in package
 `id.or.oo.pr.session`. Design: `docs/design/session-core.md`.
 
 An app that uses it:
@@ -206,13 +205,8 @@ After first launch, `PrBootstrap` (`:session-core`, run from `App.onCreate`) pre
 /data/data/id.or.oo.pr/files/
 ├── usr/                                    # APP_PREFIX
 │   ├── bin/
-│   │   ├── busybox -> <nativeLibraryDir>/libbusybox.so
 │   │   ├── proot   -> <nativeLibraryDir>/libproot.so
-│   │   ├── pr-cli  -> <nativeLibraryDir>/libpr-cli.so
-│   │   ├── sh -> busybox                   # busybox applet links, from assets/bin/busybox.applets
-│   │   ├── awk -> busybox
-│   │   ├── ...
-│   │   └── bootstrap.sh                    # From assets/scripts/bootstrap.sh
+│   │   └── pr-cli  -> <nativeLibraryDir>/libpr-cli.so
 │   ├── etc/pr/
 │   ├── tmp/
 │   └── var/lib/pr/
@@ -223,11 +217,12 @@ After first launch, `PrBootstrap` (`:session-core`, run from `App.onCreate`) pre
 └── home/                                   # APP_HOME
 ```
 
-`NativeLinks` makes the three links into the native library directory on every launch, and
-removes a stale `bin/bash`, `bin/pr-test` and `bin/proot-distro`, and the `usr/scripts`
-directory, left by older builds. The busybox applet links and `bootstrap.sh` are made when the
-bootstrap version changes. `bootstrap.sh` creates `etc/pr`, the two `var/lib/pr` directories,
-`home` and `tmp`.
+`NativeLinks` makes the two links into the native library directory on every launch. It also
+removes what older builds left: `bin/bash`, `bin/pr-test`, `bin/proot-distro`, `bin/busybox`,
+`bin/bootstrap.sh`, every link in `bin` whose target is `busybox` (the old applet links), and the
+`usr/scripts` directory. When the bootstrap version changes, `PrBootstrap` creates `tmp`, `etc/pr`,
+the two `var/lib/pr` directories and `home` with `File.mkdirs()`; if one cannot be created, the
+version is not recorded and the next launch tries again.
 
 ---
 
@@ -362,7 +357,7 @@ Commit: `0bf00eb`
 
 Commit: `0bf00eb`
 
-All assets bundled in APK under `assets/` (then in `app/`; today the only assets are `bin/busybox.applets` and `scripts/bootstrap.sh`, in `session-core/src/main/assets/`):
+All assets bundled in APK under `assets/` (then in `app/`; the APK no longer ships any assets):
 
 | Path | Size | Source |
 |---|---|---|

@@ -203,11 +203,7 @@ App.apk
 ├── jniLibs/arm64-v8a/
 │   ├── libproot.so            ← proot binary (static, ~2.6MB)
 │   ├── libproot-loader.so     ← proot's loader (separate, ~18KB)
-│   ├── libpr-cli.so           ← Rust CLI (static, ~3.4MB)
-│   └── libbusybox.so          ← busybox (static, ~1.1MB)
-└── assets/
-    ├── bin/busybox.applets    ← busybox applet list
-    └── scripts/bootstrap.sh   ← first-run setup
+│   └── libpr-cli.so           ← Rust CLI (static, ~3.4MB)
 ```
 
 Flow at targetSdk 35:

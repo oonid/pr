@@ -4,6 +4,10 @@ Phase 3 obtains and integrates static busybox and bash binaries, creates the boo
 
 Status: **Complete** (commits `c32a86b..df73f58`)
 
+Superseded: the APK no longer ships bash or busybox, and `bootstrap.sh` is gone. pr-cli does
+its file work in Rust and `PrBootstrap` creates the prefix directories. This page records the
+original phase.
+
 ---
 
 ## Architecture
