@@ -43,9 +43,15 @@ class NativeLinksTest {
     fun linksEachNativeLibraryIntoBin() {
         links().ensure()
 
-        assertEquals(lib("libbusybox.so"), target("busybox"))
         assertEquals(lib("libproot.so"), target("proot"))
         assertEquals(lib("libpr-cli.so"), target("pr-cli"))
+    }
+
+    @Test
+    fun doesNotLinkBusyboxEvenIfTheApkShipsIt() {
+        links().ensure()
+
+        assertFalse(Files.exists(bin("busybox").toPath(), LinkOption.NOFOLLOW_LINKS))
     }
 
     @Test
@@ -92,37 +98,49 @@ class NativeLinksTest {
     @Test
     fun removesStaleBinariesAndTheScriptsDirectory() {
         bin("bash").parentFile!!.mkdirs()
-        listOf("bash", "pr-test", "proot-distro").forEach { bin(it).writeText("old") }
+        listOf("bash", "pr-test", "proot-distro", "bootstrap.sh").forEach { bin(it).writeText("old") }
         File(prefix, "scripts/proot-distro.sh").apply { parentFile!!.mkdirs() }.writeText("old")
 
         links().ensure()
 
-        listOf("bash", "pr-test", "proot-distro").forEach { assertFalse(bin(it).exists()) }
+        listOf("bash", "pr-test", "proot-distro", "bootstrap.sh").forEach { assertFalse(bin(it).exists()) }
         assertFalse(File(prefix, "scripts").exists())
     }
 
     @Test
-    fun linksEachAppletToBusyboxAndKeepsExistingFiles() {
-        bin("ls").parentFile!!.mkdirs()
-        bin("ls").writeText("mine")
+    fun removesTheBusyboxLinkAndEveryAppletLinkToIt() {
+        bin("busybox").parentFile!!.mkdirs()
+        symlink(lib("libbusybox.so"), bin("busybox").absolutePath)
+        listOf("sh", "ls", "wget").forEach { symlink("busybox", bin(it).absolutePath) }
 
-        val created = links().applets(listOf("sh", "", "ls", "tar"))
+        links().ensure()
 
-        assertEquals(2, created)
-        assertEquals("busybox", target("sh"))
-        assertEquals("busybox", target("tar"))
-        assertEquals("mine", bin("ls").readText())
+        listOf("busybox", "sh", "ls", "wget").forEach {
+            assertFalse(it, Files.exists(bin(it).toPath(), LinkOption.NOFOLLOW_LINKS))
+        }
     }
 
     @Test
-    fun anAppletThatCannotBeLinkedIsSkipped() {
+    fun removesAppletLinksLeftDanglingByAnEarlierUpgrade() {
         bin("sh").parentFile!!.mkdirs()
+        symlink("busybox", bin("sh").absolutePath)
 
-        val created = links { target, link ->
-            if (link.endsWith("/bad")) throw IOException("denied") else symlink(target, link)
-        }.applets(listOf("bad", "sh"))
+        links().ensure()
 
-        assertEquals(1, created)
-        assertEquals("busybox", target("sh"))
+        assertFalse(Files.exists(bin("sh").toPath(), LinkOption.NOFOLLOW_LINKS))
+    }
+
+    @Test
+    fun keepsFilesAndLinksThatAreNotBusybox() {
+        bin("mine").parentFile!!.mkdirs()
+        bin("mine").writeText("mine")
+        symlink("pr-cli", bin("prc").absolutePath)
+        symlink(File(tmp.root, "busybox").absolutePath, bin("other").absolutePath)
+
+        links().ensure()
+
+        assertEquals("mine", bin("mine").readText())
+        assertEquals("pr-cli", target("prc"))
+        assertEquals(File(tmp.root, "busybox").absolutePath, target("other"))
     }
 }
