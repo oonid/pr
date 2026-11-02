@@ -20,12 +20,12 @@ use crate::oci::{
 };
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
-    get_download_cache_dir, get_installed_rootfs_dir, get_native_loader, get_native_proot,
-    get_oci_container_dir, get_oci_container_manifest_path, get_oci_container_rootfs_dir,
-    get_oci_containers_dir, get_plugins_dir, get_prefix, is_valid_container_name, msg_error,
-    msg_status, network_dns_servers, read_rootfs_file, resolv_conf_contents,
-    resolve_installed_rootfs, write_rootfs_file, DEFAULT_FAKE_KERNEL_RELEASE,
-    DEFAULT_FAKE_KERNEL_VERSION,
+    build_proot_args, build_proot_child_env, build_proot_runtime_env, get_download_cache_dir,
+    get_installed_rootfs_dir, get_native_proot, get_oci_container_dir,
+    get_oci_container_manifest_path, get_oci_container_rootfs_dir, get_oci_containers_dir,
+    get_plugins_dir, is_valid_container_name, msg_error, msg_status, network_dns_servers,
+    read_rootfs_file, resolv_conf_contents, resolve_installed_rootfs, write_rootfs_file,
+    DEFAULT_FAKE_KERNEL_RELEASE, DEFAULT_FAKE_KERNEL_VERSION,
 };
 use crate::source_parse::{InstallSourceInput, InstallSourceInputKind};
 
@@ -1026,35 +1026,21 @@ fn uncomment_en_us_locale(rootfs: &str) -> Result<(), String> {
     write_rootfs_file(root, &target, &format!("{}\n", updated), None)
 }
 
-fn run_guest_shell_command(
-    rootfs: &str,
-    command: &str,
-    envs: &[(&str, &str)],
-) -> Result<(), String> {
-    let cache_dir = std::env::var("PROOT_TMP_DIR")
-        .or_else(|_| std::env::var("TMPDIR"))
-        .unwrap_or_else(|_| format!("{}/tmp", get_prefix()));
-
+fn guest_command(rootfs: &str, argv: &[&str], envs: &[(&str, &str)]) -> Command {
+    let args = build_proot_args(rootfs, true, false, &[]);
     let mut cmd = Command::new(get_native_proot());
-    cmd.env("PROOT_NO_SECCOMP", "1")
-        .env("PROOT_L2S_DIR", format!("{}/.l2s", rootfs))
-        .env("PROOT_TMP_DIR", &cache_dir)
-        .env("TMPDIR", &cache_dir)
-        .env("PROOT_LOADER", get_native_loader())
-        .args([
-            "--link2symlink",
-            "--change-id=0:0",
-            "-r",
-            rootfs,
-            "/bin/sh",
-            "-c",
-            command,
-        ]);
-    for (key, value) in envs {
-        cmd.env(key, value);
-    }
+    cmd.envs(build_proot_runtime_env())
+        .envs(build_proot_child_env())
+        .env("LANG", "C.UTF-8")
+        .envs(envs.iter().copied())
+        .args(args)
+        .args(argv);
+    cmd
+}
 
-    let status = cmd
+fn run_guest_command(rootfs: &str, argv: &[&str], envs: &[(&str, &str)]) -> Result<(), String> {
+    let command = argv.join(" ");
+    let status = guest_command(rootfs, argv, envs)
         .status()
         .map_err(|e| format!("run guest command '{}': {}", command, e))?;
     if !status.success() {
@@ -1071,24 +1057,34 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
     match distro_alias {
         "debian" => {
             uncomment_en_us_locale(rootfs)?;
-            run_guest_shell_command(
+            run_guest_command(
                 rootfs,
-                "dpkg-reconfigure locales",
+                &["dpkg-reconfigure", "locales"],
                 &[("DEBIAN_FRONTEND", "noninteractive")],
             )?;
         }
         "ubuntu" => {
             uncomment_en_us_locale(rootfs)?;
-            run_guest_shell_command(
+            run_guest_command(
                 rootfs,
-                "dpkg-reconfigure locales",
+                &["dpkg-reconfigure", "locales"],
                 &[("DEBIAN_FRONTEND", "noninteractive")],
             )?;
-            let _ = run_guest_shell_command(
+            if let Err(e) = run_guest_command(
                 rootfs,
-                "add-apt-repository --yes --no-update ppa:mozillateam/ppa",
+                &[
+                    "add-apt-repository",
+                    "--yes",
+                    "--no-update",
+                    "ppa:mozillateam/ppa",
+                ],
                 &[],
-            );
+            ) {
+                msg_error(&format!(
+                    "adding the Mozilla PPA failed (continuing): {}",
+                    e
+                ));
+            }
             let pin = "etc/apt/preferences.d/pin-mozilla-ppa";
             let pin_dir =
                 resolve_in_root(Path::new(rootfs), Path::new("etc/apt/preferences.d"), true)?;
@@ -1110,7 +1106,7 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
                 )?;
             }
             uncomment_en_us_locale(rootfs)?;
-            run_guest_shell_command(rootfs, "locale-gen", &[])?;
+            run_guest_command(rootfs, &["locale-gen"], &[])?;
         }
         "manjaro" => {
             for file in ["su", "su-l", "system-local-login", "system-remote-login"] {
@@ -1122,7 +1118,7 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
             }
         }
         "fedora" => {
-            run_guest_shell_command(rootfs, "authselect opt-out", &[])?;
+            run_guest_command(rootfs, &["authselect", "opt-out"], &[])?;
             append_line_if_missing(
                 Path::new(rootfs),
                 "etc/pam.d/system-auth",
@@ -1130,7 +1126,7 @@ fn apply_rust_owned_distro_setup(rootfs: &str, distro_alias: &str) -> Result<(),
             )?;
         }
         "opensuse" => {
-            run_guest_shell_command(rootfs, "zypper al filesystem", &[])?;
+            run_guest_command(rootfs, &["zypper", "al", "filesystem"], &[])?;
         }
         _ => {}
     }
@@ -1852,6 +1848,88 @@ mod tests {
         assert!(has_rust_owned_distro_setup("debian"));
         assert!(has_rust_owned_distro_setup("ubuntu"));
         assert!(!has_rust_owned_distro_setup("alpine"));
+    }
+
+    fn args_of(cmd: &Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn env_of(cmd: &Command, key: &str) -> Option<String> {
+        cmd.get_envs()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+    }
+
+    #[test]
+    fn guest_setup_runs_the_program_without_a_shell() {
+        let rootfs = unique_temp_dir("pr-cli-guest-argv");
+        let rootfs = rootfs.to_str().expect("utf-8 path");
+
+        let args = args_of(&guest_command(
+            rootfs,
+            &["dpkg-reconfigure", "locales"],
+            &[],
+        ));
+
+        assert_eq!(
+            args[args.len() - 4..],
+            [
+                format!("--rootfs={}", rootfs),
+                "--cwd=/".to_string(),
+                "dpkg-reconfigure".to_string(),
+                "locales".to_string()
+            ]
+        );
+        assert!(!args.iter().any(|a| a == "/bin/sh" || a == "-c"));
+    }
+
+    #[test]
+    fn guest_setup_runs_with_the_container_mounts_like_login() {
+        let rootfs = unique_temp_dir("pr-cli-guest-binds");
+        let rootfs = rootfs.to_str().expect("utf-8 path");
+
+        let args = args_of(&guest_command(rootfs, &["locale-gen"], &[]));
+
+        for expected in [
+            "--bind=/dev",
+            "--bind=/proc",
+            "--bind=/sys",
+            "--kill-on-exit",
+        ] {
+            assert!(args.iter().any(|a| a == expected), "missing {}", expected);
+        }
+        assert!(args.iter().any(|a| a.ends_with(":/tmp")));
+    }
+
+    #[test]
+    fn guest_setup_uses_the_guest_environment() {
+        let rootfs = unique_temp_dir("pr-cli-guest-env");
+        let cmd = guest_command(rootfs.to_str().expect("utf-8 path"), &["locale-gen"], &[]);
+
+        assert_eq!(
+            env_of(&cmd, "PATH").as_deref(),
+            Some(crate::shared::DEFAULT_PATH_ENV_SUFFIX)
+        );
+        assert_eq!(env_of(&cmd, "HOME").as_deref(), Some("/root"));
+        assert_eq!(env_of(&cmd, "TMPDIR").as_deref(), Some("/tmp"));
+        assert_eq!(env_of(&cmd, "LANG").as_deref(), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn guest_setup_passes_the_extra_environment() {
+        let rootfs = unique_temp_dir("pr-cli-guest-extra");
+        let cmd = guest_command(
+            rootfs.to_str().expect("utf-8 path"),
+            &["dpkg-reconfigure", "locales"],
+            &[("DEBIAN_FRONTEND", "noninteractive")],
+        );
+
+        assert_eq!(
+            env_of(&cmd, "DEBIAN_FRONTEND").as_deref(),
+            Some("noninteractive")
+        );
     }
 
     #[test]
