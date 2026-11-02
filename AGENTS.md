@@ -156,7 +156,7 @@ All modifications go in `src/proot/` (working copy), never in `vendor/`.
 
 ### Native library disguise
 
-All native binaries (proot, loader, busybox, bash, pr-cli) are named `lib*.so` in jniLibs/ so Android extracts them to nativeLibraryDir where SELinux allows execve. They are standalone ELF executables, not shared libraries.
+All native binaries (proot, loader, pr-cli) are named `lib*.so` in jniLibs/ so Android extracts them to nativeLibraryDir where SELinux allows execve. They are standalone ELF executables, not shared libraries.
 
 ### Environment variable contract
 
@@ -221,7 +221,7 @@ Commit message policy:
 1. **targetSdk is 35** — Play Store minimum. Works via PROOT_LOADER mechanism (unbundled loader binary in nativeLibraryDir).
 2. **W^X / SELinux** — Only nativeLibraryDir allows execve. Files in app data cannot be exec'd. The PROOT_LOADER mechanism works around this.
 3. **Zygote seccomp** blocks 18+ syscalls. Proot has SIGSYS handlers — never remove them. See `docs/important-notes.md` for full list.
-4. **bootstrap.sh must be POSIX sh** — `android/session-core/src/main/assets/scripts/bootstrap.sh` runs under `/system/bin/sh` before any container exists.
+4. **No host shell or host tools** — `PrBootstrap` prepares `files/usr` with Kotlin file APIs, and pr-cli does its file work in Rust. The APK ships no busybox; don't add a `/system/bin/sh` script or a host-tool call.
 5. **ARM64 x0 clobber bug** — register x0 may be clobbered by kernel before proot reads it at SIGSYS time. All handlers use ORIGINAL register version.
 6. **TLS alignment** — proot needs 64-byte PT_TLS alignment for Bionic. Build script patches this.
 7. **Fake root required** — `--change-id=0:0` (proot `-0`) must always be passed. dpkg and other tools check `getuid() == 0`.

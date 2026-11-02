@@ -17,7 +17,6 @@ Vendor submodules (READ ONLY, not modified):
   vendor/proot/                 GPL-2.0
   vendor/termux-proot/          GPL-2.0
   vendor/termux-proot-distro/   GPL-3.0
-  vendor/busybox/               GPL-2.0
   vendor/samba/                 GPL-3.0 (talloc, the only part used: LGPL-3.0-or-later)
   vendor/musl/                  MIT
   vendor/bionic/                BSD (AOSP)
@@ -35,10 +34,6 @@ Prebuilt binaries in android/proot-engine/src/main/jniLibs/
   libproot-loader.so                built from src/proot/src/loader/;
                                     GPL-2.0-or-later
   libpr-cli.so                      built from src/pr-cli/; GPL-3.0-or-later
-  libbusybox.so                     Alpine Linux busybox-static 1.37.0-r14
-                                    (scripts/download-busybox.sh);
-                                    GPL-2.0-only; corresponding source
-                                    in third_party/busybox/
 
 The Android code runs these as separate programs, so it keeps its own
 license.

@@ -39,24 +39,6 @@ scripts/build.sh --arch=arm64 --skip-ndk --skip-talloc
 4. Fix TLS alignment (Android Bionic requires 64-byte)
 5. Verify binary (ELF, static, correct arch)
 
-## `scripts/download-busybox.sh` — Download static busybox
-
-Downloads Alpine's `busybox-static` package and extracts the binary.
-
-```
-scripts/download-busybox.sh [OPTIONS]
-
-Options:
-  --arch=ARCH       Target architecture (default: aarch64)
-  -f, --force       Re-download even if binary exists
-  --verify-only     Only verify existing binary, skip download
-  -h, --help        Show help
-
-Output: build/assets/arm64-v8a/busybox
-```
-
-Source: Alpine Linux `busybox-static` v1.37.0-r14 (GPL-2.0-only). Its corresponding source, the upstream tarball and Alpine's build recipe, patches and configuration, is in `third_party/busybox/`; replace it when the version changes.
-
 ## On-device tests
 
 The on-device integration suite runs inside a container through `pr-cli test <distro>`, from the app (Test in a container's menu) or over adb; see [integration-tests.md](integration-tests.md).

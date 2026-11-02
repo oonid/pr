@@ -65,7 +65,7 @@ Files in the APK's native library directory can be executed even from `untrusted
 /data/data/<package>/files/                          → SELinux denies execve()
 ```
 
-This is why `libproot.so`, `libbusybox.so`, `libpr-cli.so` can all be exec'd — they're in nativeLibraryDir. But the rootfs binaries in `/data/data/.../installed-rootfs/` cannot.
+This is why `libproot.so`, `libproot-loader.so`, `libpr-cli.so` can all be exec'd — they're in nativeLibraryDir. But the rootfs binaries in `/data/data/.../installed-rootfs/` cannot.
 
 ### Why Proot Bind Mounts Don't Help
 

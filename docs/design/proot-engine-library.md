@@ -16,6 +16,7 @@ This module will be a self-contained Android Library containing:
 - **New Interface:** `ProotHost.kt` (to decouple `ProotLauncher` from `pr`'s `App` class)
 - **C JNI Code:** `ptyjni.c`, `CMakeLists.txt` (moved from `:app`)
 - **Native Binaries:** `libproot.so`, `libproot-loader.so`, `libpr-cli.so`, `libbusybox.so` (moved from `:app`'s `jniLibs`)
+  - `libbusybox.so` was removed later: pr-cli no longer runs busybox and `PrBootstrap` makes no applet links. A client with its own bootstrap should stop linking `busybox` and its applets.
 
 ### The `ProotHost` Interface
 To allow `ProotLauncher` to work in any app context without being tightly coupled to `id.or.oo.pr.App`, we introduce an interface:
