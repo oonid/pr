@@ -6,7 +6,6 @@ import android.system.Os
 import android.util.Log
 import id.or.oo.pr.engine.ProotHost
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 
 class PrBootstrap(
@@ -33,20 +32,8 @@ class PrBootstrap(
         val t0 = System.currentTimeMillis()
 
         try {
-            val binDir = File(host.prefixDir, "bin")
-
-            binDir.mkdirs()
-            host.homeDir.mkdirs()
-            File(host.prefixDir, "tmp").mkdirs()
-
+            createDirectories(host)
             links.ensure()
-            Log.d(TAG, "Creating busybox applet symlinks...")
-            val applets = context.assets.open("bin/busybox.applets").bufferedReader().readLines()
-            Log.d(TAG, "Created ${links.applets(applets)} busybox applet symlinks")
-
-            copyAssetFile("scripts/bootstrap.sh", File(binDir, "bootstrap.sh"))
-
-            executeBootstrap()
 
             prefs.edit()
                 .putInt(KEY_VERSION, version)
@@ -60,50 +47,6 @@ class PrBootstrap(
         }
     }
 
-    private fun copyAssetFile(assetPath: String, dest: File) {
-        context.assets.open(assetPath).use { input ->
-            FileOutputStream(dest).use { output ->
-                input.copyTo(output)
-            }
-        }
-        dest.setExecutable(true, false)
-        dest.setReadable(true, false)
-        Log.d(TAG, "Installed: ${dest.name}")
-    }
-
-    private fun executeBootstrap() {
-        val bootstrapScript = File(host.prefixDir, "bin/bootstrap.sh")
-        if (!bootstrapScript.exists()) {
-            Log.e(TAG, "bootstrap.sh not found")
-            return
-        }
-
-        val cmd = arrayOf(
-            "/system/bin/sh",
-            bootstrapScript.absolutePath,
-        )
-
-        val pb = ProcessBuilder(*cmd)
-        pb.environment().putAll(bootstrapEnv(host))
-        pb.redirectErrorStream(true)
-
-        Log.d(TAG, "Executing: ${cmd.joinToString(" ")}")
-
-        val proc = pb.start()
-        val output = proc.inputStream.bufferedReader().readText()
-        val exitCode = proc.waitFor()
-
-        if (output.isNotBlank()) {
-            for (line in output.lines()) {
-                Log.d(TAG, "[bootstrap] $line")
-            }
-        }
-
-        if (exitCode != 0) {
-            throw IOException("bootstrap.sh failed with exit code $exitCode")
-        }
-    }
-
     private companion object {
         const val TAG = "PR"
         const val PREFS_NAME = "pr_prefs"
@@ -112,14 +55,10 @@ class PrBootstrap(
     }
 }
 
-internal fun bootstrapEnv(host: ProotHost): Map<String, String> {
-    val binDir = File(host.prefixDir, "bin")
-    return mapOf(
-        "APP_PREFIX" to host.prefixDir.absolutePath,
-        "APP_HOME" to host.homeDir.absolutePath,
-        "APP_PACKAGE" to host.packageName,
-        "PATH" to "/system/bin:/system/xbin:${binDir.absolutePath}",
-        "PROOT_NO_SECCOMP" to "1",
-        "HOME" to host.homeDir.absolutePath,
-    )
+internal fun createDirectories(host: ProotHost) {
+    val dirs = listOf("tmp", "etc/pr", "var/lib/pr/installed-rootfs", "var/lib/pr/dlcache")
+        .map { File(host.prefixDir, it) } + host.homeDir
+    for (dir in dirs) {
+        if (!dir.mkdirs() && !dir.isDirectory) throw IOException("cannot create $dir")
+    }
 }

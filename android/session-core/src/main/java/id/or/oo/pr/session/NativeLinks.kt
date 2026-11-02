@@ -21,6 +21,13 @@ internal class NativeLinks(
                 Log.d(TAG, "Removed stale: $name")
             }
         }
+        val applets = binDir.listFiles()?.count { f ->
+            val path = f.toPath()
+            Files.isSymbolicLink(path) &&
+                runCatching { Files.readSymbolicLink(path).toString() }.getOrNull() == "busybox" &&
+                f.delete()
+        } ?: 0
+        if (applets > 0) Log.d(TAG, "Removed $applets busybox applet links")
         val scriptsDir = File(prefixDir, "scripts")
         if (scriptsDir.exists()) {
             scriptsDir.deleteRecursively()
@@ -47,28 +54,12 @@ internal class NativeLinks(
         }
     }
 
-    fun applets(names: List<String>): Int {
-        var count = 0
-        for (applet in names.filter { it.isNotBlank() }) {
-            val link = File(binDir, applet)
-            if (link.exists()) continue
-            try {
-                symlink("busybox", link.absolutePath)
-                count++
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to create symlink for $applet: ${e.message}")
-            }
-        }
-        return count
-    }
-
     private companion object {
         const val TAG = "PR"
         val LINKS = mapOf(
-            "busybox" to "libbusybox.so",
             "proot" to "libproot.so",
             "pr-cli" to "libpr-cli.so",
         )
-        val STALE = listOf("bash", "pr-test", "proot-distro")
+        val STALE = listOf("bash", "pr-test", "proot-distro", "busybox", "bootstrap.sh")
     }
 }

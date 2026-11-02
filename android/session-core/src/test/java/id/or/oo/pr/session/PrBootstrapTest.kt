@@ -2,30 +2,57 @@ package id.or.oo.pr.session
 
 import id.or.oo.pr.engine.ProotHost
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 class PrBootstrapTest {
 
-    private val host = object : ProotHost {
-        override val prefixDir = File("/data/data/org.example.gateway/files/usr")
-        override val homeDir = File("/data/data/org.example.gateway/files/home")
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private fun host(root: File) = object : ProotHost {
+        override val prefixDir = File(root, "files/usr")
+        override val homeDir = File(root, "files/home")
         override val packageName = "org.example.gateway"
-        override val cacheDir = File("/data/data/org.example.gateway/cache")
+        override val cacheDir = File(root, "cache")
     }
 
     @Test
-    fun bootstrapShRunsWithTheHostPathsAndSystemBinFirst() {
-        assertEquals(
-            mapOf(
-                "APP_PREFIX" to "/data/data/org.example.gateway/files/usr",
-                "APP_HOME" to "/data/data/org.example.gateway/files/home",
-                "APP_PACKAGE" to "org.example.gateway",
-                "PATH" to "/system/bin:/system/xbin:/data/data/org.example.gateway/files/usr/bin",
-                "PROOT_NO_SECCOMP" to "1",
-                "HOME" to "/data/data/org.example.gateway/files/home",
-            ),
-            bootstrapEnv(host),
-        )
+    fun createsTheDirectoriesPrCliExpects() {
+        val host = host(tmp.root)
+
+        createDirectories(host)
+
+        listOf(
+            "files/usr/tmp",
+            "files/usr/etc/pr",
+            "files/usr/var/lib/pr/installed-rootfs",
+            "files/usr/var/lib/pr/dlcache",
+            "files/home",
+        ).forEach { assertTrue(it, File(tmp.root, it).isDirectory) }
+    }
+
+    @Test
+    fun keepsWhatIsAlreadyInTheDirectories() {
+        val host = host(tmp.root)
+        createDirectories(host)
+        val kept = File(host.homeDir, ".profile").apply { writeText("mine") }
+
+        createDirectories(host)
+
+        assertEquals("mine", kept.readText())
+    }
+
+    @Test(expected = IOException::class)
+    fun failsWhenADirectoryCannotBeCreated() {
+        val host = host(tmp.root)
+        host.prefixDir.mkdirs()
+        File(host.prefixDir, "var").writeText("not a directory")
+
+        createDirectories(host)
     }
 }
