@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::color::*;
 use crate::commands_extra::force_remove_dir_all;
+use crate::install_marker::{pending_install, InstallMarker, PendingInstall};
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
     apply_layer_blob, blob_matches_digest, blob_path, blob_url, download_blob_with_bearer,
@@ -553,6 +554,69 @@ fn cleanup_oci_on_failure(container_dir: &Path) {
     }
 }
 
+fn claim_container(
+    parent: &Path,
+    name: &str,
+    dir: &Path,
+    installed: impl Fn() -> bool,
+) -> Result<InstallMarker, String> {
+    let marker = InstallMarker::claim_reporting(parent, name)?;
+    if marker.took_over() {
+        msg_status(&format!(
+            "Removing the interrupted install of '{}'...",
+            name
+        ));
+        force_remove_dir_all(dir);
+        if fs::symlink_metadata(dir).is_ok() {
+            return Err(format!(
+                "could not remove the interrupted install '{}'",
+                dir.display()
+            ));
+        }
+    } else if installed() {
+        marker.finish()?;
+        return Err(format!("distribution '{}' is already installed", name));
+    }
+    Ok(marker)
+}
+
+fn refuse_unfinished_install_in(other_parent: &str, name: &str) -> Result<(), String> {
+    if pending_install(Path::new(other_parent), name).is_some() {
+        msg_error(&format!(
+            "'{}' has an unfinished install of another kind. Remove it with: pr-cli remove {}",
+            name, name
+        ));
+        return Err(format!("'{}' has an unfinished install", name));
+    }
+    Ok(())
+}
+
+fn install_container<I, F, C>(
+    parent: &Path,
+    name: &str,
+    dir: &Path,
+    installed: I,
+    populate: F,
+    cleanup: C,
+) -> Result<(), String>
+where
+    I: Fn() -> bool,
+    F: FnOnce() -> Result<(), String>,
+    C: FnOnce(),
+{
+    let marker = claim_container(parent, name, dir, installed)?;
+    match populate() {
+        Ok(()) => marker.finish(),
+        Err(e) => {
+            cleanup();
+            if fs::symlink_metadata(dir).is_err() {
+                let _ = marker.finish();
+            }
+            Err(e)
+        }
+    }
+}
+
 fn install_oci_layers<F>(
     layers: &[OciDescriptor],
     cache_dir: &Path,
@@ -585,24 +649,38 @@ fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> 
     let resolved = resolve_oci_reference(reference)?;
     let install_name = derive_oci_install_name(&resolved, override_alias)?;
 
-    if resolve_installed_rootfs(&install_name).is_some() {
+    install_oci_container(&install_name, || {
+        msg_status(&format!(
+            "Installing OCI image {}:{} as '{}'...",
+            resolved.repository, resolved.reference, install_name
+        ));
+        populate_oci_container(reference, &resolved, &install_name)
+    })?;
+    msg_status("Finished.");
+    Ok(())
+}
+
+fn install_oci_container<F>(install_name: &str, populate: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    if resolve_installed_rootfs(install_name).is_some() {
         return Err(format!(
             "distribution '{}' is already installed",
             install_name
         ));
     }
 
-    msg_status(&format!(
-        "Installing OCI image {}:{} as '{}'...",
-        resolved.repository, resolved.reference, install_name
-    ));
-
-    if let Err(e) = populate_oci_container(reference, &resolved, &install_name) {
-        cleanup_oci_on_failure(Path::new(&get_oci_container_dir(&install_name)));
-        return Err(e);
-    }
-    msg_status("Finished.");
-    Ok(())
+    refuse_unfinished_install_in(&get_installed_rootfs_dir(), install_name)?;
+    let container_dir = PathBuf::from(get_oci_container_dir(install_name));
+    install_container(
+        Path::new(&get_oci_containers_dir()),
+        install_name,
+        &container_dir,
+        || container_dir.join("rootfs").is_dir(),
+        populate,
+        || cleanup_oci_on_failure(&container_dir),
+    )
 }
 
 fn populate_oci_container(
@@ -1352,13 +1430,19 @@ pub fn command_install(
     let download_cache_dir = get_download_cache_dir();
 
     // Validate alias format if override-alias given
+    let mut override_plugin: Option<(String, String, DistroPlugin)> = None;
     let distro_name = if let Some(alias) = override_alias {
         validate_alias_format(alias)?;
 
         let override_alt = format!("{}/{}.override.sh", plugins_dir, alias);
         let plugins =
             plugins_for_install(&plugins_dir, requested_distro.as_str(), tarball_override);
-        if plugins.iter().any(|p| p.alias == alias) || Path::new(&override_alt).exists() {
+        let retrying = pending_install(Path::new(&installed_rootfs_dir), alias)
+            == Some(PendingInstall::Interrupted)
+            && !Path::new(&format!("{}/{}.sh", plugins_dir, alias)).exists();
+        if !retrying
+            && (plugins.iter().any(|p| p.alias == alias) || Path::new(&override_alt).exists())
+        {
             return Err(format!(
                 "distribution with alias '{}' already exists",
                 alias
@@ -1370,19 +1454,28 @@ pub fn command_install(
             .find(|p| p.alias == distro_name)
             .ok_or_else(|| format!("unknown distribution '{}'", distro_name))?;
 
-        msg_status(&format!("Creating file '{}.override.sh'...", alias));
-
-        fs::create_dir_all(&plugins_dir).map_err(|e| format!("create plugins dir: {}", e))?;
-        let new_content = render_override_plugin(orig_plugin, alias);
-        fs::write(&override_alt, new_content)
-            .map_err(|e| format!("write override plugin: {}", e))?;
+        override_plugin = Some((
+            override_alt,
+            render_override_plugin(orig_plugin, alias),
+            DistroPlugin {
+                alias: alias.to_string(),
+                name: format!("{} - {}", orig_plugin.name, alias),
+                comment: orig_plugin.comment.clone(),
+                tarballs: orig_plugin.tarballs.clone(),
+                has_setup: false,
+            },
+        ));
 
         alias.to_string()
     } else {
         distro_name.to_string()
     };
 
-    let plugins = plugins_for_install(&plugins_dir, &distro_name, tarball_override);
+    let mut plugins = plugins_for_install(&plugins_dir, &distro_name, tarball_override);
+    if let Some((_, _, plugin)) = &override_plugin {
+        plugins.retain(|p| p.alias != plugin.alias);
+        plugins.push(plugin.clone());
+    }
     if !plugins.iter().any(|p| p.alias == distro_name) {
         println!();
         msg_error(&format!(
@@ -1429,111 +1522,120 @@ pub fn command_install(
         .find(|p| p.alias == distro_name)
         .ok_or_else(|| format!("failed to parse plugin for '{}'", distro_name))?;
 
+    refuse_unfinished_install_in(&get_oci_containers_dir(), &distro_name)?;
+
     // Detect device architecture
     let device_arch = detect_device_arch();
 
     msg_status(&format!("Installing {}...", plugin.name));
 
-    // Create rootfs directory
-    fs::create_dir_all(&rootfs).map_err(|e| format!("create rootfs dir: {}", e))?;
-    msg_status(&format!("Creating directory '{}'...", rootfs));
+    let populate = || {
+        if let Some((path, content, plugin)) = &override_plugin {
+            msg_status(&format!("Creating file '{}.override.sh'...", plugin.alias));
+            fs::create_dir_all(&plugins_dir).map_err(|e| format!("create plugins dir: {}", e))?;
+            fs::write(path, content).map_err(|e| format!("write override plugin: {}", e))?;
+        }
 
-    // Create .l2s directory
-    let l2s_dir = format!("{}/.l2s", rootfs);
-    fs::create_dir_all(&l2s_dir).map_err(|e| format!("create .l2s dir: {}", e))?;
+        // Create rootfs directory
+        fs::create_dir_all(&rootfs).map_err(|e| format!("create rootfs dir: {}", e))?;
+        msg_status(&format!("Creating directory '{}'...", rootfs));
 
-    // Determine tarball URL and SHA256
-    let arch = device_arch.as_str();
-    let tarball = plugin.tarballs.get(arch);
-    if tarball.is_none() && override_tarball_url.is_none() {
-        cleanup_on_failure(&rootfs, &distro_name);
-        return Err(format!(
-            "distribution download URL is not defined for CPU architecture '{}'",
-            arch
-        ));
-    }
+        // Create .l2s directory
+        let l2s_dir = format!("{}/.l2s", rootfs);
+        fs::create_dir_all(&l2s_dir).map_err(|e| format!("create .l2s dir: {}", e))?;
 
-    let tarball_url = override_tarball_url
-        .map(str::to_string)
-        .or_else(|| tarball.map(|t| t.url.clone()))
-        .unwrap_or_default();
-    let tarball_sha256 = override_tarball_sha256
-        .map(str::to_string)
-        .or_else(|| tarball.map(|t| t.sha256.clone()))
-        .unwrap_or_default();
+        // Determine tarball URL and SHA256
+        let arch = device_arch.as_str();
+        let tarball = plugin.tarballs.get(arch);
+        if tarball.is_none() && override_tarball_url.is_none() {
+            return Err(format!(
+                "distribution download URL is not defined for CPU architecture '{}'",
+                arch
+            ));
+        }
 
-    if tarball_url.is_empty() {
-        msg_error(&format!(
-            "distribution download URL is not defined for CPU architecture '{}'",
-            arch
-        ));
-        cleanup_on_failure(&rootfs, &distro_name);
-        return Err("no tarball URL".to_string());
-    }
+        let tarball_url = override_tarball_url
+            .map(str::to_string)
+            .or_else(|| tarball.map(|t| t.url.clone()))
+            .unwrap_or_default();
+        let tarball_sha256 = override_tarball_sha256
+            .map(str::to_string)
+            .or_else(|| tarball.map(|t| t.sha256.clone()))
+            .unwrap_or_default();
 
-    // Download
-    let archive_name = tarball_url
-        .rsplit('/')
-        .next()
-        .unwrap_or("rootfs.tar.xz")
-        .to_string();
-    fs::create_dir_all(&download_cache_dir).map_err(|e| format!("create cache dir: {}", e))?;
-    let archive_path = format!("{}/{}", download_cache_dir, archive_name);
+        if tarball_url.is_empty() {
+            msg_error(&format!(
+                "distribution download URL is not defined for CPU architecture '{}'",
+                arch
+            ));
+            return Err("no tarball URL".to_string());
+        }
 
-    if Path::new(&archive_path).exists() {
-        msg_status("Using cached rootfs archive...");
-    } else {
-        msg_status("Downloading rootfs archive...");
-        msg_status(&format!("URL: {}", tarball_url));
-        println!();
-        if let Err(e) = download_file(&tarball_url, &archive_path, 3) {
+        // Download
+        let archive_name = tarball_url
+            .rsplit('/')
+            .next()
+            .unwrap_or("rootfs.tar.xz")
+            .to_string();
+        fs::create_dir_all(&download_cache_dir).map_err(|e| format!("create cache dir: {}", e))?;
+        let archive_path = format!("{}/{}", download_cache_dir, archive_name);
+
+        if Path::new(&archive_path).exists() {
+            msg_status("Using cached rootfs archive...");
+        } else {
+            msg_status("Downloading rootfs archive...");
+            msg_status(&format!("URL: {}", tarball_url));
             println!();
-            msg_error("Download failure, please check your network connection.");
-            cleanup_on_failure(&rootfs, &distro_name);
-            return Err(format!("download failed: {}", e));
+            if let Err(e) = download_file(&tarball_url, &archive_path, 3) {
+                println!();
+                msg_error("Download failure, please check your network connection.");
+                return Err(format!("download failed: {}", e));
+            }
+            println!();
         }
-        println!();
-    }
 
-    // SHA256 verification
-    if !tarball_sha256.is_empty() {
-        msg_status("Checking integrity, please wait...");
-        if let Err(e) = verify_sha256(&tarball_sha256, &archive_path) {
-            msg_error("Integrity checking failed. Try to redo installation again.");
+        // SHA256 verification
+        if !tarball_sha256.is_empty() {
+            msg_status("Checking integrity, please wait...");
+            if let Err(e) = verify_sha256(&tarball_sha256, &archive_path) {
+                msg_error("Integrity checking failed. Try to redo installation again.");
+                let _ = fs::remove_file(&archive_path);
+                return Err(format!("sha256 verification failed: {}", e));
+            }
+        } else if override_tarball_url.is_some() {
+            msg_error("Integrity checking of downloaded rootfs has been disabled.");
+        }
+
+        // Extract
+        msg_status("Extracting rootfs, please wait...");
+
+        if let Err(e) = extract_tarball(&archive_path, &rootfs, 1, &["dev"]) {
+            msg_error(&format!("Extracting the rootfs failed: {}", e));
             let _ = fs::remove_file(&archive_path);
-            cleanup_on_failure(&rootfs, &distro_name);
-            return Err(format!("sha256 verification failed: {}", e));
+            return Err(e);
         }
-    } else if override_tarball_url.is_some() {
-        msg_error("Integrity checking of downloaded rootfs has been disabled.");
-    }
 
-    // Extract
-    msg_status("Extracting rootfs, please wait...");
+        // Validate rootfs structure
+        if !Path::new(&format!("{}/etc", rootfs)).exists() {
+            println!();
+            msg_error(&format!(
+                "rootfs of distribution '{}' has unexpected structure (no /etc directory).",
+                distro_name
+            ));
+            return Err("no /etc in rootfs".to_string());
+        }
 
-    if let Err(e) = extract_tarball(&archive_path, &rootfs, 1, &["dev"]) {
-        msg_error(&format!("Extracting the rootfs failed: {}", e));
-        let _ = fs::remove_file(&archive_path);
-        cleanup_on_failure(&rootfs, &distro_name);
-        return Err(e);
-    }
-
-    // Validate rootfs structure
-    if !Path::new(&format!("{}/etc", rootfs)).exists() {
-        println!();
-        msg_error(&format!(
-            "rootfs of distribution '{}' has unexpected structure (no /etc directory).",
-            distro_name
-        ));
-        cleanup_on_failure(&rootfs, &distro_name);
-        return Err("no /etc in rootfs".to_string());
-    }
-
-    // Write config files
-    if let Err(e) = write_config_files(&rootfs, Some(&requested_distro)) {
-        cleanup_on_failure(&rootfs, &distro_name);
-        return Err(e);
-    }
+        // Write config files
+        write_config_files(&rootfs, Some(&requested_distro))
+    };
+    install_container(
+        Path::new(&installed_rootfs_dir),
+        &distro_name,
+        Path::new(&rootfs),
+        || Path::new(&rootfs).is_dir(),
+        populate,
+        || cleanup_on_failure(&rootfs, &distro_name),
+    )?;
 
     msg_status("Finished.");
     println!();
@@ -1549,6 +1651,7 @@ pub fn command_install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::install_marker::BEING_INSTALLED;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2447,6 +2550,348 @@ mod tests {
         std::env::remove_var("APP_PREFIX");
         std::env::remove_var("DISTRO_ARCH");
         let _ = fs::remove_dir_all(prefix.parent().expect("base"));
+    }
+
+    #[test]
+    fn the_marker_is_held_before_the_container_exists_and_until_it_is_done() {
+        let parent = unique_temp_dir("pr-cli-install-marker-held");
+        let dir = parent.join("box");
+
+        let result = install_container(
+            &parent,
+            "box",
+            &dir,
+            || false,
+            || {
+                assert!(!dir.exists());
+                assert_eq!(
+                    pending_install(&parent, "box"),
+                    Some(PendingInstall::InProgress)
+                );
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())
+            },
+            || panic!("no cleanup on success"),
+        );
+
+        assert!(result.is_ok());
+        assert!(dir.is_dir());
+        assert_eq!(pending_install(&parent, "box"), None);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn a_failed_install_cleans_up_and_drops_the_marker() {
+        let parent = unique_temp_dir("pr-cli-install-marker-failed");
+        let dir = parent.join("box");
+
+        let result = install_container(
+            &parent,
+            "box",
+            &dir,
+            || false,
+            || {
+                fs::create_dir_all(dir.join("etc")).expect("partial");
+                Err("layer failed".to_string())
+            },
+            || force_remove_dir_all(&dir),
+        );
+
+        assert_eq!(result, Err("layer failed".to_string()));
+        assert!(!dir.exists());
+        assert_eq!(pending_install(&parent, "box"), None);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn a_failed_install_whose_cleanup_fails_stays_interrupted() {
+        let parent = unique_temp_dir("pr-cli-install-marker-stuck");
+        let dir = parent.join("box");
+
+        let result = install_container(
+            &parent,
+            "box",
+            &dir,
+            || false,
+            || {
+                fs::create_dir_all(dir.join("etc")).expect("partial");
+                Err("layer failed".to_string())
+            },
+            || {},
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            pending_install(&parent, "box"),
+            Some(PendingInstall::Interrupted)
+        );
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    const GOOD_PLUGIN: &str =
+        "DISTRO_NAME=\"Test\"\nTARBALL_URL_x86_64=\"https://example.invalid/good.tar.xz\"\n";
+
+    fn seed_good_archive(prefix: &Path) {
+        let cache = prefix.join("var/lib/pr/dlcache");
+        fs::create_dir_all(&cache).expect("create cache");
+        write_raw_xz_tar(
+            &cache.join("good.tar.xz"),
+            &[
+                RawEntry::Dir("top/"),
+                RawEntry::Dir("top/etc/"),
+                RawEntry::File("top/etc/os-release", b"ID=test\n", 0o644),
+                RawEntry::Dir("top/bin/"),
+                RawEntry::File("top/bin/sh", b"\x7fELFsh", 0o755),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_container_finished_by_someone_else_meanwhile_is_left_alone() {
+        let parent = unique_temp_dir("pr-cli-install-marker-raced");
+        let dir = parent.join("box");
+        fs::create_dir_all(dir.join("rootfs")).expect("finished elsewhere");
+
+        let result = install_container(
+            &parent,
+            "box",
+            &dir,
+            || dir.join("rootfs").is_dir(),
+            || panic!("must not populate"),
+            || panic!("must not clean up"),
+        );
+
+        assert!(result.expect_err("refused").contains("already installed"));
+        assert!(dir.join("rootfs").is_dir());
+        assert_eq!(pending_install(&parent, "box"), None);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn an_oci_install_reuses_a_container_directory_without_a_rootfs() {
+        with_test_prefix("pr-cli-install-oci-leftover", GOOD_PLUGIN, |prefix| {
+            let dir = prefix.join("var/lib/pr/containers/box");
+            fs::create_dir_all(&dir).expect("leftover from an older pr-cli");
+
+            install_oci_container("box", || {
+                fs::create_dir_all(dir.join("rootfs/etc")).map_err(|e| e.to_string())
+            })
+            .expect("install");
+
+            assert!(resolve_installed_rootfs("box").is_some());
+        });
+    }
+
+    #[test]
+    fn a_finished_legacy_install_has_no_marker() {
+        with_test_prefix("pr-cli-install-finished", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+
+            command_install("testdistro", None, None, None).expect("install");
+
+            assert!(legacy.join("testdistro/bin/sh").is_file());
+            assert_eq!(pending_install(&legacy, "testdistro"), None);
+            assert!(resolve_installed_rootfs("testdistro").is_some());
+        });
+    }
+
+    #[test]
+    fn install_replaces_an_interrupted_legacy_install() {
+        with_test_prefix("pr-cli-install-interrupted", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            drop(InstallMarker::claim(&legacy, "testdistro").expect("mark"));
+            fs::create_dir_all(legacy.join("testdistro")).expect("partial rootfs");
+            fs::write(legacy.join("testdistro/half-written"), b"x").expect("partial file");
+
+            command_install("testdistro", None, None, None).expect("install");
+
+            assert!(legacy.join("testdistro/bin/sh").is_file());
+            assert!(!legacy.join("testdistro/half-written").exists());
+            assert_eq!(pending_install(&legacy, "testdistro"), None);
+        });
+    }
+
+    #[test]
+    fn an_interrupted_override_alias_install_can_be_retried() {
+        with_test_prefix("pr-cli-install-alias-retry", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            fs::write(prefix.join("etc/pr/mydeb.override.sh"), GOOD_PLUGIN).expect("plugin");
+            drop(InstallMarker::claim(&legacy, "mydeb").expect("mark"));
+            fs::create_dir_all(legacy.join("mydeb")).expect("partial rootfs");
+
+            command_install("testdistro", Some("mydeb"), None, None).expect("install");
+
+            assert!(legacy.join("mydeb/bin/sh").is_file());
+            assert!(fs::read_to_string(prefix.join("etc/pr/mydeb.override.sh"))
+                .unwrap()
+                .contains("DISTRO_NAME=\"Test - mydeb\""));
+            assert_eq!(pending_install(&legacy, "mydeb"), None);
+        });
+    }
+
+    #[test]
+    fn an_interrupted_install_does_not_let_an_alias_shadow_a_plugin() {
+        with_test_prefix("pr-cli-install-alias-shadow", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            fs::write(prefix.join("etc/pr/other.sh"), GOOD_PLUGIN).expect("plugin");
+            fs::write(prefix.join("etc/pr/other.override.sh"), GOOD_PLUGIN).expect("override");
+            drop(InstallMarker::claim(&legacy, "other").expect("mark"));
+
+            let err =
+                command_install("testdistro", Some("other"), None, None).expect_err("must refuse");
+
+            assert!(err.contains("already exists"), "{}", err);
+            assert_eq!(
+                fs::read(prefix.join("etc/pr/other.override.sh")).unwrap(),
+                GOOD_PLUGIN.as_bytes()
+            );
+        });
+    }
+
+    #[test]
+    fn an_oci_install_refuses_a_name_with_an_unfinished_legacy_install() {
+        with_test_prefix("pr-cli-install-oci-over-legacy", GOOD_PLUGIN, |prefix| {
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            drop(InstallMarker::claim(&legacy, "box").expect("mark"));
+            fs::create_dir_all(legacy.join("box")).expect("partial legacy");
+
+            let err =
+                install_oci_container("box", || panic!("must not pull")).expect_err("must refuse");
+
+            assert!(err.contains("unfinished"), "{}", err);
+            assert!(!prefix.join("var/lib/pr/containers/box").exists());
+        });
+    }
+
+    #[test]
+    fn a_legacy_install_refuses_a_name_with_an_unfinished_oci_install() {
+        with_test_prefix("pr-cli-install-legacy-over-oci", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let containers = prefix.join("var/lib/pr/containers");
+            drop(InstallMarker::claim(&containers, "testdistro").expect("mark"));
+
+            let err = command_install("testdistro", None, None, None).expect_err("must refuse");
+
+            assert!(err.contains("unfinished"), "{}", err);
+            assert!(!prefix
+                .join("var/lib/pr/installed-rootfs/testdistro")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn a_refused_retry_leaves_the_override_plugin_alone() {
+        with_test_prefix("pr-cli-install-alias-refused", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            let containers = prefix.join("var/lib/pr/containers");
+            let before = "DISTRO_NAME=\"Before\"\n";
+            fs::write(prefix.join("etc/pr/mydeb.override.sh"), before).expect("plugin");
+            drop(InstallMarker::claim(&legacy, "mydeb").expect("mark legacy"));
+            drop(InstallMarker::claim(&containers, "mydeb").expect("mark oci"));
+
+            assert!(command_install("testdistro", Some("mydeb"), None, None).is_err());
+
+            assert_eq!(
+                fs::read_to_string(prefix.join("etc/pr/mydeb.override.sh")).unwrap(),
+                before
+            );
+        });
+    }
+
+    #[test]
+    fn install_refuses_a_name_another_install_is_using() {
+        with_test_prefix("pr-cli-install-running", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+            let legacy = prefix.join("var/lib/pr/installed-rootfs");
+            let running = InstallMarker::claim(&legacy, "testdistro").expect("mark");
+            fs::create_dir_all(legacy.join("testdistro")).expect("rootfs");
+            fs::write(legacy.join("testdistro/in-progress"), b"x").expect("partial file");
+
+            let err = command_install("testdistro", None, None, None).expect_err("refused");
+
+            assert_eq!(err, BEING_INSTALLED);
+            assert!(legacy.join("testdistro/in-progress").exists());
+            drop(running);
+        });
+    }
+
+    #[test]
+    fn an_oci_install_refuses_a_name_another_install_is_using() {
+        with_test_prefix("pr-cli-install-oci-running", GOOD_PLUGIN, |prefix| {
+            let containers = prefix.join("var/lib/pr/containers");
+            let running = InstallMarker::claim(&containers, "box").expect("mark");
+
+            let err = install_from_oci_reference("docker.io/library/alpine:latest", Some("box"))
+                .expect_err("refused");
+
+            assert_eq!(err, BEING_INSTALLED);
+            assert_eq!(
+                pending_install(&containers, "box"),
+                Some(PendingInstall::InProgress)
+            );
+            drop(running);
+        });
+    }
+
+    #[test]
+    fn an_oci_install_holds_the_marker_while_it_pulls() {
+        with_test_prefix("pr-cli-install-oci-marker", GOOD_PLUGIN, |prefix| {
+            let containers = prefix.join("var/lib/pr/containers");
+            let dir = containers.join("box");
+
+            install_oci_container("box", || {
+                assert!(!dir.exists());
+                assert_eq!(
+                    pending_install(&containers, "box"),
+                    Some(PendingInstall::InProgress)
+                );
+                fs::create_dir_all(dir.join("rootfs/etc")).map_err(|e| e.to_string())
+            })
+            .expect("install");
+
+            assert!(resolve_installed_rootfs("box").is_some());
+            assert_eq!(pending_install(&containers, "box"), None);
+        });
+    }
+
+    #[test]
+    fn a_failed_oci_install_removes_the_container() {
+        with_test_prefix("pr-cli-install-oci-failed", GOOD_PLUGIN, |prefix| {
+            let containers = prefix.join("var/lib/pr/containers");
+            let dir = containers.join("box");
+
+            let result = install_oci_container("box", || {
+                fs::create_dir_all(dir.join("rootfs/etc")).expect("partial rootfs");
+                Err("layer failed".to_string())
+            });
+
+            assert_eq!(result, Err("layer failed".to_string()));
+            assert!(!dir.exists());
+            assert_eq!(pending_install(&containers, "box"), None);
+        });
+    }
+
+    #[test]
+    fn an_oci_install_replaces_an_interrupted_one() {
+        with_test_prefix("pr-cli-install-oci-interrupted", GOOD_PLUGIN, |prefix| {
+            let containers = prefix.join("var/lib/pr/containers");
+            let dir = containers.join("box");
+            drop(InstallMarker::claim(&containers, "box").expect("mark"));
+            fs::create_dir_all(dir.join("rootfs/etc")).expect("partial rootfs");
+            fs::write(dir.join("rootfs/half-written"), b"x").expect("partial file");
+
+            install_oci_container("box", || {
+                fs::create_dir_all(dir.join("rootfs/etc")).map_err(|e| e.to_string())
+            })
+            .expect("install");
+
+            assert!(!dir.join("rootfs/half-written").exists());
+            assert!(resolve_installed_rootfs("box").is_some());
+        });
     }
 
     #[test]

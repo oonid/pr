@@ -124,6 +124,19 @@ pub fn command_login(
 ) -> Result<(), String> {
     let Some((rootfs, _source_type)) = resolve_installed_rootfs(distro_name) else {
         println!();
+        if let Some((_, _, state)) = pending_container(distro_name) {
+            msg_error(&match state {
+                crate::install_marker::PendingInstall::InProgress => {
+                    format!("'{}' is still being installed.", distro_name)
+                }
+                crate::install_marker::PendingInstall::Interrupted => format!(
+                    "the install of '{}' did not finish. Install it again, or remove it with: pr-cli remove {}",
+                    distro_name, distro_name
+                ),
+            });
+            println!();
+            return Err("not fully installed".to_string());
+        }
         msg_error(&format!("distribution '{}' is not installed.", distro_name));
         println!();
         return Err("not installed".to_string());
@@ -469,6 +482,31 @@ mod tests {
         assert_eq!(err, "no /etc/passwd");
 
         std::env::remove_var("APP_PREFIX");
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn command_login_refuses_an_interrupted_install() {
+        let _guard = env_lock().lock().expect("lock env");
+        let tmp_dir = unique_temp_dir("pr-cli-login-interrupted");
+        let prefix = tmp_dir.join("usr");
+        let rootfs = prefix.join("var/lib/pr/installed-rootfs/debian");
+        fs::create_dir_all(rootfs.join("etc")).expect("create rootfs");
+        fs::write(rootfs.join("etc/passwd"), "root:x:0:0:root:/root:/bin/sh\n").expect("passwd");
+        drop(
+            crate::install_marker::InstallMarker::claim(
+                &prefix.join("var/lib/pr/installed-rootfs"),
+                "debian",
+            )
+            .expect("mark"),
+        );
+        std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+
+        let err = command_login("debian", "root", false, false, &[], &[])
+            .expect_err("must refuse an interrupted install");
+
+        std::env::remove_var("APP_PREFIX");
+        assert_eq!(err, "not fully installed");
         let _ = fs::remove_dir_all(tmp_dir);
     }
 

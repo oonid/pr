@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use crate::commands_extra::force_remove_dir_all;
 use crate::install::unpack_entry;
+use crate::install_marker::InstallMarker;
 use crate::oci::{decompressed_reader, link_inside_root, sanitize_layer_path};
 use crate::shared::is_valid_container_name;
 
@@ -301,6 +302,14 @@ fn check_plugins(
     Ok(())
 }
 
+fn release(markers: impl IntoIterator<Item = InstallMarker>) {
+    for marker in markers {
+        if !marker.took_over() {
+            let _ = marker.finish();
+        }
+    }
+}
+
 fn move_into_place(
     dirs: &BackupDirs,
     staged: &mut BTreeMap<(Kind, String), Staged>,
@@ -308,14 +317,32 @@ fn move_into_place(
 ) -> Result<Vec<String>, String> {
     let mut restored = Vec::new();
     let keys: Vec<(Kind, String)> = staged.keys().cloned().collect();
-    for key in keys {
-        let (kind, name) = &key;
-        let base = if *kind == Kind::Oci {
+    let base_of = |kind: Kind| {
+        if kind == Kind::Oci {
             &dirs.containers
         } else {
             &dirs.legacy
-        };
-        fs::create_dir_all(base).map_err(|e| format!("create {}: {}", base.display(), e))?;
+        }
+    };
+    let mut markers = Vec::new();
+    for (kind, name) in &keys {
+        let base = base_of(*kind);
+        let claimed = fs::create_dir_all(base)
+            .map_err(|e| format!("create {}: {}", base.display(), e))
+            .and_then(|_| InstallMarker::claim_reporting(base, name));
+        match claimed {
+            Ok(marker) => markers.push(marker),
+            Err(e) => {
+                release(markers);
+                return Err(e);
+            }
+        }
+    }
+    let mut markers = markers.into_iter();
+    for key in keys {
+        let marker = markers.next().expect("one marker per container");
+        let (kind, name) = &key;
+        let base = base_of(*kind);
         let destination = base.join(name);
         let old = dirs
             .staging
@@ -325,18 +352,25 @@ fn move_into_place(
         }
         let had_old = fs::symlink_metadata(&destination).is_ok();
         if had_old {
-            fs::rename(&destination, &old)
-                .map_err(|e| format!("move the current {} aside: {}", name, e))?;
+            if let Err(e) = fs::rename(&destination, &old) {
+                release(std::iter::once(marker).chain(markers));
+                return Err(format!("move the current {} aside: {}", name, e));
+            }
         }
         let staging = staged[&key].staging.clone();
         if let Err(e) = fs::rename(&staging, &destination) {
             if had_old {
                 let _ = fs::rename(&old, &destination);
             }
+            release(std::iter::once(marker).chain(markers));
             return Err(format!("move {} into place: {}", name, e));
         }
         if had_old {
             force_remove_dir_all(&old);
+        }
+        if let Err(e) = marker.finish() {
+            release(markers);
+            return Err(e);
         }
         staged.remove(&key);
         restored.push(name.clone());
