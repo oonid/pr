@@ -111,8 +111,8 @@ CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testD
 
 ```bash
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
-# session-core, 174 tests: sessions, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
-# app, 29 tests: DistroOperations, InstalledContainers
+# session-core, 178 tests: sessions, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# app, 32 tests: DistroOperations, InstalledContainers
 ```
 
 ### Host-side (pr-cli unit/integration)
@@ -122,7 +122,7 @@ pr-cli embeds the guest test binary (`include_bytes!` in `cmd_test.rs`), so buil
 ```bash
 (cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
 (cd src/pr-cli && cargo test)
-# 246 tests: 219 library unit + 13 binary (11 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
+# 288 tests: 259 library unit + 15 binary (13 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
 ```
 
 ### On-device integration tests
