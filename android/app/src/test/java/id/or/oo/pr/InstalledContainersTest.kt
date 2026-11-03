@@ -33,9 +33,34 @@ class InstalledContainersTest {
     }
 
     @Test
+    fun aContainerWhoseInstallDidNotFinishIsNotInstalledButHasFiles() {
+        dir("var/lib/pr/installed-rootfs/debian")
+        File(prefix.root, "var/lib/pr/installed-rootfs/.debian.pr-cli-installing").writeText("")
+        dir("var/lib/pr/containers/alpine/rootfs")
+        File(prefix.root, "var/lib/pr/containers/.alpine.pr-cli-installing").writeText("")
+        File(prefix.root, "var/lib/pr/containers/.early.pr-cli-installing").writeText("")
+        dir("var/lib/pr/containers/ubuntu/rootfs")
+        dir("var/lib/pr/containers/fedora/rootfs/.fedora.pr-cli-installing")
+        File(prefix.root, "var/lib/pr/containers/.pr-cli-installing").writeText("")
+        File(prefix.root, "var/lib/pr/containers/.a b.pr-cli-installing").writeText("")
+        val containers = InstalledContainers(prefix.root)
+
+        assertEquals(setOf("ubuntu", "fedora"), containers.aliases())
+        assertEquals(setOf("debian", "alpine", "early"), containers.unfinished())
+        listOf("debian", "alpine", "early").forEach {
+            assertFalse(it, containers.contains(it))
+            assertTrue(it, containers.hasFiles(it))
+        }
+        assertTrue(containers.hasFiles("ubuntu"))
+        assertFalse(containers.hasFiles("arch"))
+        assertFalse(containers.hasFiles(""))
+    }
+
+    @Test
     fun nothingIsInstalledOnAFreshPrefix() {
         val containers = InstalledContainers(prefix.root)
         assertEquals(emptySet<String>(), containers.aliases())
+        assertEquals(emptySet<String>(), containers.unfinished())
         assertFalse(containers.contains("alpine"))
     }
 }
