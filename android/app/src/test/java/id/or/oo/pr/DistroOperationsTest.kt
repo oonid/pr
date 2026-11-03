@@ -77,10 +77,13 @@ class DistroOperationsTest {
 
     private val command = FakeCommand().also { it.sessions = sessions }
     private val installed: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val unfinished: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun operations(endTimeoutMs: Long = ManagedSession.END_TIMEOUT_MS) =
-        DistroOperations(command, sessions, scope, { it in installed }, endTimeoutMs)
+        DistroOperations(command, sessions, scope, { it in installed }, endTimeoutMs) {
+            it in installed || it in unfinished
+        }
 
     private fun DistroOperations.awaitFinished(): DistroOperations.Operation {
         eventually { operation.value?.running == false }
@@ -372,6 +375,7 @@ class DistroOperationsTest {
         start: DistroOperations.() -> Boolean,
         createdAlias: String?,
         gated: String = "install",
+        leftUnfinished: String? = null,
     ) =
         run {
             command.gate = CountDownLatch(1)
@@ -380,6 +384,7 @@ class DistroOperationsTest {
             assertTrue(ops.start())
             eventually { command.calls.isNotEmpty() }
             createdAlias?.let { installed += it }
+            leftUnfinished?.let { unfinished += it }
             ops.cancel()
             ops.awaitFinished()
         }
@@ -409,6 +414,30 @@ class DistroOperationsTest {
         cancelInstall(ops, { installCustom("docker.io/library/debian:stable", "deb") }, "deb")
 
         assertEquals(listOf("remove", "deb"), command.calls.last())
+    }
+
+    @Test
+    fun aCancelledInstallThatLeftAnUnfinishedContainerRemovesIt() {
+        val ops = operations()
+
+        cancelInstall(
+            ops,
+            { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") },
+            null,
+            leftUnfinished = "alpine",
+        )
+
+        assertEquals(listOf("remove", "alpine"), command.calls.last())
+    }
+
+    @Test
+    fun aCancelledInstallOverAnUnfinishedContainerRemovesIt() {
+        unfinished += "alpine"
+        val ops = operations()
+
+        cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, null)
+
+        assertEquals(listOf("remove", "alpine"), command.calls.last())
     }
 
     @Test

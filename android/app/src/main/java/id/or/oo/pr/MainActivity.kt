@@ -35,6 +35,7 @@ data class DistroInfo(
     val displayName: String,
     val installSource: String,
     val isInstalled: Boolean,
+    val isUnfinished: Boolean = false,
 )
 
 private data class DistroCatalogEntry(
@@ -118,24 +119,27 @@ fun DistroListScreen(app: App) {
 
     fun refreshDistros() {
         val installedAliases = app.containers.aliases()
+        val unfinishedAliases = app.containers.unfinished() - installedAliases
 
         val catalogDistros = DISTRO_CATALOG.map { entry ->
             DistroInfo(
                 alias = entry.alias,
                 displayName = entry.displayName,
                 installSource = entry.installSource,
-                isInstalled = installedAliases.contains(entry.alias)
+                isInstalled = installedAliases.contains(entry.alias),
+                isUnfinished = unfinishedAliases.contains(entry.alias),
             )
         }
         val catalogAliases = DISTRO_CATALOG.map { it.alias }.toSet()
-        val runtimeOnlyDistros = installedAliases
+        val runtimeOnlyDistros = (installedAliases + unfinishedAliases)
             .filter { !catalogAliases.contains(it) }
             .map { alias ->
                 DistroInfo(
                     alias = alias,
                     displayName = OCI_IMAGE_SUGGESTIONS.firstOrNull { it.alias == alias }?.title ?: alias,
                     installSource = alias,
-                    isInstalled = true
+                    isInstalled = installedAliases.contains(alias),
+                    isUnfinished = unfinishedAliases.contains(alias),
                 )
             }
 
@@ -378,13 +382,15 @@ fun DistroCard(
                     text = when {
                         isRunning -> "● Running"
                         distro.isInstalled -> "● Installed"
+                        distro.isUnfinished -> "● Install did not finish"
                         else -> "○ Not installed"
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (distro.isInstalled)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.outline
+                    color = when {
+                        distro.isInstalled -> MaterialTheme.colorScheme.primary
+                        distro.isUnfinished -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.outline
+                    }
                 )
             }
 
@@ -441,6 +447,19 @@ fun DistroCard(
                             )
                         }
                     }
+                }
+            } else if (distro.isUnfinished) {
+                OutlinedButton(
+                    onClick = onRemove,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(ButtonDefaults.IconSize)
+                    )
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text("Remove")
                 }
             } else {
                 OutlinedButton(
