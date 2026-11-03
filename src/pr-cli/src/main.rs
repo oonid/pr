@@ -3,6 +3,7 @@ use pr_cli::cmd_test::command_test;
 use pr_cli::color::*;
 use pr_cli::commands_extra;
 use pr_cli::install::command_install;
+use pr_cli::install_marker::{marked_names, pending_install, PendingInstall};
 use pr_cli::install_model::load_oci_install_metadata;
 use pr_cli::login::command_login;
 use pr_cli::plugin::{load_plugins, DistroPlugin};
@@ -99,8 +100,7 @@ fn get_oci_containers_dir() -> PathBuf {
 }
 
 fn is_installed(alias: &str) -> bool {
-    get_installed_rootfs_dir().join(alias).is_dir()
-        || get_oci_containers_dir().join(alias).join("rootfs").is_dir()
+    shared::resolve_installed_rootfs(alias).is_some()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -125,6 +125,16 @@ struct InstalledEntry {
     install_name: Option<String>,
     source_reference: Option<String>,
     selected_architecture: Option<String>,
+    pending: Option<PendingInstall>,
+}
+
+fn source_label(entry: &InstalledEntry) -> String {
+    let source = entry.source.as_str();
+    match entry.pending {
+        None => source.to_string(),
+        Some(PendingInstall::InProgress) => format!("{}, installing", source),
+        Some(PendingInstall::Interrupted) => format!("{}, interrupted", source),
+    }
 }
 
 fn list_subdirs(path: &Path) -> Vec<String> {
@@ -159,6 +169,7 @@ fn collect_installed_entries_with_dirs(
             continue;
         }
         entries.push(InstalledEntry {
+            pending: pending_install(installed_rootfs_dir, &alias),
             alias,
             source: InstalledSource::Legacy,
             install_name: None,
@@ -171,7 +182,8 @@ fn collect_installed_entries_with_dirs(
         if !shared::is_valid_container_name(&alias) {
             continue;
         }
-        if oci_containers_dir.join(&alias).join("rootfs").is_dir() {
+        let pending = pending_install(oci_containers_dir, &alias);
+        if pending.is_some() || oci_containers_dir.join(&alias).join("rootfs").is_dir() {
             let metadata_path = oci_containers_dir.join(&alias).join("manifest.json");
             let metadata = load_oci_install_metadata(&metadata_path).ok();
             entries.push(InstalledEntry {
@@ -184,6 +196,29 @@ fn collect_installed_entries_with_dirs(
                 selected_architecture: metadata
                     .as_ref()
                     .map(|meta| meta.selected_architecture.clone()),
+                pending,
+            });
+        }
+    }
+
+    for (parent, source) in [
+        (installed_rootfs_dir, InstalledSource::Legacy),
+        (oci_containers_dir, InstalledSource::Oci),
+    ] {
+        for alias in marked_names(parent) {
+            if entries
+                .iter()
+                .any(|e| e.alias == alias && e.source == source)
+            {
+                continue;
+            }
+            entries.push(InstalledEntry {
+                pending: pending_install(parent, &alias),
+                alias,
+                source,
+                install_name: None,
+                source_reference: None,
+                selected_architecture: None,
             });
         }
     }
@@ -282,7 +317,7 @@ fn command_list(verbose: bool) {
                     "    {}Source: {}{}{}",
                     CYAN,
                     GREEN,
-                    entry.source.as_str(),
+                    source_label(entry),
                     RESET
                 );
                 if let Some(source_reference) = entry.source_reference.as_deref() {
@@ -316,7 +351,7 @@ fn command_list(verbose: bool) {
                     YELLOW,
                     entry.alias,
                     GREEN,
-                    entry.source.as_str(),
+                    source_label(entry),
                     RESET,
                     ""
                 );
@@ -414,14 +449,16 @@ mod tests {
                     source: InstalledSource::Legacy,
                     install_name: None,
                     source_reference: None,
-                    selected_architecture: None
+                    selected_architecture: None,
+                    pending: None
                 },
                 InstalledEntry {
                     alias: "ubuntu".to_string(),
                     source: InstalledSource::Oci,
                     install_name: None,
                     source_reference: None,
-                    selected_architecture: None
+                    selected_architecture: None,
+                    pending: None
                 }
             ]
         );
@@ -560,6 +597,52 @@ mod tests {
         assert!(!is_installed("fedora"));
 
         std::env::remove_var("APP_PREFIX");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn an_unfinished_install_is_not_installed() {
+        let _guard = env_lock().lock().expect("lock env");
+        let base = unique_temp_dir("pr-cli-is-installed-pending");
+        let prefix = base.join("usr");
+        let legacy = prefix.join("var/lib/pr/installed-rootfs");
+        fs::create_dir_all(legacy.join("debian/etc")).expect("create legacy rootfs");
+        drop(pr_cli::install_marker::InstallMarker::claim(&legacy, "debian").expect("mark"));
+        std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+
+        assert!(!is_installed("debian"));
+
+        std::env::remove_var("APP_PREFIX");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn list_shows_unfinished_installs_with_their_state() {
+        use pr_cli::install_marker::InstallMarker;
+        let base = unique_temp_dir("pr-cli-list-pending");
+        let legacy = base.join("installed-rootfs");
+        let containers = base.join("containers");
+        fs::create_dir_all(legacy.join("deb/etc")).expect("create legacy");
+        drop(InstallMarker::claim(&legacy, "deb").expect("mark legacy"));
+        let running = InstallMarker::claim(&containers, "box").expect("mark oci");
+        fs::create_dir_all(containers.join("box")).expect("create oci dir");
+        drop(InstallMarker::claim(&legacy, "early").expect("mark early"));
+
+        let entries = collect_installed_entries_with_dirs(&legacy, &containers);
+
+        let labels: Vec<(String, String)> = entries
+            .iter()
+            .map(|e| (e.alias.clone(), source_label(e)))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                ("box".to_string(), "oci, installing".to_string()),
+                ("deb".to_string(), "legacy, interrupted".to_string()),
+                ("early".to_string(), "legacy, interrupted".to_string()),
+            ]
+        );
+        drop(running);
         let _ = fs::remove_dir_all(base);
     }
 

@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use libc;
 
 use crate::backup::{restore_backup, write_backup, BackupDirs};
+use crate::install_marker::{has_marker, InstallMarker};
 use crate::install_model::load_oci_install_metadata;
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
-    get_download_cache_dir, get_installed_rootfs_dir, get_oci_container_dir,
+    container_parent_dir, get_download_cache_dir, get_installed_rootfs_dir, get_oci_container_dir,
     get_oci_container_manifest_path, get_oci_containers_dir, get_plugins_dir,
-    is_valid_container_name, msg_error, msg_status, resolve_installed_rootfs, InstalledSourceType,
+    is_valid_container_name, msg_error, msg_status, pending_container, resolve_installed_rootfs,
+    InstalledSourceType,
 };
 
 /// Remove a directory tree, handling 0000-permission proot bind-mount stubs.
@@ -70,11 +72,29 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
 
 pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
     let plugins_dir = get_plugins_dir();
-    let Some((rootfs, source_type)) = resolve_installed_rootfs(distro_name) else {
-        println!();
-        msg_error(&format!("distribution '{}' is not installed.", distro_name));
-        println!();
-        return Err("not installed".to_string());
+    let (rootfs, source_type, marker) = match resolve_installed_rootfs(distro_name) {
+        Some((rootfs, source_type)) => (rootfs, source_type, None),
+        None => match pending_container(distro_name) {
+            Some((dir, source_type, _)) => {
+                let parent = container_parent_dir(source_type);
+                let marker = InstallMarker::claim_reporting(Path::new(&parent), distro_name)?;
+                if !marker.took_over() {
+                    marker.finish()?;
+                    msg_error(&format!(
+                        "the install of '{}' finished meanwhile; run remove again to remove it.",
+                        distro_name
+                    ));
+                    return Err("installed meanwhile".to_string());
+                }
+                (dir, source_type, Some(marker))
+            }
+            None => {
+                println!();
+                msg_error(&format!("distribution '{}' is not installed.", distro_name));
+                println!();
+                return Err("not installed".to_string());
+            }
+        },
     };
 
     if !is_reset && source_type == InstalledSourceType::Legacy {
@@ -102,6 +122,9 @@ pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
     }
     if rootfs_path.exists() {
         return Err(format!("failed to fully remove path '{}'", install_path));
+    }
+    if let Some(marker) = marker {
+        marker.finish()?;
     }
 
     msg_status("Finished.");
@@ -393,6 +416,14 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
 
     let plugins = load_plugins(Path::new(&plugins_dir));
 
+    if has_marker(Path::new(&installed_rootfs_dir), old_alias) {
+        msg_error(&format!(
+            "'{}' was not fully installed; install it again or remove it.",
+            old_alias
+        ));
+        return Err("not fully installed".to_string());
+    }
+
     let old_rootfs = format!("{}/{}", installed_rootfs_dir, old_alias);
     if !Path::new(&old_rootfs).is_dir()
         && Path::new(&get_oci_container_dir(old_alias))
@@ -415,7 +446,10 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
     }
 
     let new_rootfs = format!("{}/{}", installed_rootfs_dir, new_alias);
-    if Path::new(&new_rootfs).is_dir() || Path::new(&get_oci_container_dir(new_alias)).exists() {
+    if Path::new(&new_rootfs).is_dir()
+        || Path::new(&get_oci_container_dir(new_alias)).exists()
+        || pending_container(new_alias).is_some()
+    {
         msg_error(&format!(
             "cannot rename because rootfs directory for '{}' already exists.",
             new_alias
@@ -434,7 +468,20 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
 
     msg_status(&format!("Renaming '{}' to '{}'...", old_alias, new_alias));
 
-    fs::rename(&old_rootfs, &new_rootfs).map_err(|e| format!("rename rootfs: {}", e))?;
+    let target = InstallMarker::claim_reporting(Path::new(&installed_rootfs_dir), new_alias)?;
+    if target.took_over() || Path::new(&new_rootfs).exists() {
+        if !target.took_over() {
+            target.finish()?;
+        }
+        msg_error(&format!(
+            "cannot rename because '{}' is in use by an install.",
+            new_alias
+        ));
+        return Err("target exists".to_string());
+    }
+    let renamed = fs::rename(&old_rootfs, &new_rootfs).map_err(|e| format!("rename rootfs: {}", e));
+    target.finish()?;
+    renamed?;
 
     let old_plugin = format!("{}/{}.sh", plugins_dir, old_alias);
     let old_override = format!("{}/{}.override.sh", plugins_dir, old_alias);
@@ -654,6 +701,7 @@ fn resolve_path(dist: Option<&str>, path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::install_marker::{pending_install, BEING_INSTALLED};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1203,6 +1251,97 @@ mod tests {
     }
 
     #[test]
+    fn remove_deletes_an_interrupted_install_and_its_marker() {
+        let env = TestPrefix::new("pr-cli-remove-interrupted");
+        drop(InstallMarker::claim(&env.legacy(), "deb").expect("mark legacy"));
+        fs::create_dir_all(env.legacy().join("deb/etc")).expect("partial legacy");
+        drop(InstallMarker::claim(&env.containers(), "box").expect("mark oci"));
+        fs::create_dir_all(env.containers().join("box/rootfs/etc")).expect("partial rootfs");
+        drop(InstallMarker::claim(&env.containers(), "early").expect("mark early"));
+
+        command_remove("deb", false).expect("remove legacy");
+        command_remove("box", false).expect("remove oci");
+        command_remove("early", false).expect("remove a marker without a directory");
+
+        assert!(!env.legacy().join("deb").exists());
+        assert!(!env.containers().join("box").exists());
+        for (parent, name) in [
+            (env.legacy(), "deb"),
+            (env.containers(), "box"),
+            (env.containers(), "early"),
+        ] {
+            assert_eq!(pending_install(&parent, name), None, "{}", name);
+        }
+    }
+
+    #[test]
+    fn remove_refuses_a_container_that_is_being_installed() {
+        let env = TestPrefix::new("pr-cli-remove-running");
+        let running = InstallMarker::claim(&env.containers(), "box").expect("mark");
+        fs::create_dir_all(env.containers().join("box/rootfs")).expect("rootfs");
+
+        let err = command_remove("box", false).expect_err("must refuse");
+
+        assert_eq!(err, BEING_INSTALLED);
+        assert!(env.containers().join("box/rootfs").exists());
+        drop(running);
+    }
+
+    #[test]
+    fn remove_keeps_a_container_whose_install_finishes_while_it_waits() {
+        let env = TestPrefix::new("pr-cli-remove-finished-meanwhile");
+        let running = InstallMarker::claim(&env.containers(), "box").expect("mark");
+        seed_rootfs(&env.containers().join("box/rootfs"));
+        let installer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            running.finish().expect("finish");
+        });
+
+        let result = command_remove("box", false);
+
+        installer.join().expect("join");
+        assert!(result.is_err());
+        assert_rootfs(&env.containers().join("box/rootfs"));
+        assert_eq!(pending_install(&env.containers(), "box"), None);
+    }
+
+    #[test]
+    fn rename_refuses_an_interrupted_legacy_install() {
+        let env = TestPrefix::new("pr-cli-rename-interrupted");
+        seed_rootfs(&env.legacy().join("mydistro"));
+        drop(InstallMarker::claim(&env.legacy(), "mydistro").expect("mark"));
+
+        let err = command_rename("mydistro", "other").expect_err("must refuse");
+
+        assert_eq!(err, "not fully installed");
+        assert!(env.legacy().join("mydistro").exists());
+        assert!(!env.legacy().join("other").exists());
+    }
+
+    #[test]
+    fn rename_ignores_an_oci_marker_for_the_same_name() {
+        let env = TestPrefix::new("pr-cli-rename-oci-marker");
+        seed_rootfs(&env.legacy().join("mydistro"));
+        drop(InstallMarker::claim(&env.containers(), "mydistro").expect("mark"));
+
+        command_rename("mydistro", "other").expect("rename");
+
+        assert_rootfs(&env.legacy().join("other"));
+    }
+
+    #[test]
+    fn rename_refuses_a_new_name_with_an_unfinished_install() {
+        let env = TestPrefix::new("pr-cli-rename-onto-pending");
+        seed_rootfs(&env.legacy().join("mydistro"));
+        drop(InstallMarker::claim(&env.legacy(), "other").expect("mark"));
+
+        assert!(command_rename("mydistro", "other").is_err());
+
+        assert_rootfs(&env.legacy().join("mydistro"));
+        assert!(!env.legacy().join("other").exists());
+    }
+
+    #[test]
     fn rename_moves_a_legacy_container_that_has_no_plugin() {
         let env = TestPrefix::new("pr-cli-rename-no-plugin");
         seed_rootfs(&env.legacy().join("mydistro"));
@@ -1304,6 +1443,90 @@ mod tests {
 
         assert_rootfs(&container.join("rootfs"));
         assert_eq!(fs::read(container.join("manifest.json")).unwrap(), b"{}");
+    }
+
+    fn backup_of_a_good_box(env: &TestPrefix) -> PathBuf {
+        let container = env.containers().join("box");
+        seed_rootfs(&container.join("rootfs"));
+        let output = env.base.join("box.tar.gz");
+        command_backup("box", Some(output.to_str().unwrap())).expect("backup");
+        force_remove_dir_all(&container);
+        output
+    }
+
+    #[test]
+    fn restore_over_an_interrupted_install_clears_its_marker() {
+        let env = TestPrefix::new("pr-cli-restore-interrupted");
+        let output = backup_of_a_good_box(&env);
+        drop(InstallMarker::claim(&env.containers(), "box").expect("mark"));
+        fs::create_dir_all(env.containers().join("box/rootfs/etc")).expect("partial rootfs");
+
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_rootfs(&env.containers().join("box/rootfs"));
+        assert_eq!(pending_install(&env.containers(), "box"), None);
+        assert!(resolve_installed_rootfs("box").is_some());
+    }
+
+    #[test]
+    fn restore_moves_nothing_when_one_of_its_containers_is_being_installed() {
+        let env = TestPrefix::new("pr-cli-restore-claims-first");
+        let output = env.base.join("two.tar.gz");
+        write_gz_backup(
+            &output,
+            &[
+                ("containers/a/rootfs/f", Some(b"new")),
+                ("containers/b/rootfs/f", Some(b"new")),
+            ],
+        );
+        fs::create_dir_all(env.containers().join("a/rootfs")).expect("existing a");
+        fs::write(env.containers().join("a/rootfs/f"), b"old").expect("old a");
+        let running = InstallMarker::claim(&env.containers(), "b").expect("mark b");
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+
+        assert_eq!(
+            fs::read(env.containers().join("a/rootfs/f")).unwrap(),
+            b"old"
+        );
+        assert_eq!(pending_install(&env.containers(), "a"), None);
+        drop(running);
+    }
+
+    #[test]
+    fn a_refused_restore_keeps_an_interrupted_install_interrupted() {
+        let env = TestPrefix::new("pr-cli-restore-keeps-interrupted");
+        let output = env.base.join("two.tar.gz");
+        write_gz_backup(
+            &output,
+            &[
+                ("containers/a/rootfs/f", Some(b"new")),
+                ("containers/b/rootfs/f", Some(b"new")),
+            ],
+        );
+        drop(InstallMarker::claim(&env.containers(), "a").expect("mark a"));
+        let running = InstallMarker::claim(&env.containers(), "b").expect("mark b");
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+
+        assert_eq!(
+            pending_install(&env.containers(), "a"),
+            Some(crate::install_marker::PendingInstall::Interrupted)
+        );
+        drop(running);
+    }
+
+    #[test]
+    fn restore_refuses_a_container_that_is_being_installed() {
+        let env = TestPrefix::new("pr-cli-restore-running");
+        let output = backup_of_a_good_box(&env);
+        let running = InstallMarker::claim(&env.containers(), "box").expect("mark");
+        fs::create_dir_all(env.containers().join("box/rootfs/in-progress")).expect("rootfs");
+
+        assert!(command_restore(output.to_str().unwrap()).is_err());
+
+        assert!(env.containers().join("box/rootfs/in-progress").is_dir());
+        drop(running);
     }
 
     #[test]
@@ -1483,6 +1706,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read(rootfs.join("keep")).unwrap(), b"data");
         assert_rootfs(&rootfs);
+        assert!(resolve_installed_rootfs("box").is_some());
     }
 
     #[test]

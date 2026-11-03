@@ -1,3 +1,5 @@
+use crate::install_marker::{has_marker, pending_install, PendingInstall};
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub const DEFAULT_FAKE_KERNEL_RELEASE: &str = "6.17.0-pr";
@@ -316,17 +318,42 @@ pub fn resolve_installed_rootfs(name: &str) -> Option<(String, InstalledSourceTy
     if !is_valid_container_name(name) {
         return None;
     }
-    let legacy_rootfs = format!("{}/{}", get_installed_rootfs_dir(), name);
-    if std::path::Path::new(&legacy_rootfs).is_dir() {
+    let legacy_parent = get_installed_rootfs_dir();
+    let legacy_rootfs = format!("{}/{}", legacy_parent, name);
+    if std::path::Path::new(&legacy_rootfs).is_dir()
+        && !has_marker(std::path::Path::new(&legacy_parent), name)
+    {
         return Some((legacy_rootfs, InstalledSourceType::Legacy));
     }
 
     let oci_rootfs = get_oci_container_rootfs_dir(name);
-    if std::path::Path::new(&oci_rootfs).is_dir() {
+    if std::path::Path::new(&oci_rootfs).is_dir()
+        && !has_marker(std::path::Path::new(&get_oci_containers_dir()), name)
+    {
         return Some((oci_rootfs, InstalledSourceType::Oci));
     }
 
     None
+}
+
+pub fn container_parent_dir(source: InstalledSourceType) -> String {
+    match source {
+        InstalledSourceType::Legacy => get_installed_rootfs_dir(),
+        InstalledSourceType::Oci => get_oci_containers_dir(),
+    }
+}
+
+pub fn pending_container(name: &str) -> Option<(String, InstalledSourceType, PendingInstall)> {
+    if !is_valid_container_name(name) {
+        return None;
+    }
+    [InstalledSourceType::Legacy, InstalledSourceType::Oci]
+        .into_iter()
+        .find_map(|source| {
+            let parent = container_parent_dir(source);
+            pending_install(std::path::Path::new(&parent), name)
+                .map(|state| (format!("{}/{}", parent, name), source, state))
+        })
 }
 
 pub fn get_download_cache_dir() -> String {
@@ -965,6 +992,51 @@ mod tests {
         }
         assert!(resolve_installed_rootfs("debian").is_some());
 
+        std::env::remove_var("APP_PREFIX");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_container_with_an_install_marker_is_pending_not_installed() {
+        use crate::install_marker::{InstallMarker, PendingInstall};
+        let _guard = env_lock().lock().expect("lock env");
+        let base = unique_temp_dir("pr-cli-shared-pending");
+        let prefix = base.join("usr");
+        let legacy = prefix.join("var/lib/pr/installed-rootfs");
+        let containers = prefix.join("var/lib/pr/containers");
+        fs::create_dir_all(legacy.join("deb/etc")).expect("create legacy rootfs");
+        fs::create_dir_all(containers.join("box/rootfs")).expect("create oci rootfs");
+        drop(InstallMarker::claim(&legacy, "deb").expect("mark legacy"));
+        let running = InstallMarker::claim(&containers, "box").expect("mark oci");
+        drop(InstallMarker::claim(&containers, "early").expect("mark early"));
+
+        std::env::set_var("APP_PREFIX", prefix.to_string_lossy().to_string());
+        assert!(resolve_installed_rootfs("deb").is_none());
+        assert!(resolve_installed_rootfs("box").is_none());
+        assert_eq!(
+            pending_container("deb"),
+            Some((
+                legacy.join("deb").to_string_lossy().to_string(),
+                InstalledSourceType::Legacy,
+                PendingInstall::Interrupted
+            ))
+        );
+        assert_eq!(
+            pending_container("box"),
+            Some((
+                containers.join("box").to_string_lossy().to_string(),
+                InstalledSourceType::Oci,
+                PendingInstall::InProgress
+            ))
+        );
+        assert_eq!(
+            pending_container("early").map(|p| p.2),
+            Some(PendingInstall::Interrupted)
+        );
+        assert_eq!(pending_container("../containers/box"), None);
+        assert_eq!(pending_container("missing"), None);
+
+        drop(running);
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(base);
     }

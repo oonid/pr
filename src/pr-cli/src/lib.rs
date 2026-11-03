@@ -4,6 +4,7 @@ pub mod cmd_test;
 pub mod color;
 pub mod commands_extra;
 pub mod install;
+pub mod install_marker;
 pub mod install_model;
 pub mod login;
 pub mod oci;
