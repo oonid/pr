@@ -24,7 +24,7 @@ android/                                    # Android project root
 │       │   │   ├── App.kt                  # Application: ProotHost and SessionHost; runs PrBootstrap; owns SessionManager and DistroOperations
 │       │   │   ├── MainActivity.kt         # Compose: container list, output sheet of DistroOperations
 │       │   │   ├── SessionBanners.kt       # Keep CPU awake switch, battery and background-error banners
-│       │   │   ├── InstalledContainers.kt  # Which aliases are installed (OCI rootfs or legacy dir)
+│       │   │   ├── InstalledContainers.kt  # Which aliases are installed (OCI rootfs or legacy dir, without an install marker)
 │       │   │   ├── DistroOperations.kt     # App-scoped install/remove/test runner
 │       │   │   └── TerminalActivity.kt     # Compose: a view onto a ManagedSession
 │       │   └── res/                        # Theme, icons (ic_notification), strings
@@ -511,3 +511,15 @@ Two installation methods produce rootfs in different locations:
 | Plugin file | `pr-cli install <alias>` with `etc/pr/<alias>.sh` present | `var/lib/pr/installed-rootfs/<alias>/` |
 
 Code checking for distro existence (e.g. MainActivity's `isInstalled` check) must use the path corresponding to the installation method. The OCI path is used by `pr-cli`; the legacy path is used by the shell-script era (Phase 2). If both methods are in use, check both paths.
+
+#### Unfinished installs
+
+`pr-cli` claims a name before it creates the container's directory, by creating `.<alias>.pr-cli-installing` beside it (`var/lib/pr/containers/` for an OCI install, `var/lib/pr/installed-rootfs/` for a plugin install) and holding an exclusive `flock` on it. It removes the file as the last step of the install. The guest never sees the file.
+
+- A name with the file is not installed: `login`, `test`, `backup`, `copy`, `rename` and `reset` refuse it, and `list` shows it as `installing` or `interrupted`, even before its directory exists.
+- An install refuses a name that has an unfinished install of the other kind (OCI or plugin) until that one is removed.
+- If the lock is free, the install was killed. `install` takes the lock over, removes what was left and starts again; `remove` takes it over and deletes the leftovers.
+- If the lock is held, another `pr-cli` is using the name, and `install`, `remove` and `restore` refuse.
+- `restore` holds the lock while it moves a container into place, and clears a marker left by a killed install.
+
+`InstalledContainers` skips a name with the file and reports it through `unfinished()`; the list shows such a name as "Install did not finish" with a Remove button. `DistroOperations` removes a cancelled install when its directory or marker exists (`hasFiles`), because a cancelled install leaves the file behind. Another app that checks for installed containers itself should skip names with the file too. Containers installed before the marker existed have no file and count as installed.
