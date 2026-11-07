@@ -1651,7 +1651,7 @@ pub fn command_install(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::install_marker::BEING_INSTALLED;
+    use crate::install_marker::BUSY;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2813,7 +2813,7 @@ mod tests {
 
             let err = command_install("testdistro", None, None, None).expect_err("refused");
 
-            assert_eq!(err, BEING_INSTALLED);
+            assert_eq!(err, BUSY);
             assert!(legacy.join("testdistro/in-progress").exists());
             drop(running);
         });
@@ -2828,7 +2828,7 @@ mod tests {
             let err = install_from_oci_reference("docker.io/library/alpine:latest", Some("box"))
                 .expect_err("refused");
 
-            assert_eq!(err, BEING_INSTALLED);
+            assert_eq!(err, BUSY);
             assert_eq!(
                 pending_install(&containers, "box"),
                 Some(PendingInstall::InProgress)

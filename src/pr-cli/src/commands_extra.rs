@@ -720,7 +720,7 @@ fn resolve_path(dist: Option<&str>, path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::install_marker::{pending_install, BEING_INSTALLED};
+    use crate::install_marker::{pending_install, BUSY};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1344,7 +1344,7 @@ mod tests {
 
         let err = command_remove("box", false).expect_err("must refuse");
 
-        assert_eq!(err, BEING_INSTALLED);
+        assert_eq!(err, BUSY);
         assert!(env.containers().join("box/rootfs").exists());
         drop(running);
     }
