@@ -784,7 +784,7 @@ fn extract_tarball(
             if exclude.iter().any(|exc| target.starts_with(exc)) {
                 continue;
             }
-            if !link_inside_root(root, &relative, &target)? {
+            if !link_inside_root(root, &relative, &target, true)? {
                 return Err(format!(
                     "extract {}: hardlink target missing {}",
                     relative.display(),
@@ -1840,6 +1840,39 @@ mod tests {
         assert!(fs::symlink_metadata(rootfs.join("var/run"))
             .unwrap()
             .is_symlink());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extract_tarball_stores_a_hardlink_in_the_link2symlink_layout() {
+        let tmp = unique_temp_dir("pr-cli-extract-hardlink-l2s");
+        fs::create_dir_all(&tmp).expect("mkdir tmp");
+        let archive = tmp.join("rootfs.tar.xz");
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::File("top/usr/bin/perl", b"perl", 0o755),
+                RawEntry::Hardlink("top/usr/bin/perl5", "top/usr/bin/perl"),
+            ],
+        );
+        let rootfs = tmp.join("rootfs");
+
+        extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[])
+            .expect("extract");
+
+        let intermediate = rootfs.join(".l2s/.l2s.perl0001");
+        assert_eq!(
+            fs::read_link(&intermediate).expect("intermediate"),
+            rootfs.join(".l2s/.l2s.perl0001.0002")
+        );
+        assert_eq!(
+            fs::read_link(rootfs.join("usr/bin/perl5")).expect("perl5"),
+            intermediate
+        );
+        assert_eq!(
+            fs::read(rootfs.join("usr/bin/perl5")).expect("read perl5"),
+            b"perl"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 

@@ -1716,6 +1716,9 @@ mod tests {
             fs::read(env.legacy().join("up/usr/bin/perl5")).unwrap(),
             b"perl"
         );
+        assert!(!fs::symlink_metadata(env.legacy().join("up/usr/bin/perl5"))
+            .unwrap()
+            .is_symlink());
     }
 
     #[test]

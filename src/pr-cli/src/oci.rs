@@ -497,7 +497,7 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
         let mut progressed = false;
 
         for (relative_path, link_target) in pending_hardlinks {
-            if !link_inside_root(rootfs, &relative_path, &link_target)? {
+            if !link_inside_root(rootfs, &relative_path, &link_target, true)? {
                 remaining.push((relative_path, link_target));
                 continue;
             }
@@ -523,6 +523,7 @@ pub(crate) fn link_inside_root(
     rootfs: &Path,
     relative_path: &Path,
     link_target: &Path,
+    link2symlink: bool,
 ) -> Result<bool, String> {
     let source = resolve_in_root(rootfs, link_target, false)
         .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
@@ -537,6 +538,19 @@ pub(crate) fn link_inside_root(
             .map_err(|e| format!("create hardlink parent {}: {}", parent.display(), e))?;
     }
     remove_path_if_exists(&destination)?;
+    if link2symlink && rootfs.is_absolute() {
+        let l2s_dir = rootfs.join(L2S_DIR);
+        let intermediate = match l2s_intermediate(&l2s_dir, &source, &source_metadata) {
+            Some(intermediate) => Some(add_l2s_name(&intermediate)?),
+            None if source_metadata.is_file() => move_into_l2s(&l2s_dir, &source)?,
+            None => None,
+        };
+        if let Some(intermediate) = intermediate {
+            std::os::unix::fs::symlink(&intermediate, &destination)
+                .map_err(|e| format!("extract {}: symlink: {}", relative_path.display(), e))?;
+            return Ok(true);
+        }
+    }
     if source_metadata.file_type().is_symlink() {
         let target = fs::read_link(&source)
             .map_err(|e| format!("read symlink {}: {}", source.display(), e))?;
@@ -571,6 +585,81 @@ pub(crate) fn link_inside_root(
         let _ = fs::set_permissions(&destination, source_metadata.permissions());
     }
     Ok(true)
+}
+
+const L2S_DIR: &str = ".l2s";
+const L2S_PREFIX: &str = ".l2s.";
+
+fn l2s_intermediate(l2s_dir: &Path, source: &Path, metadata: &fs::Metadata) -> Option<PathBuf> {
+    if !metadata.file_type().is_symlink() {
+        return None;
+    }
+    let intermediate = fs::read_link(source).ok()?;
+    let name = intermediate.file_name()?.to_str()?;
+    if intermediate.parent() != Some(l2s_dir) || !name.starts_with(L2S_PREFIX) {
+        return None;
+    }
+    if !fs::symlink_metadata(&intermediate)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    let data = fs::read_link(&intermediate).ok()?;
+    let data_name = data.file_name()?.to_str()?;
+    let count = data_name.strip_prefix(name)?.strip_prefix('.')?;
+    let counted = count.len() == 4 && count.bytes().all(|b| b.is_ascii_digit());
+    let is_file = fs::symlink_metadata(&data).ok()?.is_file();
+    (data.parent() == Some(l2s_dir) && counted && is_file).then_some(intermediate)
+}
+
+fn add_l2s_name(intermediate: &Path) -> Result<PathBuf, String> {
+    let failed = |e: std::io::Error| format!("link {}: {}", intermediate.display(), e);
+    use std::os::unix::ffi::OsStrExt;
+    let data = fs::read_link(intermediate).map_err(failed)?;
+    let bytes = data.as_os_str().as_bytes();
+    let (stem, count) = bytes.split_at(bytes.len() - 4);
+    let count: u32 = std::str::from_utf8(count)
+        .ok()
+        .and_then(|count| count.parse().ok())
+        .ok_or_else(|| format!("link {}: bad count", intermediate.display()))?;
+    if count >= 9999 {
+        return Err(format!("link {}: too many links", intermediate.display()));
+    }
+    let mut counted = std::ffi::OsStr::from_bytes(stem).to_os_string();
+    counted.push(format!("{:04}", count + 1));
+    let counted = PathBuf::from(counted);
+    fs::rename(&data, &counted).map_err(failed)?;
+    fs::remove_file(intermediate).map_err(failed)?;
+    std::os::unix::fs::symlink(&counted, intermediate).map_err(failed)?;
+    Ok(intermediate.to_path_buf())
+}
+
+fn move_into_l2s(l2s_dir: &Path, source: &Path) -> Result<Option<PathBuf>, String> {
+    let failed = |e: std::io::Error| format!("link {}: {}", source.display(), e);
+    let Some(name) = source.file_name() else {
+        return Ok(None);
+    };
+    fs::create_dir_all(l2s_dir).map_err(failed)?;
+    let Some(intermediate) = (1..1000)
+        .map(|n| {
+            let mut file = std::ffi::OsString::from(L2S_PREFIX);
+            file.push(name);
+            file.push(format!("{:04}", n));
+            l2s_dir.join(file)
+        })
+        .find(|path| fs::symlink_metadata(path).is_err())
+    else {
+        return Ok(None);
+    };
+    let mut data = intermediate.clone().into_os_string();
+    data.push(".0002");
+    let data = PathBuf::from(data);
+    fs::rename(source, &data).map_err(failed)?;
+    std::os::unix::fs::symlink(&data, &intermediate).map_err(failed)?;
+    std::os::unix::fs::symlink(&intermediate, source).map_err(failed)?;
+    Ok(Some(intermediate))
 }
 
 pub(crate) fn keep_dir_writable(path: &Path) -> Result<(), String> {
@@ -1159,6 +1248,209 @@ mod tests {
         apply_layer_blob(&second, &rootfs).expect("apply second layer");
 
         assert_eq!(fs::read(rootfs.join("etc/ro/f")).expect("read"), b"ok");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    fn write_layer_tar_with_links(
+        path: &Path,
+        file: Option<(&str, &[u8])>,
+        links: &[(&str, &str, bool)],
+    ) {
+        let out = fs::File::create(path).expect("create tar");
+        let mut builder = tar::Builder::new(out);
+        if let Some((name, content)) = file {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o755);
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, content)
+                .expect("append file");
+        }
+        for (name, target, hard) in links {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(if *hard {
+                tar::EntryType::Link
+            } else {
+                tar::EntryType::Symlink
+            });
+            header.set_size(0);
+            header.set_cksum();
+            builder
+                .append_link(&mut header, name, target)
+                .expect("append link");
+        }
+        builder.finish().expect("finish tar");
+    }
+
+    fn regular_files_under(dir: &Path) -> usize {
+        fs::read_dir(dir)
+            .expect("read dir")
+            .map(|entry| entry.expect("entry").path())
+            .map(|path| {
+                let meta = fs::symlink_metadata(&path).expect("metadata");
+                if meta.is_dir() {
+                    regular_files_under(&path)
+                } else {
+                    usize::from(meta.is_file())
+                }
+            })
+            .sum()
+    }
+
+    #[test]
+    fn hardlinks_are_stored_once_in_the_link2symlink_layout() {
+        let tmp = unique_tmp_dir("oci-hardlink-l2s");
+        let rootfs = tmp.join("rootfs");
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_links(
+            &layer,
+            Some(("usr/bin/coreutils", b"multi-call")),
+            &[
+                ("usr/bin/ls", "usr/bin/coreutils", true),
+                ("usr/bin/cat", "usr/bin/ls", true),
+            ],
+        );
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+
+        let intermediate = rootfs.join(".l2s/.l2s.coreutils0001");
+        let data = rootfs.join(".l2s/.l2s.coreutils0001.0003");
+        assert_eq!(fs::read(&data).expect("read data"), b"multi-call");
+        assert_eq!(fs::read_link(&intermediate).expect("intermediate"), data);
+        for name in ["usr/bin/coreutils", "usr/bin/ls", "usr/bin/cat"] {
+            assert_eq!(
+                fs::read_link(rootfs.join(name)).expect(name),
+                intermediate,
+                "{}",
+                name
+            );
+            assert_eq!(
+                fs::read(rootfs.join(name)).expect(name),
+                b"multi-call",
+                "{}",
+                name
+            );
+        }
+        assert_eq!(regular_files_under(&rootfs), 1);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_hardlink_to_a_symlink_that_only_looks_like_link2symlink_stays_a_symlink() {
+        let tmp = unique_tmp_dir("oci-hardlink-l2s-lookalike");
+        let rootfs = tmp.join("rootfs");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::write(outside.join(".l2s.key0001.0002"), b"secret").expect("seed data");
+        symlink(
+            outside.join(".l2s.key0001.0002"),
+            outside.join(".l2s.key0001"),
+        )
+        .expect("seed link");
+        fs::create_dir_all(rootfs.join("tmp")).expect("mkdir tmp");
+        fs::write(rootfs.join("tmp/.l2s.own0001.0002"), b"own").expect("seed inner data");
+        symlink(
+            rootfs.join("tmp/.l2s.own0001.0002"),
+            rootfs.join("tmp/.l2s.own0001"),
+        )
+        .expect("seed inner link");
+        fs::create_dir_all(rootfs.join(".l2s")).expect("mkdir .l2s");
+        fs::write(rootfs.join(".l2s/.l2s.mid0001.0002"), b"mid").expect("seed l2s data");
+        symlink(
+            rootfs.join(".l2s/.l2s.mid0001.0002"),
+            outside.join(".l2s.mid0001"),
+        )
+        .expect("seed outside intermediate");
+        fs::write(outside.join(".l2s.far0001.0002"), b"far").expect("seed outside data");
+        symlink(
+            outside.join(".l2s.far0001.0002"),
+            rootfs.join(".l2s/.l2s.far0001"),
+        )
+        .expect("seed l2s intermediate");
+        let to_outside = outside.join(".l2s.key0001");
+        let to_inner = rootfs.join("tmp/.l2s.own0001");
+        let to_outside_intermediate = outside.join(".l2s.mid0001");
+        let to_outside_data = rootfs.join(".l2s/.l2s.far0001");
+        let layer = tmp.join("layer.tar");
+        write_layer_tar_with_links(
+            &layer,
+            None,
+            &[
+                ("usr/bin/a", to_outside.to_str().unwrap(), false),
+                ("usr/bin/a2", "usr/bin/a", true),
+                ("usr/bin/b", to_inner.to_str().unwrap(), false),
+                ("usr/bin/b2", "usr/bin/b", true),
+                (
+                    "usr/bin/c",
+                    to_outside_intermediate.to_str().unwrap(),
+                    false,
+                ),
+                ("usr/bin/c2", "usr/bin/c", true),
+                ("usr/bin/d", to_outside_data.to_str().unwrap(), false),
+                ("usr/bin/d2", "usr/bin/d", true),
+            ],
+        );
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+
+        assert_eq!(
+            fs::read_link(rootfs.join("usr/bin/a2")).expect("a2"),
+            to_outside
+        );
+        assert_eq!(
+            fs::read_link(rootfs.join("usr/bin/b2")).expect("b2"),
+            to_inner
+        );
+        assert_eq!(
+            fs::read(outside.join(".l2s.key0001.0002")).expect("outside data"),
+            b"secret"
+        );
+        assert_eq!(
+            fs::read(rootfs.join("tmp/.l2s.own0001.0002")).expect("inner data"),
+            b"own"
+        );
+        assert_eq!(
+            fs::read_link(rootfs.join("usr/bin/c2")).expect("c2"),
+            to_outside_intermediate
+        );
+        assert_eq!(
+            fs::read_link(rootfs.join("usr/bin/d2")).expect("d2"),
+            to_outside_data
+        );
+        assert_eq!(
+            fs::read(rootfs.join(".l2s/.l2s.mid0001.0002")).expect("l2s data"),
+            b"mid"
+        );
+        assert_eq!(
+            fs::read(outside.join(".l2s.far0001.0002")).expect("outside data"),
+            b"far"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_later_layer_replacing_a_linked_name_leaves_the_other_names_alone() {
+        let tmp = unique_tmp_dir("oci-hardlink-l2s-replaced");
+        let rootfs = tmp.join("rootfs");
+        let first = tmp.join("first.tar");
+        let second = tmp.join("second.tar");
+        write_layer_tar_with_links(
+            &first,
+            Some(("usr/bin/coreutils", b"v1")),
+            &[("usr/bin/ls", "usr/bin/coreutils", true)],
+        );
+        write_layer_tar(&second, &[("usr/bin/coreutils", Some(b"v2"))]);
+
+        apply_layer_blob(&first, &rootfs).expect("apply first layer");
+        apply_layer_blob(&second, &rootfs).expect("apply second layer");
+
+        assert_eq!(
+            fs::read(rootfs.join("usr/bin/coreutils")).expect("coreutils"),
+            b"v2"
+        );
+        assert_eq!(fs::read(rootfs.join("usr/bin/ls")).expect("ls"), b"v1");
         let _ = fs::remove_dir_all(&tmp);
     }
 
