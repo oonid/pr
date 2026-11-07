@@ -141,7 +141,9 @@ The `default:` case in the SIGSYS handler differentiates between syscalls:
   not implemented".
 
 - **All other unknown syscalls**: Returns `-ENOSYS` and logs to
-  `/data/data/id.or.oo.pr/cache/sigsys-log.txt` for diagnostics.
+  `$PROOT_TMP_DIR/sigsys-log.txt` (the host app's cache directory) for diagnostics. proot
+  appends to it and trims it at start once it is over 256 KiB, so parallel sessions keep
+  each other's lines and every app using the library logs to its own directory.
 
 ---
 
