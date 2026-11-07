@@ -65,7 +65,7 @@ class App : Application(), ProotHost, SessionHost {
             sessions,
             CoroutineScope(SupervisorJob() + Dispatchers.Default),
             containers::contains,
-            hasFiles = containers::hasFiles,
+            containers::isUnfinished,
         )
     }
 

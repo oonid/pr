@@ -22,8 +22,8 @@ class DistroOperations(
     private val sessions: SessionManager,
     private val scope: CoroutineScope,
     private val isInstalled: (String) -> Boolean,
+    private val isUnfinished: (String) -> Boolean,
     private val endTimeoutMs: Long = ManagedSession.END_TIMEOUT_MS,
-    private val hasFiles: (String) -> Boolean = isInstalled,
 ) {
     enum class Kind(val label: String) { Install("Installing"), Remove("Removing"), Test("Testing") }
 
@@ -125,7 +125,7 @@ class DistroOperations(
         try {
             execute(args)
         } catch (e: CancellationException) {
-            if (isNew && hasFiles(alias)) withContext(NonCancellable) { cleanUp(listOf("remove", alias)) }
+            if (isNew && isUnfinished(alias)) withContext(NonCancellable) { cleanUp(listOf("remove", alias)) }
             throw e
         }
     }
