@@ -410,6 +410,38 @@ pub fn can_list_dir(path: &str) -> bool {
     std::fs::read_dir(path).is_ok()
 }
 
+pub fn android_system_binds() -> Vec<String> {
+    use std::path::Path;
+    [
+        "/apex",
+        "/odm",
+        "/product",
+        "/system",
+        "/system_ext",
+        "/vendor",
+        "/linkerconfig/ld.config.txt",
+        "/linkerconfig/com.android.art/ld.config.txt",
+        "/plat_property_contexts",
+        "/property_contexts",
+    ]
+    .iter()
+    .filter_map(|system_mnt| {
+        let p = Path::new(system_mnt);
+        if !p.exists() {
+            return None;
+        }
+        let real = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let real_str = real.to_string_lossy().to_string();
+        let readable = if real.is_dir() {
+            can_read_dir(&real_str)
+        } else {
+            real.is_file() && can_read_file(&real_str)
+        };
+        readable.then_some(real_str)
+    })
+    .collect()
+}
+
 pub fn build_proot_args(
     rootfs: &str,
     isolated: bool,
@@ -480,33 +512,8 @@ pub fn build_proot_args(
             }
         }
 
-        for system_mnt in &[
-            "/apex",
-            "/odm",
-            "/product",
-            "/system",
-            "/system_ext",
-            "/vendor",
-            "/linkerconfig/ld.config.txt",
-            "/linkerconfig/com.android.art/ld.config.txt",
-            "/plat_property_contexts",
-            "/property_contexts",
-        ] {
-            let p = Path::new(system_mnt);
-            if !p.exists() {
-                continue;
-            }
-            let real = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-            let real_str = real.to_string_lossy();
-            if real.is_dir() {
-                if can_read_dir(&real_str) {
-                    args.push(format!("--bind={}", real_str));
-                }
-            } else if real.is_file() {
-                if can_read_file(&real_str) {
-                    args.push(format!("--bind={}", real_str));
-                }
-            }
+        for system_mnt in android_system_binds() {
+            args.push(format!("--bind={}", system_mnt));
         }
 
         args.push(format!("--bind={}", prefix));

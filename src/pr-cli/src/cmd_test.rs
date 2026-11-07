@@ -34,9 +34,14 @@ fn deploy_binary(cache_dir: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_proot_command(rootfs: &str, cmd: &str) -> Result<String, String> {
+fn run_proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Result<String, String> {
     let proot = get_native_proot();
-    let args = build_proot_args(rootfs, false, false, &[]);
+    let binds = if isolated {
+        crate::shared::android_system_binds()
+    } else {
+        Vec::new()
+    };
+    let args = build_proot_args(rootfs, isolated, false, &binds);
     let runtime_env = build_proot_runtime_env();
     let child_env = build_proot_child_env();
 
@@ -282,11 +287,21 @@ fn install_tools(rootfs: &str, pkg_mgr: &str) -> Result<(), String> {
     run_proot_streaming(rootfs, cmd)
 }
 
+const ISOLATED_SUFFIX: &str = "-isolated";
+
+fn binary_suite(suite: &str) -> (&str, bool) {
+    match suite.strip_suffix(ISOLATED_SUFFIX) {
+        Some(name) => (name, true),
+        None => (suite, false),
+    }
+}
+
 fn run_test_binary(rootfs: &str, suite: &str) -> Result<TapResult, String> {
     msg_status(&format!("Running test suite: {}...", suite));
 
-    let cmd = format!("{} {} 2>&1", PIT_BIN, suite);
-    let output = run_proot_command(rootfs, &cmd)?;
+    let (name, isolated) = binary_suite(suite);
+    let cmd = format!("{} {} 2>&1", PIT_BIN, name);
+    let output = run_proot_command(rootfs, &cmd, isolated)?;
 
     let result = parse_tap(&output);
     Ok(result)
@@ -313,7 +328,17 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
     }
 
     let suites = [
-        "distro", "clone", "readlink", "gcc", "rust", "git", "pipe", "general", "ssh", "chroot",
+        "distro",
+        "clone",
+        "readlink",
+        "readlink-isolated",
+        "gcc",
+        "rust",
+        "git",
+        "pipe",
+        "general",
+        "ssh",
+        "chroot",
         "fakeroot",
     ];
     let target_suites: Vec<&str> = match suite {
@@ -397,6 +422,12 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_isolated_suite_runs_the_binary_suite_of_its_name_under_isolation() {
+        assert_eq!(binary_suite("readlink-isolated"), ("readlink", true));
+        assert_eq!(binary_suite("readlink"), ("readlink", false));
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -545,7 +576,7 @@ mod tests {
 
     #[test]
     fn run_proot_command_and_streaming_report_spawn_failures() {
-        let err = run_proot_command("/", "echo hi").expect_err("spawn should fail");
+        let err = run_proot_command("/", "echo hi", false).expect_err("spawn should fail");
         assert!(err.contains("proot exec"));
 
         let err = run_proot_streaming("/", "echo hi").expect_err("spawn should fail");
