@@ -514,12 +514,12 @@ Code checking for distro existence (e.g. MainActivity's `isInstalled` check) mus
 
 #### Unfinished installs
 
-`pr-cli` claims a name before it creates the container's directory, by creating `.<alias>.pr-cli-installing` beside it (`var/lib/pr/containers/` for an OCI install, `var/lib/pr/installed-rootfs/` for a plugin install) and holding an exclusive `flock` on it. It removes the file as the last step of the install. The guest never sees the file.
+`pr-cli` claims a name before it creates the container's directory, by creating `.<alias>.pr-cli-installing` beside it (`var/lib/pr/containers/` for an OCI install, `var/lib/pr/installed-rootfs/` for a plugin install) and holding an exclusive `flock` on it. It removes the file as the last step of the install. The file sits outside the container's directory, so a backup or copy of the container never includes it, but a guest started with the app's directory bound in can still see it.
 
 - A name with the file is not installed: `login`, `test`, `backup`, `copy`, `rename` and `reset` refuse it, and `list` shows it as `installing` or `interrupted`, even before its directory exists.
 - An install refuses a name that has an unfinished install of the other kind (OCI or plugin) until that one is removed.
 - If the lock is free, the install was killed. `install` takes the lock over, removes what was left and starts again; `remove` takes it over and deletes the leftovers.
 - If the lock is held, another `pr-cli` is using the name, and `install`, `remove` and `restore` refuse.
-- `restore` holds the lock while it moves a container into place, and clears a marker left by a killed install.
+- `restore` takes the lock of every container in the archive before it moves any of them, and releases each one once its container is in place. It deletes the containers it replaced only after that, so a kill during the slow delete leaves no marker. It also clears a marker left by a killed install.
 
-`InstalledContainers` skips a name with the file and reports it through `unfinished()`; the list shows such a name as "Install did not finish" with a Remove button. `DistroOperations` removes a cancelled install when its directory or marker exists (`hasFiles`), because a cancelled install leaves the file behind. Another app that checks for installed containers itself should skip names with the file too. Containers installed before the marker existed have no file and count as installed.
+`InstalledContainers` skips a name with the file and reports it through `unfinished()`; the list shows such a name as "Install did not finish" with a Remove button. `DistroOperations` removes a cancelled install only when its marker exists (`isUnfinished`). A cancelled install always leaves the file behind, and a cancel that lands after the install finished leaves the container alone. Another app that checks for installed containers itself should skip names with the file too. Containers installed before the marker existed have no file and count as installed.
