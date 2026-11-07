@@ -103,9 +103,13 @@ src/proot-integration-test/
    with buffers of 8, 16, 80 and 120 bytes, returns EINVAL each time instead of part of a host path
 
 `pr-cli test` runs this suite a second time as `readlink-isolated`: proot `--isolated`, with only
-Android's system directories bound so the test binary can start. Without the app directory bound at
-its own path, a link that names the rootfs by Android's other path for the app directory
-(`/data/user/0/<package>` against `/data/data/<package>`) only resolves if proot maps it back.
+Android's system directories bound so the test binary can start, and the rootfs given through a
+symlink in the cache directory (`pit-rootfs-<distro>`). proot canonicalizes the rootfs, while
+link2symlink stores chains under the symlink's path (`PROOT_L2S_DIR`), so tests 7 to 9 only pass if
+proot maps a symlink target that names the rootfs by another path back into the guest. On Android
+the app directory has two such paths (`/data/user/0/<package>` and `/data/data/<package>`), and
+which one proot sees depends on how it was started; the symlink makes the check independent of
+that and of the device.
 
 #### gcc (3 tests)
 
