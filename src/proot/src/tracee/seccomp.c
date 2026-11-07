@@ -22,6 +22,7 @@
 #include "tracee/mem.h"
 #include "tracee/statx.h"
 #include "path/path.h"
+#include "path/temp.h"
 
 static int handle_seccomp_event_common(Tracee *tracee);
 
@@ -71,6 +72,23 @@ void set_result_after_seccomp(Tracee *tracee, word_t result) {
  *
  * Return 0 to swallow signal or SIGSYS to deliver it to process.
  */
+#define SIGSYS_LOG_MAX (256 * 1024)
+
+static int sigsys_log_path(char path[PATH_MAX])
+{
+	int length = snprintf(path, PATH_MAX, "%s/sigsys-log.txt", get_temp_directory());
+	return length > 0 && length < PATH_MAX ? 0 : -1;
+}
+
+void trim_sigsys_log(void)
+{
+	char path[PATH_MAX];
+	struct stat statl;
+
+	if (sigsys_log_path(path) == 0 && stat(path, &statl) == 0 && statl.st_size > SIGSYS_LOG_MAX)
+		(void) truncate(path, 0);
+}
+
 int handle_seccomp_event(Tracee* tracee)
 {
 	int ret;
@@ -749,8 +767,8 @@ static int handle_seccomp_event_common(Tracee *tracee)
 	default:
 	{
 		word_t kernel_num = peek_reg(tracee, CURRENT, SYSARG_NUM);
-		const char *log_path = "/data/data/id.or.oo.pr/cache/sigsys-log.txt";
-		FILE *f = fopen(log_path, "a");
+		char log_path[PATH_MAX];
+		FILE *f = sigsys_log_path(log_path) == 0 ? fopen(log_path, "a") : NULL;
 		if (f) {
 			time_t now = time(NULL);
 			struct tm *tm = localtime(&now);
