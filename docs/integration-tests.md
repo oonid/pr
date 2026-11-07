@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10).
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **56/56** on Alpine (Android 17, 2026-11).
 
 ---
 
@@ -36,7 +36,7 @@ src/proot-integration-test/
   src/main.rs             TAP runner: proot-integration-test [suite|all]
   src/distro.rs           Package manager detection + tool installation (8 tests)
   src/clone.rs            CLONE_VM stripping tests (5 tests)
-  src/readlink.rs         .l2s. hiding, readlink, realpath tests (7 tests)
+  src/readlink.rs         .l2s. hiding, readlink, realpath tests (8 tests)
   src/gcc.rs              GCC prefix resolution, C compilation (3 tests)
   src/rust.rs             rustc, cargo build with timing diagnostics (4 tests)
   src/git.rs              git init, git config, cargo new with vcs git (3 tests)
@@ -55,7 +55,7 @@ src/proot-integration-test/
 |-------|-------|-------|----------|
 | distro | 8 | always | Package manager detection, tool installation, os-release |
 | clone | 5 | always | T8.1 CLONE_VM/VFORK stripping (ptrace + SIGSYS paths) |
-| readlink | 7 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files |
+| readlink | 8 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files; `/proc/self/exe` of a program run by a hard link |
 | gcc | 3 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe |
 | rust | 4 | `/usr/bin/rustc` exists | T8.3 si_syscall=-1 suppression, T8.4 SIGSYS handlers |
 | git | 3 | `/usr/bin/git` exists | T8.3 si_syscall=-1, T8.4 setuid/setgid handlers |
@@ -86,7 +86,7 @@ src/proot-integration-test/
 4. **CLONE_THREAD preserved** — `std::thread::spawn()` + exec (validates CLONE_THREAD guard)
 5. **concurrent spawn stress** — 10 threads each spawning a process
 
-#### readlink (7 tests)
+#### readlink (8 tests)
 
 1. **regular symlink resolves** — Rust `read_link()` on `/tmp` symlink
 2. **realpath no .l2s.** — `realpath /usr/bin/cc` has no `.l2s.` path
@@ -96,6 +96,9 @@ src/proot-integration-test/
 6. **readlink small buffer** — compiles C program with `cc` that calls `readlink()` with 4-byte buffer
 7. **readlink /proc/self/fd of a hard link** — the fd link of a file opened through a second
    hard link names the open file (same inode)
+8. **/proc/self/exe of a program run by a hard link** — a copy of the test binary is hard-linked
+   (link2symlink stores it as a `.l2s.` chain) and run by the link's name with `--print-exe`; its
+   `/proc/self/exe` must be that name, as the kernel reports for a real hard link
 
 #### gcc (3 tests)
 
