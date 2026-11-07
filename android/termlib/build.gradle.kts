@@ -1,12 +1,11 @@
 plugins {
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "org.connectbot.terminal"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 28
@@ -26,9 +25,11 @@ android {
         }
     }
 
-    sourceSets["main"].java.srcDirs(
-        file("../../vendor/termlib/lib/src/main/java")
-    )
+    sourceSets {
+        getByName("main").kotlin.directories.add(
+            file("../../vendor/termlib/lib/src/main/java").path,
+        )
+    }
 
     externalNativeBuild {
         cmake {
@@ -42,11 +43,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf("-opt-in=kotlin.io.encoding.ExperimentalEncodingApi")
-    }
-
     buildFeatures {
         compose = true
     }
@@ -55,6 +51,13 @@ android {
         jniLibs {
             keepDebugSymbols.add("**/*.so")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        optIn.add("kotlin.io.encoding.ExperimentalEncodingApi")
     }
 }
 
