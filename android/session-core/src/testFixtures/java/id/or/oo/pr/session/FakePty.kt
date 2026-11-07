@@ -35,6 +35,7 @@ class FakePty : Pty {
     @Volatile var writesAfterClose = 0
     @Volatile var resizesAfterClose = 0
     @Volatile var onClose: () -> Unit = {}
+    @Volatile var writeGate: CountDownLatch? = null
 
     @Volatile
     override var exitCode: Int? = null
@@ -54,6 +55,7 @@ class FakePty : Pty {
     fun exit(code: Int) {
         exitCode = code
         exited.countDown()
+        writeGate?.countDown()
         chunks.put(end)
     }
 
@@ -66,6 +68,8 @@ class FakePty : Pty {
     }
 
     override fun write(data: ByteArray): Int {
+        writeGate?.await()
+        if (exitCode != null && writeGate != null) throw IOException("Input/output error")
         if (closed) writesAfterClose++
         written += String(data)
         return data.size
