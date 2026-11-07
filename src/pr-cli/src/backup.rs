@@ -512,7 +512,7 @@ fn unpack_backup(
             {
                 return Err(format!("hardlink {} leaves its container", path.display()));
             }
-            if !link_inside_root(&root, &placement.relative, &target.relative)? {
+            if !link_inside_root(&root, &placement.relative, &target.relative, false)? {
                 return Err(format!(
                     "hardlink {} target missing {}",
                     path.display(),
