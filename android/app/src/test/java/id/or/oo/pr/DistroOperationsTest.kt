@@ -81,9 +81,7 @@ class DistroOperationsTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun operations(endTimeoutMs: Long = ManagedSession.END_TIMEOUT_MS) =
-        DistroOperations(command, sessions, scope, { it in installed }, endTimeoutMs) {
-            it in installed || it in unfinished
-        }
+        DistroOperations(command, sessions, scope, { it in installed }, { it in unfinished }, endTimeoutMs)
 
     private fun DistroOperations.awaitFinished(): DistroOperations.Operation {
         eventually { operation.value?.running == false }
@@ -356,7 +354,7 @@ class DistroOperationsTest {
     fun aCancelBeforeTheWorkStartsStillFinishes() {
         val queued = CopyOnWriteArrayList<Runnable>()
         val held = CoroutineScope(SupervisorJob() + Executor { queued += it }.asCoroutineDispatcher())
-        val ops = DistroOperations(command, sessions, held, { it in installed })
+        val ops = DistroOperations(command, sessions, held, { it in installed }, { it in unfinished })
         ops.test("alpine", "alpine:latest")
 
         ops.cancel()
@@ -373,9 +371,9 @@ class DistroOperationsTest {
     private fun cancelInstall(
         ops: DistroOperations,
         start: DistroOperations.() -> Boolean,
-        createdAlias: String?,
+        leftUnfinished: String?,
         gated: String = "install",
-        leftUnfinished: String? = null,
+        finished: String? = null,
     ) =
         run {
             command.gate = CountDownLatch(1)
@@ -383,7 +381,7 @@ class DistroOperationsTest {
             command.linesFor = mapOf("remove" to listOf("Wiping the rootfs"))
             assertTrue(ops.start())
             eventually { command.calls.isNotEmpty() }
-            createdAlias?.let { installed += it }
+            finished?.let { installed += it }
             leftUnfinished?.let { unfinished += it }
             ops.cancel()
             ops.awaitFinished()
@@ -417,20 +415,6 @@ class DistroOperationsTest {
     }
 
     @Test
-    fun aCancelledInstallThatLeftAnUnfinishedContainerRemovesIt() {
-        val ops = operations()
-
-        cancelInstall(
-            ops,
-            { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") },
-            null,
-            leftUnfinished = "alpine",
-        )
-
-        assertEquals(listOf("remove", "alpine"), command.calls.last())
-    }
-
-    @Test
     fun aCancelledInstallOverAnUnfinishedContainerRemovesIt() {
         unfinished += "alpine"
         val ops = operations()
@@ -441,11 +425,26 @@ class DistroOperationsTest {
     }
 
     @Test
+    fun aCancelThatLandsAfterTheInstallFinishedKeepsTheContainer() {
+        val ops = operations()
+
+        val done = cancelInstall(
+            ops,
+            { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") },
+            null,
+            finished = "alpine",
+        )
+
+        assertEquals(1, command.calls.size)
+        assertEquals(listOf("Installing alpine:latest…", "Cancelled."), done.lines)
+    }
+
+    @Test
     fun aCancelledInstallOverAContainerThatAlreadyExistedRemovesNothing() {
         installed += "alpine"
         val ops = operations()
 
-        val done = cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, null)
+        val done = cancelInstall(ops, { install("alpine", "alpine:latest", "docker.io/library/alpine:latest") }, "alpine")
 
         assertEquals(1, command.calls.size)
         assertEquals(listOf("Installing alpine:latest…", "Cancelled."), done.lines)

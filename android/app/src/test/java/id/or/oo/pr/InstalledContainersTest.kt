@@ -33,7 +33,7 @@ class InstalledContainersTest {
     }
 
     @Test
-    fun aContainerWhoseInstallDidNotFinishIsNotInstalledButHasFiles() {
+    fun aContainerWhoseInstallDidNotFinishIsNotInstalledButUnfinished() {
         dir("var/lib/pr/installed-rootfs/debian")
         File(prefix.root, "var/lib/pr/installed-rootfs/.debian.pr-cli-installing").writeText("")
         dir("var/lib/pr/containers/alpine/rootfs")
@@ -49,11 +49,12 @@ class InstalledContainersTest {
         assertEquals(setOf("debian", "alpine", "early"), containers.unfinished())
         listOf("debian", "alpine", "early").forEach {
             assertFalse(it, containers.contains(it))
-            assertTrue(it, containers.hasFiles(it))
+            assertTrue(it, containers.isUnfinished(it))
         }
-        assertTrue(containers.hasFiles("ubuntu"))
-        assertFalse(containers.hasFiles("arch"))
-        assertFalse(containers.hasFiles(""))
+        assertFalse(containers.isUnfinished("ubuntu"))
+        assertFalse(containers.isUnfinished("fedora"))
+        assertFalse(containers.isUnfinished("arch"))
+        assertFalse(containers.isUnfinished(""))
     }
 
     @Test

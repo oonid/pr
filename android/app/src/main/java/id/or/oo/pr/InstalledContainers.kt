@@ -26,10 +26,8 @@ class InstalledContainers(prefixDir: File) {
 
     fun contains(alias: String): Boolean = alias.isNotEmpty() && (isLegacy(alias) || isOci(alias))
 
-    fun hasFiles(alias: String): Boolean =
-        alias.isNotEmpty() && listOf(legacyRootfsDir, ociContainersDir).any {
-            File(it, alias).isDirectory || unfinished(it, alias)
-        }
+    fun isUnfinished(alias: String): Boolean =
+        alias.isNotEmpty() && listOf(legacyRootfsDir, ociContainersDir).any { unfinished(it, alias) }
 
     private fun isLegacy(alias: String): Boolean =
         File(legacyRootfsDir, alias).isDirectory && !unfinished(legacyRootfsDir, alias)
