@@ -235,7 +235,7 @@ Commit: `f71d547`
 - Package: `id.or.oo.pr`
 - Min SDK 28, Target SDK 35, compileSdk 36
 - Language: Kotlin 2.1.0 with AGP 8.7.3, Gradle 8.11.1
-- Permissions: `INTERNET`, `FOREGROUND_SERVICE`, `MANAGE_EXTERNAL_STORAGE`
+- Permissions: `INTERNET`, `FOREGROUND_SERVICE` (no storage permission: the guest's `/sdcard` shows what Android's scoped storage lets the app see)
 - arm64-v8a only (`abiFilters`)
 - AppCompat theme with dark action bar, adaptive icon (navy #1a1a2e + red triangle)
 - Placeholder MainActivity with `activity_main.xml` layout
