@@ -4,9 +4,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.connectbot.terminal.TerminalEmulator
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
 import kotlin.concurrent.thread
+import kotlin.concurrent.write
 
 class ManagedSession(
     val alias: String,
@@ -35,8 +39,10 @@ class ManagedSession(
     @Volatile
     internal var onEndRequested: () -> Unit = {}
 
-    private val ptyLock = Any()
+    private val ptyLock = ReentrantReadWriteLock()
+    @Volatile
     private var closed = false
+    private val input = LinkedBlockingQueue<ByteArray>()
     private val ended = CountDownLatch(1)
     private val screenLock = Any()
     private var screen: Screen? = null
@@ -56,14 +62,15 @@ class ManagedSession(
 
     fun start() {
         thread(isDaemon = true, name = "pty-reader-$alias") { readLoop() }
+        thread(isDaemon = true, name = "pty-writer-$alias") { writeLoop() }
     }
 
     fun write(data: ByteArray) {
-        synchronized(ptyLock) { if (!closed) pty.write(data) }
+        if (!closed) input.put(data.copyOf())
     }
 
     fun resize(rows: Int, cols: Int) {
-        synchronized(ptyLock) { if (!closed) pty.resize(rows, cols) }
+        ptyLock.read { if (!closed) pty.resize(rows, cols) }
     }
 
     fun attach(screen: Screen): Screen? = synchronized(screenLock) {
@@ -86,7 +93,7 @@ class ManagedSession(
         thread(isDaemon = true, name = "pty-end-$alias") {
             val signalled = pty.signalTracees()
             if (signalled.isNotEmpty() && awaitEndOrExit(signalled)) return@thread
-            thread(isDaemon = true, name = "pty-eof-$alias") { synchronized(ptyLock) { if (!closed) pty.sendEof() } }
+            thread(isDaemon = true, name = "pty-eof-$alias") { ptyLock.read { if (!closed) pty.sendEof() } }
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
             pty.kill()
             if (ended.await(endGraceMs, TimeUnit.MILLISECONDS)) return@thread
@@ -118,6 +125,17 @@ class ManagedSession(
         }
     }
 
+    private fun writeLoop() {
+        try {
+            while (true) {
+                val data = input.take()
+                if (data === STOP) return
+                ptyLock.read { if (!closed) pty.write(data) }
+            }
+        } catch (e: Exception) {
+        }
+    }
+
     private fun awaitExitCode(ms: Long): Boolean {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms)
         while (pty.exitCode == null && deadline - System.nanoTime() > 0) Thread.sleep(20)
@@ -131,10 +149,12 @@ class ManagedSession(
                 if (!awaitExitCode(killExitWaitMs)) pty.forceKill()
             }
         }
-        synchronized(ptyLock) {
+        ptyLock.write {
             closed = true
             runCatching { pty.close() }
         }
+        input.clear()
+        input.put(STOP)
         _exit.value = Exit(pty.exitCode)
         ended.countDown()
         onEnded(this)
@@ -146,6 +166,7 @@ class ManagedSession(
         const val EXIT_CODE_WAIT_MS = 2_000L
         const val KILL_EXIT_WAIT_MS = 500L
         private const val POLL_MS = 50L
+        private val STOP = ByteArray(0)
         internal const val SCAN_MARGIN_MS = 1_000L
         internal const val TIMEOUT_HEADROOM_MS = 2_500L
 

@@ -227,8 +227,64 @@ class ManagedSessionTest {
         val s = session()
         s.write("ls\n".toByteArray())
         s.resize(30, 90)
-        assertEquals(listOf("ls\n"), pty.written)
+        eventually { pty.written.toList() == listOf("ls\n") }
         assertEquals(listOf(30 to 90), pty.resizes)
+    }
+
+    private fun returnsQuickly(action: () -> Unit) {
+        val done = java.util.concurrent.CountDownLatch(1)
+        kotlin.concurrent.thread(isDaemon = true) {
+            action()
+            done.countDown()
+        }
+        assertTrue("blocked", done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun inputDoesNotWaitForAProgramThatIsNotReading() {
+        pty.writeGate = java.util.concurrent.CountDownLatch(1)
+        val s = session()
+
+        returnsQuickly { s.write("a large paste".toByteArray()) }
+        returnsQuickly { s.write("more".toByteArray()) }
+        returnsQuickly { s.resize(10, 20) }
+
+        assertEquals(listOf(10 to 20), pty.resizes)
+        pty.writeGate?.countDown()
+        eventually { pty.written.toList() == listOf("a large paste", "more") }
+    }
+
+    @Test
+    fun inputKeepsItsOrder() {
+        val s = session()
+        val keys = (1..200).map { "k$it" }
+        keys.forEach { s.write(it.toByteArray()) }
+        eventually { pty.written.size == keys.size }
+        assertEquals(keys, pty.written.toList())
+    }
+
+    @Test
+    fun theCallersBufferCanBeReusedAfterWrite() {
+        val s = session()
+        val buffer = "abc".toByteArray()
+        pty.writeGate = java.util.concurrent.CountDownLatch(1)
+        returnsQuickly { s.write(buffer) }
+        buffer[0] = 'x'.code.toByte()
+        pty.writeGate?.countDown()
+        eventually { pty.written.isNotEmpty() }
+        assertEquals("abc", pty.written.single())
+    }
+
+    @Test
+    fun aSessionWithInputStuckInTheProgramStillEnds() {
+        pty.writeGate = java.util.concurrent.CountDownLatch(1)
+        val s = session()
+        returnsQuickly { s.write("stuck".toByteArray()) }
+
+        s.end()
+
+        eventually { ended.isNotEmpty() }
+        assertTrue(pty.closed)
     }
 
     @Test
