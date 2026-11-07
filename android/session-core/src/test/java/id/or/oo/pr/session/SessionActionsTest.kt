@@ -9,11 +9,13 @@ class SessionActionsTest {
     fun prKeepsItsActionNames() {
         assertEquals("id.or.oo.pr.action.END_ALL", SessionActions.endAll("id.or.oo.pr"))
         assertEquals("id.or.oo.pr.action.TOGGLE_WAKE", SessionActions.toggleWake("id.or.oo.pr"))
+        assertEquals("id.or.oo.pr.action.CANCEL_TASKS", SessionActions.cancelTasks("id.or.oo.pr"))
     }
 
     @Test
     fun anotherAppGetsActionsUnderItsOwnPackage() {
         assertEquals("org.example.gateway.action.END_ALL", SessionActions.endAll("org.example.gateway"))
         assertEquals("org.example.gateway.action.TOGGLE_WAKE", SessionActions.toggleWake("org.example.gateway"))
+        assertEquals("org.example.gateway.action.CANCEL_TASKS", SessionActions.cancelTasks("org.example.gateway"))
     }
 }

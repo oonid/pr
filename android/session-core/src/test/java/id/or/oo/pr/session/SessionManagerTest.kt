@@ -54,6 +54,105 @@ class SessionManagerTest {
         (manager.open(alias) as SessionManager.OpenResult.Opened).session
 
     @Test
+    fun aTaskWithNothingRunningStartsTheForegroundUntilItEnds() {
+        val task = manager.beginTask("Installing alpine…") {}
+
+        assertEquals(listOf("start"), foregroundCalls)
+        assertEquals(listOf("Installing alpine…"), manager.tasks.value)
+        manager.endTask(task)
+        assertEquals(emptyList<String>(), manager.tasks.value)
+    }
+
+    @Test
+    fun aTaskWhileASessionRunsDoesNotStartTheForegroundAgain() {
+        open("alpine")
+        manager.beginTask("Testing debian…") {}
+
+        assertEquals(listOf("start"), foregroundCalls)
+    }
+
+    @Test
+    fun aSessionOpenedWhileATaskRunsDoesNotStartTheForegroundAgain() {
+        manager.beginTask("Installing debian…") {}
+        open("alpine")
+
+        assertEquals(listOf("start"), foregroundCalls)
+    }
+
+    @Test
+    fun aTaskAfterTheLastOneEndedStartsTheForegroundAgain() {
+        manager.endTask(manager.beginTask("Installing alpine…") {})
+        manager.beginTask("Removing alpine…") {}
+
+        assertEquals(listOf("start", "start"), foregroundCalls)
+    }
+
+    @Test
+    fun endingATaskRemovesOnlyThatTaskAndOnlyOnce() {
+        val first = manager.beginTask("Testing alpine…") {}
+        manager.beginTask("Testing alpine…") {}
+
+        manager.endTask(first)
+        manager.endTask(first)
+
+        assertEquals(listOf("Testing alpine…"), manager.tasks.value)
+    }
+
+    @Test
+    fun cancelTasksCancelsEveryRunningTask() {
+        val cancelled = CopyOnWriteArrayList<String>()
+        manager.beginTask("Installing alpine…") { cancelled += "alpine" }
+        manager.beginTask("Installing debian…") { cancelled += "debian" }
+
+        manager.cancelTasks()
+
+        assertEquals(listOf("alpine", "debian"), cancelled)
+    }
+
+    @Test
+    fun aTaskWhoseForegroundStartFailsReportsTheError() {
+        foregroundFails = true
+
+        manager.beginTask("Installing alpine…") {}
+
+        assertEquals("not allowed", manager.backgroundError.value)
+    }
+
+    @Test
+    fun aSessionOpenedAfterATaskCouldNotStartTheForegroundTriesAgain() {
+        foregroundFails = true
+        manager.beginTask("Installing alpine…") {}
+        foregroundFails = false
+
+        open("alpine")
+
+        assertEquals(listOf("start"), foregroundCalls)
+        assertNull(manager.backgroundError.value)
+    }
+
+    @Test
+    fun aTaskBegunAfterASessionCouldNotStartTheForegroundTriesAgain() {
+        foregroundFails = true
+        open("alpine")
+        foregroundFails = false
+
+        manager.beginTask("Installing debian…") {}
+
+        assertEquals(listOf("start"), foregroundCalls)
+        assertNull(manager.backgroundError.value)
+    }
+
+    @Test
+    fun theBackgroundErrorClearsWhenTheLastTaskEnds() {
+        foregroundFails = true
+        val task = manager.beginTask("Installing alpine…") {}
+
+        manager.endTask(task)
+
+        assertNull(manager.backgroundError.value)
+    }
+
+    @Test
     fun settingKeepCpuAwakeWithNoSessionsLeavesItOff() {
         manager.setKeepCpuAwake(true)
         assertEquals(false, manager.keepCpuAwake.value)

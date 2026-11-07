@@ -46,6 +46,35 @@ class SessionManager(
         }
     }
 
+    class Task internal constructor(val label: String, internal val cancel: () -> Unit)
+
+    private val _tasks = MutableStateFlow<List<String>>(emptyList())
+    val tasks: StateFlow<List<String>> = _tasks
+
+    private val runningTasks = ArrayList<Task>()
+
+    fun beginTask(label: String, onCancel: () -> Unit): Task {
+        val task = Task(label, onCancel)
+        synchronized(lock) {
+            val idle = _running.value.isEmpty() && runningTasks.isEmpty()
+            runningTasks += task
+            _tasks.value = runningTasks.map { it.label }
+            if (idle || _backgroundError.value != null) startForeground()
+        }
+        return task
+    }
+
+    fun endTask(task: Task) {
+        synchronized(lock) {
+            if (runningTasks.removeAll { it === task }) _tasks.value = runningTasks.map { it.label }
+            if (runningTasks.isEmpty() && _running.value.isEmpty()) _backgroundError.value = null
+        }
+    }
+
+    fun cancelTasks() {
+        synchronized(lock) { runningTasks.toList() }.forEach { it.cancel() }
+    }
+
     private val _backgroundError = MutableStateFlow<String?>(null)
     val backgroundError: StateFlow<String?> = _backgroundError
 
@@ -130,11 +159,11 @@ class SessionManager(
         val now = sessions.values.filter { it.exit.value == null }.map { it.alias }
         if (before == 0 && now.isNotEmpty()) {
             _running.value = now
-            startForeground()
+            if (runningTasks.isEmpty() || _backgroundError.value != null) startForeground()
         } else {
             if (before > 0 && now.isEmpty()) {
                 _keepCpuAwake.value = false
-                _backgroundError.value = null
+                if (runningTasks.isEmpty()) _backgroundError.value = null
             }
             _running.value = now
         }
