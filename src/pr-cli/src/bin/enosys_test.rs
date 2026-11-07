@@ -72,14 +72,14 @@ mod tests {
 
     #[test]
     fn sc_zero_arg_getpid_returns_non_negative() {
-        let rc = unsafe { sc(libc::SYS_getpid as i64, &[]) };
+        let rc = unsafe { sc(libc::SYS_getpid, &[]) };
         assert!(rc > 0);
     }
 
     #[test]
     fn sc_panics_when_more_than_six_args_are_passed() {
         let result = std::panic::catch_unwind(|| unsafe {
-            sc(libc::SYS_getpid as i64, &[1, 2, 3, 4, 5, 6, 7]);
+            sc(libc::SYS_getpid, &[1, 2, 3, 4, 5, 6, 7]);
         });
         assert!(result.is_err());
     }

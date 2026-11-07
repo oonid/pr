@@ -131,14 +131,14 @@ fn looks_like_oci_image_reference(input: &str) -> bool {
     let last_slash = input.rfind('/');
     let digest_at = input
         .rfind('@')
-        .filter(|&at| last_slash.map_or(true, |slash| at > slash));
+        .filter(|&at| last_slash.is_none_or(|slash| at > slash));
     let tag_colon = match digest_at {
         Some(at) => input[..at]
             .rfind(':')
-            .filter(|&colon| last_slash.map_or(true, |slash| colon > slash)),
+            .filter(|&colon| last_slash.is_none_or(|slash| colon > slash)),
         None => input
             .rfind(':')
-            .filter(|&colon| last_slash.map_or(true, |slash| colon > slash)),
+            .filter(|&colon| last_slash.is_none_or(|slash| colon > slash)),
     };
 
     let name_end = tag_colon.or(digest_at).unwrap_or(input.len());

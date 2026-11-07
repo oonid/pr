@@ -438,7 +438,7 @@ fn main() {
         run_suite(suite, &mut reporter);
     }
 
-    eprintln!("");
+    eprintln!();
     eprintln!(
         "{} passed, {} failed, {} skipped in {:.1}s",
         reporter.passed,
