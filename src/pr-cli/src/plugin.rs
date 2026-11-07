@@ -124,14 +124,10 @@ pub fn parse_plugin(path: &Path) -> Result<DistroPlugin, ParseError> {
                 urls.insert(arch.to_string(), value.to_string());
             } else if let Some(arch) = key.strip_prefix("TARBALL_SHA256_") {
                 sha256s.insert(arch.to_string(), value.to_string());
-            } else if let Some(rest) = key.strip_prefix("TARBALL_URL[") {
-                if let Some(arch) = rest.strip_suffix("]") {
-                    urls.insert(arch.to_string(), value.to_string());
-                }
-            } else if let Some(rest) = key.strip_prefix("TARBALL_SHA256[") {
-                if let Some(arch) = rest.strip_suffix("]") {
-                    sha256s.insert(arch.to_string(), value.to_string());
-                }
+            } else if let Some(arch) = array_key(key, "TARBALL_URL") {
+                urls.insert(arch.to_string(), value.to_string());
+            } else if let Some(arch) = array_key(key, "TARBALL_SHA256") {
+                sha256s.insert(arch.to_string(), value.to_string());
             }
         }
 
@@ -186,12 +182,21 @@ fn parse_assignment(line: &str) -> Option<(&str, &str)> {
     Some((key, value))
 }
 
+fn array_key<'a>(key: &'a str, name: &str) -> Option<&'a str> {
+    let index = key
+        .strip_prefix(name)?
+        .strip_prefix('[')?
+        .strip_suffix(']')?;
+    Some(index.trim_matches(|c| c == '\'' || c == '"'))
+}
+
 fn is_valid_key(key: &str) -> bool {
     if key.is_empty() {
         return false;
     }
-    key.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
+    key.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']' || c == '\'' || c == '"'
+    })
 }
 
 fn extract_quoted_value(s: &str) -> Option<&str> {
@@ -204,7 +209,16 @@ fn extract_quoted_value(s: &str) -> Option<&str> {
 }
 
 pub fn load_plugins(dir: &Path) -> Vec<DistroPlugin> {
+    let (plugins, errors) = load_plugins_checked(dir);
+    for error in errors {
+        eprintln!("Warning: skipping plugin {}", error);
+    }
+    plugins
+}
+
+pub fn load_plugins_checked(dir: &Path) -> (Vec<DistroPlugin>, Vec<String>) {
     let mut by_alias: BTreeMap<String, DistroPlugin> = BTreeMap::new();
+    let mut errors = Vec::new();
 
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -216,13 +230,17 @@ pub fn load_plugins(dir: &Path) -> Vec<DistroPlugin> {
             if !(name.ends_with(".sh") || name.ends_with(".override.sh")) {
                 continue;
             }
-            if let Ok(plugin) = parse_plugin(&path) {
-                by_alias.insert(plugin.alias.clone(), plugin);
+            match parse_plugin(&path) {
+                Ok(plugin) => {
+                    by_alias.insert(plugin.alias.clone(), plugin);
+                }
+                Err(e) => errors.push(format!("{}: {}", path.display(), e)),
             }
         }
     }
 
-    by_alias.into_values().collect()
+    errors.sort();
+    (by_alias.into_values().collect(), errors)
 }
 
 #[cfg(test)]
@@ -234,6 +252,50 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pr-cli-no-plugins-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create dir");
         assert!(load_plugins(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quoted_array_keys_name_the_arch() {
+        let dir = std::env::temp_dir().join(format!("pr-cli-quoted-keys-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.join("quoted.sh");
+        std::fs::write(
+            &path,
+            "DISTRO_NAME=\"Quoted\"\n\
+             TARBALL_URL['aarch64']=\"https://example.invalid/a.tar.xz\"\n\
+             TARBALL_SHA256['aarch64']=\"abc\"\n\
+             TARBALL_URL[\"x86_64\"]=\"https://example.invalid/x.tar.xz\"\n",
+        )
+        .expect("write plugin");
+        let plugin = parse_plugin(&path).expect("parse");
+        let a = plugin.tarballs.get("aarch64").expect("aarch64 tarball");
+        assert_eq!(a.url, "https://example.invalid/a.tar.xz");
+        assert_eq!(a.sha256, "abc");
+        assert!(plugin.tarballs.contains_key("x86_64"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_plugin_is_reported_and_the_rest_still_load() {
+        let dir = std::env::temp_dir().join(format!("pr-cli-broken-plugin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        std::fs::write(
+            dir.join("good.sh"),
+            "DISTRO_NAME=\"Good\"\nTARBALL_URL_aarch64=\"https://example.invalid/g.tar.xz\"\n",
+        )
+        .expect("write good");
+        std::fs::write(
+            dir.join("broken.sh"),
+            "TARBALL_URL_aarch64=\"https://example.invalid/b\"\n",
+        )
+        .expect("write broken");
+        let (plugins, errors) = load_plugins_checked(&dir);
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].alias, "good");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("broken.sh"), "{}", errors[0]);
+        assert!(errors[0].contains("DISTRO_NAME"), "{}", errors[0]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
