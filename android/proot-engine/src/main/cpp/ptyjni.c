@@ -18,6 +18,7 @@
 #define UNUSED __attribute__((unused))
 #define TAG "PTY"
 #define STILL_RUNNING (-2)
+#define IO_CHUNK 8192
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
@@ -49,7 +50,9 @@ static int setup_slave(int ptm_fd) {
     return 0;
 }
 
-static pid_t last_child_pid = -1;
+static bool valid_size(jint rows, jint cols) {
+    return rows > 0 && rows <= 0xffff && cols > 0 && cols <= 0xffff;
+}
 
 extern char **environ;
 
@@ -208,7 +211,7 @@ static void exec_child(const char *pts_name, const char *cmd, char **argv, char 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
     JNIEnv *env, jclass cls UNUSED, jstring jCmd, jobjectArray jArgs, jobjectArray jEnvVars,
-    jint rows, jint cols) {
+    jint rows, jint cols, jintArray jPidOut) {
 
     char *cmd = dup_jstring(env, jCmd);
     char **argv = cmd ? build_argv(env, cmd, jArgs) : NULL;
@@ -226,11 +229,13 @@ Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
         goto fail;
     }
 
-    struct winsize ws;
-    memset(&ws, 0, sizeof(ws));
-    ws.ws_row = (unsigned short) rows;
-    ws.ws_col = (unsigned short) cols;
-    ioctl(ptm_fd, TIOCSWINSZ, &ws);
+    if (valid_size(rows, cols)) {
+        struct winsize ws;
+        memset(&ws, 0, sizeof(ws));
+        ws.ws_row = (unsigned short) rows;
+        ws.ws_col = (unsigned short) cols;
+        ioctl(ptm_fd, TIOCSWINSZ, &ws);
+    }
 
     char pts_name[64];
     int err = ptsname_r(ptm_fd, pts_name, sizeof(pts_name));
@@ -255,7 +260,10 @@ Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
     free(cmd);
     free_strings(argv);
     free_strings(envp);
-    last_child_pid = pid;
+    if (jPidOut && (*env)->GetArrayLength(env, jPidOut) > 0) {
+        jint child = (jint) pid;
+        (*env)->SetIntArrayRegion(env, jPidOut, 0, 1, &child);
+    }
     return ptm_fd;
 
 fail:
@@ -263,11 +271,6 @@ fail:
     free_strings(argv);
     free_strings(envp);
     return -1;
-}
-
-JNIEXPORT jint JNICALL
-Java_id_or_oo_pr_engine_PtyNative_nativeGetPid(JNIEnv *env UNUSED, jclass cls UNUSED) {
-    return (jint) last_child_pid;
 }
 
 static bool slice_in_bounds(JNIEnv *env, jbyteArray jBuf, jint offset, jint length) {
@@ -285,10 +288,9 @@ Java_id_or_oo_pr_engine_PtyNative_nativeRead(
     JNIEnv *env, jclass cls UNUSED, jint fd, jbyteArray jBuf, jint offset, jint length) {
 
     if (!slice_in_bounds(env, jBuf, offset, length)) return -1;
-    jbyte *buf = (*env)->GetByteArrayElements(env, jBuf, NULL);
-    if (!buf) return -1;
-    ssize_t n = read(fd, buf + offset, (size_t) length);
-    (*env)->ReleaseByteArrayElements(env, jBuf, buf, 0);
+    jbyte chunk[IO_CHUNK];
+    ssize_t n = read(fd, chunk, (size_t) (length < IO_CHUNK ? length : IO_CHUNK));
+    if (n > 0) (*env)->SetByteArrayRegion(env, jBuf, offset, (jsize) n, chunk);
 
     if (n < 0) {
         if (errno == EAGAIN || errno == EINTR) return 0;
@@ -302,22 +304,31 @@ Java_id_or_oo_pr_engine_PtyNative_nativeWrite(
     JNIEnv *env, jclass cls UNUSED, jint fd, jbyteArray jBuf, jint offset, jint length) {
 
     if (!slice_in_bounds(env, jBuf, offset, length)) return -1;
-    jbyte *buf = (*env)->GetByteArrayElements(env, jBuf, NULL);
-    if (!buf) return -1;
-    ssize_t n = write(fd, buf + offset, (size_t) length);
-    (*env)->ReleaseByteArrayElements(env, jBuf, buf, JNI_ABORT);
-
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EINTR) return 0;
-        return -1;
+    jbyte chunk[IO_CHUNK];
+    jint done = 0;
+    while (done < length) {
+        jint count = length - done < IO_CHUNK ? length - done : IO_CHUNK;
+        (*env)->GetByteArrayRegion(env, jBuf, offset + done, count, chunk);
+        jint sent = 0;
+        while (sent < count) {
+            ssize_t n = write(fd, chunk + sent, (size_t) (count - sent));
+            if (n < 0 && errno == EINTR) continue;
+            if (n < 0) {
+                if (done + sent > 0 || errno == EAGAIN) return done + sent;
+                return -1;
+            }
+            sent += (jint) n;
+        }
+        done += count;
     }
-    return (jint) n;
+    return done;
 }
 
 JNIEXPORT jint JNICALL
 Java_id_or_oo_pr_engine_PtyNative_nativeResize(
     JNIEnv *env UNUSED, jclass cls UNUSED, jint fd, jint rows, jint cols) {
 
+    if (!valid_size(rows, cols)) return -1;
     struct winsize ws;
     memset(&ws, 0, sizeof(ws));
     ws.ws_row = (unsigned short) rows;

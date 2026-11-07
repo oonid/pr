@@ -12,7 +12,7 @@ class PtyNativeTest {
     fun testPtyNativeForkAndRead() {
         val args = arrayOf("/system/bin/echo", "hello pty")
         val envVars = emptyArray<String>()
-        val masterFd = PtyNative.forkPty(args[0], args, envVars, 24, 80)
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(args[0], args, envVars, 24, 80)
         
         assertTrue("masterFd should be > 0, got $masterFd", masterFd > 0)
         
@@ -25,7 +25,6 @@ class PtyNativeTest {
         val output = String(buf, 0, n)
         assertTrue("Output should contain our echoed text, got '$output'", output.contains("hello pty"))
         
-        val pid = PtyNative.getPid()
         assertTrue("PID should be > 0, got $pid", pid > 0)
         
         // Wait for child to exit. The echo command exits almost instantly.

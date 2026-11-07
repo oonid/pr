@@ -15,6 +15,14 @@ class ProotLauncherTest {
     }
 
     @Test
+    fun aCommandKeepsEachArgumentWhole() {
+        assertEquals(
+            listOf("/fake/prefix/bin/pr-cli", "login", "alpine", "--", "touch", "a b"),
+            commandArgs(File("/fake/prefix"), listOf("login", "alpine", "--", "touch", "a b")),
+        )
+    }
+
+    @Test
     fun testBuildEnvVars() {
         val launcher = ProotLauncher(fakeHost)
         

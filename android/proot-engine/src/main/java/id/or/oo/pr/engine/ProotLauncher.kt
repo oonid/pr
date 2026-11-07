@@ -4,6 +4,9 @@ import android.util.Log
 import java.io.File
 import kotlin.concurrent.thread
 
+internal fun commandArgs(prefixDir: File, args: List<String>): List<String> =
+    listOf(File(prefixDir, "bin/pr-cli").absolutePath) + args
+
 class ProotLauncher(private val host: ProotHost) {
 
     companion object {
@@ -41,8 +44,7 @@ class ProotLauncher(private val host: ProotHost) {
 
     /**
      * Start a PTY session with a pre-parsed argument list.
-     * Use this instead of [runCommand] when arguments contain spaces or quotes
-     * that would be mangled by naive string splitting.
+     * The first argument is the program to run.
      */
     fun startCustomSession(
         args: List<String>,
@@ -60,24 +62,12 @@ class ProotLauncher(private val host: ProotHost) {
         return Session(masterFd, pid)
     }
 
+    /** Run pr-cli with [args], each passed to it as one argument. */
     fun runCommand(
-        command: String,
+        args: List<String>,
         rows: Int = 24,
         cols: Int = 80,
-    ): Session? {
-        val prCli = File(prefixDir, "bin/pr-cli")
-        val envVars = buildEnvVars()
-        val args = arrayOf(prCli.absolutePath, *command.split(" ").toTypedArray())
-
-        val (masterFd, pid) = PtyNative.forkPtyWithPid(args[0], args, envVars, rows, cols)
-        if (masterFd < 0) {
-            Log.e(TAG, "forkPty failed for command: $command")
-            return null
-        }
-
-        Log.i(TAG, "PTY command started: $command, masterFd=$masterFd")
-        return Session(masterFd, pid)
-    }
+    ): Session? = startCustomSession(commandArgs(prefixDir, args), rows, cols)
 
     private fun buildEnvVars(): Array<String> {
         val binDir = File(prefixDir, "bin")
@@ -100,6 +90,7 @@ class ProotLauncher(private val host: ProotHost) {
     }
 
     class Session(val masterFd: Int, val pid: Int = -1) {
+        @Volatile
         var closed = false
             private set
 
@@ -133,12 +124,11 @@ class ProotLauncher(private val host: ProotHost) {
             return PtyNative.resize(masterFd, rows, cols)
         }
 
+        /** Close the master; the child gets a hangup, and the reaper collects its exit code. */
+        @Synchronized
         fun close() {
             if (!closed) {
                 closed = true
-                try {
-                    PtyNative.write(masterFd, byteArrayOf(0x04), 0, 1)
-                } catch (_: Exception) {}
                 try {
                     PtyNative.close(masterFd)
                 } catch (_: Exception) {}
