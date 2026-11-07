@@ -417,6 +417,11 @@ void translate_syscall_exit(Tracee *tracee)
 			if (status < 0)
 				break;
 		}
+		else if (old_size >= max_size) {
+			ssize_t full_size = readlink(referer, referee, PATH_MAX - 1);
+			if (full_size >= 0)
+				referee[full_size] = '\0';
+		}
 
 		status = detranslate_path(tracee, referee, referer);
 		if (status < 0)
