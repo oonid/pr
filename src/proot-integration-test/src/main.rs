@@ -167,6 +167,10 @@ const SUITES: &[Suite] = &[
                 name: "/proc/self/exe of a program run by a hard link",
                 run: readlink::test_proc_self_exe_of_a_hard_link,
             },
+            Test {
+                name: "readlink of a hard link with a small buffer",
+                run: readlink::test_readlink_of_a_hard_link_with_a_small_buffer,
+            },
         ],
     },
     Suite {

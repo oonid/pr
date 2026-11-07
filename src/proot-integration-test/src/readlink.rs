@@ -184,3 +184,27 @@ pub fn test_proc_self_exe_of_a_hard_link() -> TestResult {
         Err(format!("expected {}, got {:?}", b, stdout))
     }
 }
+
+pub fn test_readlink_of_a_hard_link_with_a_small_buffer() -> TestResult {
+    let a = "/tmp/pit-hl-small-a";
+    let b = "/tmp/pit-hl-small-b";
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    fs::write(a, b"hardlink").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(a, b).map_err(|e| format!("link: {}", e))?;
+    let path = std::ffi::CString::new(b).expect("path");
+    let mut result = Ok(());
+    for size in [8usize, 16, 80, 120] {
+        let mut buf = vec![0u8; size];
+        let n = unsafe { libc::readlink(path.as_ptr(), buf.as_mut_ptr().cast(), size) };
+        let error = std::io::Error::last_os_error();
+        if n != -1 || error.raw_os_error() != Some(libc::EINVAL) {
+            let got = String::from_utf8_lossy(&buf[..n.max(0) as usize]).into_owned();
+            result = Err(format!("buffer {}: got {} {:?} ({})", size, n, got, error));
+            break;
+        }
+    }
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    result
+}
