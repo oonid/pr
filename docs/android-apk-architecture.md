@@ -532,6 +532,10 @@ Code checking for distro existence (e.g. MainActivity's `isInstalled` check) mus
 
 `InstalledContainers` skips a name with the file and reports it through `unfinished()`; the list shows such a name as "Incomplete" with a Remove button. `DistroOperations` removes a cancelled install only when its marker exists (`isUnfinished`). A cancelled install always leaves the file behind, and a cancel that lands after the install finished leaves the container alone. Another app that checks for installed containers itself should skip names with the file too. Containers installed before the marker existed have no file and count as installed.
 
+#### Image references and digests
+
+`pr-cli install` takes an OCI reference as `name[:tag]` or `name[:tag]@sha256:<64 hex>`. With a digest the tag is only a label and is dropped, and a digest that is not sha256 with 64 hex digits is refused before any request. A manifest fetched by digest is checked against it: the manifest named by a pinned reference, and the manifest picked from an index for the device's architecture, which must match the digest the index lists. A mismatch stops the install. Layers were already checked against their digests.
+
 #### Hard links in images
 
 Android denies `link()` to apps. When `pr-cli` extracts an OCI layer or a plugin tarball in place, it stores each hard link the way proot's `--link2symlink` does: the data once in `<rootfs>/.l2s/.l2s.<name>NNNN.CCCC`, where `CCCC` counts the names, and every name a symlink to the `.l2s.<name>NNNN` symlink beside it. proot shows these to the guest as hard links (link count, one inode, `unlink` of one name), and `/proc/self/exe` names the link a program was run by. A fresh `ubuntu:latest`, whose coreutils is one multi-call binary hard-linked under each command name, takes about 130 MB instead of about 1.2 GB of copies. The symlinks hold absolute host paths, as the ones proot makes at runtime do. A symlink counts as part of a chain only when both of its links stay in that rootfs's `.l2s` directory, so an image cannot point the chain elsewhere. `restore` extracts into a staging directory first and still copies hard links.
