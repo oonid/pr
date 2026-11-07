@@ -13,6 +13,8 @@ Android app that runs Linux distributions via [proot](https://github.com/proot-m
   - Back asks End session / Keep running / Cancel; End sends SIGTERM to every process in the session, gives them up to 10 s to exit, then closes the shell and proot
   - "Keep CPU awake" holds a partial wake lock with the screen off; toggle it from the notification, or from the switch pinned above the list, shown while a session runs and background running is available
   - while Keep CPU awake is on and the app is not exempt from battery optimization, a banner offers the exemption, which guards against vendor battery savers
+  - while something runs with notifications off, a banner explains what is missing; Allow asks for the permission again while Android still prompts, and otherwise opens the app's notification settings
+  - if the foreground service cannot start, a banner names the reason with Retry
   - a session that ends on its own (not through End) while its screen is not visible posts a "session ended (exit N)" notification
   - the Android 12+ phantom-process limit and the Android 13+ Task Manager "Stop" can still end sessions (see [Session lifetime and Back](docs/android-apk-architecture.md#session-lifetime-and-back))
 - Background installs: install, remove and test run under the same foreground service, holding a wake lock until they finish, with Cancel in the notification
@@ -97,7 +99,7 @@ CI runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitT
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-**199 tests in `:session-core`**: session lifetime (`SessionManager` with its sessions and tasks, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`, `Bind`, end policy, signal wait), terminal binds, the factories' constructors as a Java host sees them, End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **36 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
+**204 tests in `:session-core`**: session lifetime (`SessionManager` with its sessions and tasks, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`, `Bind`, end policy, signal wait), terminal binds, the factories' constructors as a Java host sees them, End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **40 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`) and the notification banner's choices (`NotificationAccess`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
 
 ### Host-side (pr-cli unit tests)
 
