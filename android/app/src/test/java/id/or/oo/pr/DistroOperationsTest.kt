@@ -128,6 +128,64 @@ class DistroOperationsTest {
     }
 
     @Test
+    fun anOperationHoldsATaskUntilItFinishes() {
+        val gate = CountDownLatch(1)
+        command.gate = gate
+        val ops = operations()
+
+        assertTrue(ops.test("alpine", "alpine:latest"))
+        eventually { command.calls.isNotEmpty() }
+        assertEquals(listOf("Testing alpine:latest…"), sessions.tasks.value)
+        gate.countDown()
+        ops.awaitFinished()
+
+        eventually { sessions.tasks.value.isEmpty() }
+    }
+
+    @Test
+    fun cancellingTasksFromTheNotificationCancelsTheOperation() {
+        command.gate = CountDownLatch(1)
+        val ops = operations()
+        ops.test("alpine", "alpine:latest")
+        eventually { command.calls.isNotEmpty() }
+
+        sessions.cancelTasks()
+
+        assertTrue(ops.awaitFinished().cancelled)
+        eventually { sessions.tasks.value.isEmpty() }
+    }
+
+    @Test
+    fun anOperationRefusedOrShownWithoutRunningHoldsNoTask() {
+        command.gate = CountDownLatch(1)
+        val ops = operations()
+        ops.test("alpine", "alpine:latest")
+        eventually { command.calls.isNotEmpty() }
+
+        assertFalse(ops.test("debian", "debian:stable"))
+        assertEquals(listOf("Testing alpine:latest…"), sessions.tasks.value)
+        command.gate?.countDown()
+        ops.awaitFinished()
+        eventually { sessions.tasks.value.isEmpty() }
+        assertTrue(ops.dismiss())
+        ops.installCustom("docker.io/library/alpine:latest", "-bad")
+        assertEquals(emptyList<String>(), sessions.tasks.value)
+    }
+
+    @Test
+    fun aNewOperationStartedAsTheLastFinishesKeepsItsTask() {
+        val ops = operations()
+        ops.test("alpine", "alpine:latest")
+        ops.awaitFinished()
+        command.gate = CountDownLatch(1)
+
+        assertTrue(ops.test("debian", "debian:stable"))
+        eventually { command.calls.size == 2 }
+
+        assertEquals(listOf("Testing debian:stable…"), sessions.tasks.value)
+    }
+
+    @Test
     fun aNonZeroExitEndsWithTheExitCode() {
         command.before = listOf("failed to pull")
         command.exitCode = 3

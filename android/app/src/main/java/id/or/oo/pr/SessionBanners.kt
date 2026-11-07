@@ -48,7 +48,7 @@ fun SessionBanners(app: App) {
         val granted = context.canPostNotifications()
         val nowExempt = context.isIgnoringBatteryOptimizations()
         val newlyGranted = (granted && !notificationsGranted[0]) || (nowExempt && !exemptGranted[0])
-        if (newlyGranted && app.sessions.running.value.isNotEmpty()) {
+        if (newlyGranted && (app.sessions.running.value.isNotEmpty() || app.sessions.tasks.value.isNotEmpty())) {
             ContextCompat.startForegroundService(context, Intent(context, SessionService::class.java))
         }
         notificationsGranted[0] = granted

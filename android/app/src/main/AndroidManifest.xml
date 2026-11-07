@@ -41,7 +41,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Linux terminal sessions the user started, kept running in the background" />
+                android:value="Linux terminal sessions, and container installs, removals and tests the user started, kept running in the background" />
         </service>
 
     </application>

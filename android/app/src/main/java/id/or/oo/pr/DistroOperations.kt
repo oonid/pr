@@ -40,6 +40,7 @@ class DistroOperations(
 
     private val lock = Any()
     private var job: Job? = null
+    private var task: SessionManager.Task? = null
     private val _operation = MutableStateFlow<Operation?>(null)
     val operation: StateFlow<Operation?> = _operation
 
@@ -105,11 +106,13 @@ class DistroOperations(
     private fun start(operation: Operation, work: suspend () -> Unit): Boolean = synchronized(lock) {
         val first = "${operation.kind.label} ${operation.displayName}…"
         if (!post(operation.copy(lines = listOf(first)))) return false
+        task = sessions.beginTask(first) { cancel() }
         job = scope.launch { work() }.apply { invokeOnCompletion(::finish) }
         true
     }
 
     private fun finish(cause: Throwable?) {
+        val ended = synchronized(lock) { task.also { task = null } }
         _operation.update {
             val cancelled = cause is CancellationException && it?.exitCode == null
             it?.copy(
@@ -118,6 +121,7 @@ class DistroOperations(
                 cancelled = cancelled,
             )
         }
+        ended?.let(sessions::endTask)
     }
 
     private suspend fun installing(alias: String, args: List<String>) {
