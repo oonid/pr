@@ -234,6 +234,10 @@ fn install_tools(rootfs: &str, pkg_mgr: &str) -> Result<(), String> {
 
     msg_status("Installing tools...");
 
+    run_proot_streaming(rootfs, tools_command(pkg_mgr)?)
+}
+
+fn tools_command(pkg_mgr: &str) -> Result<&'static str, String> {
     let cmd = match pkg_mgr {
         "apk" => {
             // openssh-client provides ssh/scp/ssh-keygen so git can use SSH keys.
@@ -249,42 +253,17 @@ fn install_tools(rootfs: &str, pkg_mgr: &str) -> Result<(), String> {
             // --no-install-recommends: avoids packages whose post-install scripts
             // require a full systemd/desktop environment.
             // --force-unsafe-io: skip dpkg's fsync+rename verification pass.
-            //
-            // openssh-client is installed in a second pass after preparing
-            // the environment to work around two Android proot limitations:
-            //
-            // 1. groupadd lock failure: groupadd uses link() to lock /etc/group.
-            //    Android SELinux (untrusted_app) blocks link() → exit 10.
-            //    Fix: replace groupadd/groupdel with no-op stubs.
-            //
-            // 2. chgrp '_ssh' failure: the postinst runs `chgrp _ssh <file>`
-            //    after groupadd, but since the stub didn't write to /etc/group
-            //    the group lookup fails.
-            //    Fix: manually append _ssh / _sshd to /etc/group and /etc/gshadow
-            //    before the second apt-get so chgrp finds the group.
+            // openssh-client provides ssh/scp/ssh-keygen so git can use SSH keys.
             "export LC_ALL=C LANG=C PERL_BADLANG=0 DEBIAN_FRONTEND=noninteractive && \
              apt-get update -q 2>&1 && \
              apt-get install -y -q \
              -o Dpkg::Options::=--force-unsafe-io \
              --no-install-recommends \
-             vim gcc rustc cargo git 2>&1 && \
-             printf '#!/bin/sh\\nexit 0\\n' > /usr/sbin/groupadd && \
-             chmod +x /usr/sbin/groupadd && \
-             printf '#!/bin/sh\\nexit 0\\n' > /usr/sbin/groupdel && \
-             chmod +x /usr/sbin/groupdel && \
-             grep -q '^_ssh:' /etc/group   || echo '_ssh:x:101:'   >> /etc/group && \
-             grep -q '^_sshd:' /etc/group  || echo '_sshd:x:102:'  >> /etc/group && \
-             grep -q '^_ssh:' /etc/gshadow  || echo '_ssh:!::'  >> /etc/gshadow && \
-             grep -q '^_sshd:' /etc/gshadow || echo '_sshd:!::' >> /etc/gshadow && \
-             apt-get install -y -q \
-             -o Dpkg::Options::=--force-unsafe-io \
-             --no-install-recommends \
-             openssh-client 2>&1"
+             vim gcc rustc cargo git openssh-client 2>&1"
         }
         _ => return Err(format!("unknown package manager: {}", pkg_mgr)),
     };
-
-    run_proot_streaming(rootfs, cmd)
+    Ok(cmd)
 }
 
 const ISOLATED_SUFFIX: &str = "-isolated";
@@ -440,6 +419,15 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apt_tools_leave_groupadd_and_groupdel_alone() {
+        let cmd = tools_command("apt").unwrap();
+        assert!(cmd.contains("openssh-client"));
+        assert!(!cmd.contains("/usr/sbin/groupadd"), "{}", cmd);
+        assert!(!cmd.contains("/usr/sbin/groupdel"), "{}", cmd);
+        assert!(!cmd.contains("/etc/group"), "{}", cmd);
+    }
 
     #[test]
     fn the_rootfs_alias_is_a_symlink_to_the_rootfs_replaced_on_each_run() {
