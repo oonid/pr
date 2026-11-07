@@ -41,6 +41,7 @@
 #include "extension/extension.h"
 #include "tracee/tracee.h"
 #include "tracee/event.h"
+#include "tracee/seccomp.h"
 #include "path/binding.h"
 #include "path/canon.h"
 #include "path/path.h"
@@ -493,11 +494,7 @@ int main(int argc, char *const argv[])
 		goto error;
 	}
 
-	{
-		const char *log_path = "/data/data/id.or.oo.pr/cache/sigsys-log.txt";
-		FILE *f = fopen(log_path, "w");
-		if (f) fclose(f);
-	}
+	trim_sigsys_log();
 
 	/* Start tracing the first tracee and all its children.  */
 	exit(event_loop());
