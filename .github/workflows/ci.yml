@@ -26,8 +26,9 @@ jobs:
         cache: 'gradle'
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: 1.97.1
         targets: aarch64-linux-android
         components: rustfmt, clippy
 
