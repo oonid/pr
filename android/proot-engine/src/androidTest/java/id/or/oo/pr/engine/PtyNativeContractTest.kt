@@ -142,6 +142,40 @@ class PtyNativeContractTest {
     }
 
     @Test
+    fun readAndWriteTouchOnlyTheirSlice() {
+        val (readEnd, writeEnd) = ParcelFileDescriptor.createPipe()
+        try {
+            assertEquals(5, PtyNative.write(writeEnd.fd, "xxABCDEyy".toByteArray(), 2, 5))
+            val buf = "..........".toByteArray()
+            assertEquals(5, PtyNative.read(readEnd.fd, buf, 3, 6))
+            assertEquals("...ABCDE..", String(buf))
+        } finally {
+            readEnd.close()
+            writeEnd.close()
+        }
+    }
+
+    @Test
+    fun aLargeWriteIsWrittenWhole() {
+        val (readEnd, writeEnd) = ParcelFileDescriptor.createPipe()
+        try {
+            val data = ByteArray(40_000) { (it % 251).toByte() }
+            assertEquals(data.size, PtyNative.write(writeEnd.fd, data, 0, data.size))
+            val got = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (got.size() < data.size) {
+                val n = PtyNative.read(readEnd.fd, buf, 0, buf.size)
+                if (n <= 0) break
+                got.write(buf, 0, n)
+            }
+            assertTrue("bytes read back differ", data.contentEquals(got.toByteArray()))
+        } finally {
+            readEnd.close()
+            writeEnd.close()
+        }
+    }
+
+    @Test
     fun theTerminalErasesWholeUtf8Characters() {
         val out = childOutput("stty -a")
         assertTrue("iutf8 is not set: $out", Regex("(^|\\s)iutf8(\\s|$)").containsMatchIn(out))
@@ -173,6 +207,41 @@ class PtyNativeContractTest {
             PtyNative.write(masterFd, input, 0, input.size)
             val out = readUntil(masterFd) { it.contains("END") }
             assertTrue("the erase left part of the character: $out", Regex("<\\s+a\\s+>").containsMatchIn(out))
+        } finally {
+            PtyNative.close(masterFd)
+        }
+    }
+
+    @Test
+    fun closingASessionSendsNothingToTheProgram() {
+        val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val out = java.io.File(cache, "pit-close-${System.nanoTime()}")
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(
+            "/system/bin/sh",
+            arrayOf("sh", "-c", "stty raw -echo; trap '' HUP; dd bs=1 count=1 of=${out.absolutePath} 2>/dev/null"),
+            null, 24, 80)
+        assertTrue("forkPty failed", masterFd >= 0 && pid > 0)
+        Thread.sleep(500)
+        val session = ProotLauncher.Session(masterFd, pid)
+
+        session.close()
+
+        val deadline = System.currentTimeMillis() + 10_000
+        while (session.exitCode == null && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        val received = if (out.exists()) out.length() else 0L
+        out.delete()
+        assertEquals("bytes the program received on close", 0L, received)
+    }
+
+    @Test
+    fun aSizeOutOfRangeIsRefused() {
+        val masterFd = PtyNative.forkPty("/system/bin/sh", arrayOf("sh", "-c", "sleep 2"), null, 24, 80)
+        assertTrue("forkPty failed", masterFd >= 0)
+        try {
+            for ((rows, cols) in listOf(0 to 80, -1 to 80, 70_000 to 80, 24 to 0)) {
+                assertEquals("resize($rows, $cols)", -1, PtyNative.resize(masterFd, rows, cols))
+            }
+            assertEquals(0, PtyNative.resize(masterFd, 30, 100))
         } finally {
             PtyNative.close(masterFd)
         }
