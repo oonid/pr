@@ -1,5 +1,7 @@
 # Standalone proot-distro (Legacy Shell Script)
 
+> Historical record of Phase 2. The shell script was replaced by pr-cli (Rust) and is no longer shipped.
+
 Phase 2 ports the Termux proot-distro shell script to work as a standalone program on Android without any Termux dependency. The script is modified to use static busybox for utilities, static bash for execution, and runtime environment variables instead of build-time templates.
 
 Status: **Complete** (commits `56a0264..9b856ab`)

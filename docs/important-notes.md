@@ -5,7 +5,7 @@ See also:
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (SELinux W^X bypass, seccomp analysis)
 - `docs/rust-port-pr-cli.md` — Replace proot-distro.sh with Rust binary
 - `docs/alpine-linux-support.md` — Alpine Linux investigation and fixes
-- `docs/integration-tests.md` — Integration test suite (55 tests)
+- `docs/integration-tests.md` — Integration test suite (57 tests)
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot
 
 ---
@@ -92,8 +92,8 @@ The forkPty() JNI function forks the app process. The child inherits `untrusted_
 ### Zygote Seccomp Filter (targetSdk 35, aarch64)
 
 Even at targetSdk=35, the Android zygote installs a BPF seccomp filter on the app process
-(`Seccomp: 2, Seccomp_filters: 1`). This filter persists even with `PROOT_NO_SECCOMP=1`
-(which only disables proot's own seccomp filter, not the zygote's).
+(`Seccomp: 2, Seccomp_filters: 1`). This filter cannot be removed. proot never installs a seccomp filter of its own, so
+`PROOT_NO_SECCOMP=1` only silences proot's hint about seccomp (`cli.c`).
 
 **Blocked syscalls** (trigger SIGSYS from zygote filter):
 
@@ -102,7 +102,7 @@ Even at targetSdk=35, the Android zygote installs a BPF seccomp filter on the ap
 | `getcwd` | 17 | `PR_getcwd` | Read `tracee->fs->cwd`, write to tracee buffer, return length |
 | `chdir` | 49 | `PR_chdir` | Translate path, update `tracee->fs->cwd`, return 0 |
 | `fchdir` | 50 | `PR_fchdir` | Resolve dirfd to path, update cwd, return 0 |
-| `linkat` | 37 | `PR_linkat` | Try `renameat()`, fallback to copy+delete on EXDEV/EACCES |
+| `linkat` | 37 | `PR_linkat` | Return `-EPERM`, as for a hard link the kernel refuses; link2symlink handles hard links before this point |
 | `renameat2` | 276 | `PR_renameat2` | Downgrade to `renameat` (drop flags) and restart |
 | `faccessat2` | 439 | `PR_faccessat2` | Downgrade to `faccessat` (drop flags) and restart |
 | `faccessat` | 48 | `PR_faccessat` | Return 0 (noop) |

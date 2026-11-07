@@ -1,5 +1,7 @@
 # targetSdk 35 Compatibility (Google Play Store Compatibility)
 
+> Historical record (2026-04). The PROOT_LOADER mechanism it describes is still how pr runs at targetSdk 35; later changes: `cargo build` works since the T8 fixes (docs/rust-toolchain-support.md), and the native libraries live in `android/proot-engine/src/main/jniLibs`.
+
 Date: 2026-04-16
 Status: Complete
 Device: Samsung SM-XXXXX (Galaxy X), Android 16 (SDK 36), aarch64

@@ -1,5 +1,7 @@
 # Session Core Library Implementation Plan
 
+> Historical implementation plan; where it differs, docs/design/session-core.md and the code are authoritative.
+
 > Execute this plan task by task, with a review after each. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move pr's generic background-session code out of `:app` into an Android library, `:session-core`, so another app can run PRoot sessions in the background without copying code, and add a headless command session; pr behaves exactly as before.
@@ -2147,14 +2149,14 @@ android/session-core/       # Android library: background sessions, command sess
 Before:
 
 ~~~markdown
-| [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
+| [`docs/design/proot-engine-library.md`](../design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
 ~~~
 
 After:
 
 ~~~markdown
-| [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
-| [`docs/design/session-core.md`](docs/design/session-core.md) | Design of the `:session-core` library and command sessions |
+| [`docs/design/proot-engine-library.md`](../design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
+| [`docs/design/session-core.md`](../design/session-core.md) | Design of the `:session-core` library and command sessions |
 ~~~
 
 - [ ] **Step 6: Update `AGENTS.md`**

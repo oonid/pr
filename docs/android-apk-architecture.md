@@ -23,7 +23,8 @@ android/                                    # Android project root
 │       │   ├── java/id/or/oo/pr/
 │       │   │   ├── App.kt                  # Application: ProotHost and SessionHost; runs PrBootstrap; owns SessionManager and DistroOperations
 │       │   │   ├── MainActivity.kt         # Compose: container list, output sheet of DistroOperations
-│       │   │   ├── SessionBanners.kt       # Keep CPU awake switch, battery and background-error banners
+│       │   │   ├── SessionBanners.kt       # Keep CPU awake switch; battery, notifications-off and background-error (Retry) banners
+│       │   │   ├── NotificationAccess.kt   # When the notifications banner shows, and whether Allow asks again or opens settings
 │       │   │   ├── InstalledContainers.kt  # Which aliases are installed (OCI rootfs or legacy dir, without an install marker)
 │       │   │   ├── DistroOperations.kt     # App-scoped install/remove/test runner
 │       │   │   └── TerminalActivity.kt     # Compose: a view onto a ManagedSession
@@ -109,11 +110,13 @@ An app that uses it:
 
 A command session's shell contract:
 
-- the command runs as `/bin/sh -l -c '<command>'` with cwd `/`, HOME from passwd, and an
-  environment built from PATH, `/etc/environment`, TERM, LANG and TMPDIR;
+- the command runs as `/bin/sh -l -c '<command>'` with cwd `/`, HOME and USER from passwd, and
+  a clean environment: PATH, the container's `/etc/environment`, TERM, COLORTERM, LANG, TMPDIR,
+  the Android variables pr-cli has, and proot's own `PROOT_*` settings;
 - set any working directory or environment inside the command, for example
   `cd /srv && exec env K=V server`;
-- busybox `sh` execs the last simple command, so a lone server command replaces the shell.
+- busybox `sh` (Alpine) execs the last simple command, so a lone server command replaces the
+  shell; with dash or bash, start it with `exec`.
 
 A command session's sink contract:
 
@@ -191,9 +194,9 @@ anything else:
 - the preferences file `pr_prefs`, where `PrBootstrap` keeps its bootstrap state;
 - notification id 1, the running notification, and the channel ids `sessions_running` and
   `sessions_ended`;
-- the prefix paths `$prefix/scripts`, `$prefix/bin/bash`, `$prefix/bin/pr-test` and
-  `$prefix/bin/proot-distro`, which `NativeLinks` deletes on every launch as names left by older
-  pr builds.
+- the prefix paths `$prefix/scripts`, `$prefix/bin/bash`, `$prefix/bin/pr-test`,
+  `$prefix/bin/proot-distro`, `$prefix/bin/busybox`, `bootstrap.sh` and the old busybox applet
+  links, which `NativeLinks` deletes on every launch as names left by older pr builds.
 
 ---
 
@@ -379,7 +382,7 @@ Total APK size: ~15MB (debug, uncompressed assets).
 |---|---|---|
 | AGP | 8.7.3 | Android build |
 | Kotlin | 2.1.0 | Language |
-| Compose BOM | 2024.12.01 | Compose version management |
+| Compose BOM | 2025.05.00 | Compose version management |
 | Material3 | (BOM) | UI components |
 | activity-compose | 1.9.3 | Compose in activities |
 | lifecycle-runtime-ktx | 2.8.7 | Lifecycle |
@@ -418,7 +421,7 @@ termlib was chosen over Termux's terminal view or Rin's Rust engine because:
 - Terminal resize via `ioctl(TIOCSWINSZ)`
 - Real-time character-by-character output
 
-The 183-line `ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()`.
+`ptyjni.c` provides proper PTY via `/dev/ptmx` + `fork()` + `exec()`.
 
 ### Why run install/remove in PTY sessions?
 
@@ -517,7 +520,7 @@ Two installation methods produce rootfs in different locations:
 | Catalog name | `pr-cli install debian` (the app's image for that name, see `catalog.rs`) | `var/lib/pr/containers/<alias>/rootfs/` |
 | Plugin file | `pr-cli install <alias>` with `etc/pr/<alias>.sh` present | `var/lib/pr/installed-rootfs/<alias>/` |
 
-Code checking for distro existence (e.g. MainActivity's `isInstalled` check) must use the path corresponding to the installation method. The OCI path is used by `pr-cli`; the legacy path is used by the shell-script era (Phase 2). If both methods are in use, check both paths.
+Code checking for distro existence (`InstalledContainers` in the app) must check both paths: `pr-cli` uses the OCI path for images and catalog names, and the legacy path for plugin installs.
 
 #### Unfinished installs
 

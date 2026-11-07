@@ -22,8 +22,11 @@ Environment:
   NDK_PATH         Path to Android NDK (overrides --ndk-path)
   PROOT_NDK_DIR    Directory for NDK download (default: build/ndk/)
 
-Output: build/out/<arch>/proot
+Output: build/out/<arch>/proot and build/out/<arch>/loader
 ```
+
+Copy them to `android/proot-engine/src/main/jniLibs/<abi>/libproot.so` and `libproot-loader.so`
+by hand; the script does not.
 
 ### Quick start
 

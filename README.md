@@ -144,18 +144,7 @@ docs/                       # Technical documentation
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [`docs/important-notes.md`](docs/important-notes.md) | Critical constraints, seccomp handlers, caveats — read first |
-| [`docs/android-apk-architecture.md`](docs/android-apk-architecture.md) | Android app architecture; "Session lifetime and Back" covers sessions and list operations |
-| [`docs/design/background-sessions.md`](docs/design/background-sessions.md) | Design of background sessions, End, Cancel and the operation runner |
-| [`docs/design/proot-engine-library.md`](docs/design/proot-engine-library.md) | Architecture of the extracted `:proot-engine` library |
-| [`docs/design/session-core.md`](docs/design/session-core.md) | Design of the `:session-core` library and command sessions |
-| [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (35 sections) |
-| [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
-| [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |
-| [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (57 tests) |
-| [`docs/plans/`](docs/plans/) | Historical implementation plans; the design docs and the code are authoritative |
+The full index is [`docs/README.md`](docs/README.md). Start with [`docs/important-notes.md`](docs/important-notes.md) for the constraints and caveats, and [`docs/android-apk-architecture.md`](docs/android-apk-architecture.md) for how the app, its sessions and its list operations fit together.
 
 ## Credits
 

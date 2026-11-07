@@ -1,5 +1,7 @@
 # Pr-cli (Rust Port)
 
+> Historical exploration from before Phase 6. The Rust port (approach A) was chosen and is `src/pr-cli`; section C's "Current Plan" label is from that time.
+
 Date: 2026-04-14
 Status: Exploration (pre-Phase 6)
 Trigger: mksh R59 on Android lacks associative arrays; bash cannot be exec'd from `untrusted_app` SELinux context.

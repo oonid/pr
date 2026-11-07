@@ -1,5 +1,7 @@
 # Proot Binary Build
 
+> Historical record of Phase 1. The build script is `scripts/build.sh` (see docs/scripts.md), and its output is copied to `android/proot-engine/src/main/jniLibs` by hand.
+
 Phase 1 produces a statically-linked proot binary for Android arm64, built from the termux-proot fork with additional patches for NDK cross-compilation and Android Bionic compatibility.
 
 Status: **Complete** (commits `91537c8..a8b8c85`)
