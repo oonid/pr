@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
 pub const INSTALL_MARKER_SUFFIX: &str = ".pr-cli-installing";
-pub const BEING_INSTALLED: &str = "being installed";
+pub const BUSY: &str = "busy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PendingInstall {
@@ -48,12 +48,12 @@ impl InstallMarker {
             }
             std::thread::sleep(CLAIM_RETRY_DELAY);
         }
-        Err(BEING_INSTALLED.to_string())
+        Err(BUSY.to_string())
     }
 
     pub fn claim_reporting(parent: &Path, name: &str) -> Result<Self, String> {
         Self::claim(parent, name).inspect_err(|e| {
-            if e == BEING_INSTALLED {
+            if e == BUSY {
                 crate::shared::msg_error(&format!(
                     "another pr-cli process is changing '{}'; try again once it finishes.",
                     name
@@ -239,7 +239,7 @@ mod tests {
 
         let second = InstallMarker::claim(&parent, "box");
 
-        assert_eq!(second.err(), Some(BEING_INSTALLED.to_string()));
+        assert_eq!(second.err(), Some(BUSY.to_string()));
         assert_eq!(
             pending_install(&parent, "box"),
             Some(PendingInstall::InProgress)
