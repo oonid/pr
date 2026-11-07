@@ -153,6 +153,55 @@ class SessionManagerTest {
     }
 
     @Test
+    fun retryingAfterAFailedStartStartsTheForegroundAgain() {
+        foregroundFails = true
+        open("alpine")
+        foregroundFails = false
+
+        manager.retryBackground()
+
+        assertEquals(listOf("start"), foregroundCalls)
+        assertNull(manager.backgroundError.value)
+    }
+
+    @Test
+    fun retryingAfterAFailedStartForATaskStartsTheForegroundAgain() {
+        foregroundFails = true
+        manager.beginTask("Installing alpine…") {}
+        foregroundFails = false
+
+        manager.retryBackground()
+
+        assertEquals(listOf("start"), foregroundCalls)
+    }
+
+    @Test
+    fun retryingWhenTheForegroundIsRunningDoesNothing() {
+        open("alpine")
+
+        manager.retryBackground()
+
+        assertEquals(listOf("start"), foregroundCalls)
+    }
+
+    @Test
+    fun retryingWithNothingRunningDoesNothing() {
+        manager.retryBackground()
+
+        assertEquals(emptyList<String>(), foregroundCalls)
+    }
+
+    @Test
+    fun aRetryThatFailsAgainKeepsTheNewError() {
+        foregroundFails = true
+        open("alpine")
+
+        manager.retryBackground()
+
+        assertEquals("not allowed", manager.backgroundError.value)
+    }
+
+    @Test
     fun settingKeepCpuAwakeWithNoSessionsLeavesItOff() {
         manager.setKeepCpuAwake(true)
         assertEquals(false, manager.keepCpuAwake.value)

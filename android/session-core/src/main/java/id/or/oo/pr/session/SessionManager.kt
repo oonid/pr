@@ -105,6 +105,13 @@ class SessionManager(
         return OpenResult.Opened(session)
     }
 
+    fun retryBackground() {
+        synchronized(lock) {
+            val busy = _running.value.isNotEmpty() || runningTasks.isNotEmpty()
+            if (busy && _backgroundError.value != null) startForeground()
+        }
+    }
+
     fun foregroundStarted() {
         synchronized(lock) { _backgroundError.value = null }
     }

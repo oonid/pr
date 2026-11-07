@@ -241,9 +241,9 @@ class TerminalActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
         ) return
-        val prefs = getSharedPreferences("pr_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("notifications_asked", false)) return
-        prefs.edit().putBoolean("notifications_asked", true).apply()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(NOTIFICATIONS_ASKED, false)) return
+        prefs.edit().putBoolean(NOTIFICATIONS_ASKED, true).apply()
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
