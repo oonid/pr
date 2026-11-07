@@ -127,10 +127,10 @@ pub fn command_login(
         if let Some((_, _, state)) = pending_container(distro_name) {
             msg_error(&match state {
                 crate::install_marker::PendingInstall::InProgress => {
-                    format!("'{}' is still being installed.", distro_name)
+                    format!("another pr-cli process is changing '{}'; try again once it finishes.", distro_name)
                 }
                 crate::install_marker::PendingInstall::Interrupted => format!(
-                    "the install of '{}' did not finish. Install it again, or remove it with: pr-cli remove {}",
+                    "an install or removal of '{}' did not finish. Install it again, or remove it with: pr-cli remove {}",
                     distro_name, distro_name
                 ),
             });

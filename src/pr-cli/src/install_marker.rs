@@ -55,7 +55,7 @@ impl InstallMarker {
         Self::claim(parent, name).inspect_err(|e| {
             if e == BEING_INSTALLED {
                 crate::shared::msg_error(&format!(
-                    "'{}' is being installed by another pr-cli process.",
+                    "another pr-cli process is changing '{}'; try again once it finishes.",
                     name
                 ));
             }
