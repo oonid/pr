@@ -11,8 +11,8 @@ android {
         applicationId = "id.or.oo.pr"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = providers.gradleProperty("prVersionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("prVersionName").orNull ?: "1.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -25,8 +25,19 @@ android {
         }
     }
 
+    val releaseStoreFile = providers.gradleProperty("prReleaseStoreFile").orNull
+    val releaseSigning = releaseStoreFile?.let {
+        signingConfigs.create("release") {
+            storeFile = file(it)
+            storePassword = providers.gradleProperty("prReleaseStorePassword").get()
+            keyAlias = providers.gradleProperty("prReleaseKeyAlias").get()
+            keyPassword = providers.gradleProperty("prReleaseKeyPassword").get()
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = releaseSigning
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
