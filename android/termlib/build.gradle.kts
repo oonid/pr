@@ -29,6 +29,9 @@ android {
         getByName("main").kotlin.directories.add(
             file("../../vendor/termlib/lib/src/main/java").path,
         )
+        getByName("main").res.directories.add(
+            file("../../vendor/termlib/lib/src/main/res").path,
+        )
     }
 
     externalNativeBuild {
@@ -62,10 +65,11 @@ kotlin {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("org.slf4j:slf4j-api:2.0.20")
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
 
-    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
