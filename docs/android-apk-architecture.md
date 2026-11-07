@@ -398,6 +398,7 @@ ConnectBot's termlib (`vendor/termlib`) is integrated as a **thin Gradle wrapper
 - The wrapper `build.gradle.kts` builds with our AGP 9.4.1 + Kotlin 2.4.21 and our Compose BOM
 - Sources and resources pulled via `sourceSets { getByName("main") }`: `kotlin.directories` adds `vendor/termlib/lib/src/main/java`, `res.directories` adds `vendor/termlib/lib/src/main/res` (the selection menu strings)
 - Pinned at termlib 0.3.14; it logs through `slf4j-api`, and with no SLF4J provider in the app those logs are dropped
+- `consumerProguardFiles` points at `vendor/termlib/lib/consumer-rules.pro`, so the app's R8 keeps the classes and methods termlib's native code looks up by name (`TerminalCallbacks`, `TermRect`, `CursorPosition`, `TerminalProperty`)
 - CMake path points to `vendor/termlib/lib/src/main/cpp/CMakeLists.txt` (builds libvterm + `jni_cb_term.so`)
 - Namespace: `org.connectbot.terminal` (matches upstream)
 - This approach keeps the submodule pristine while building with our compatible toolchain
