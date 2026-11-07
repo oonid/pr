@@ -2,6 +2,7 @@ package id.or.oo.pr.engine
 
 import android.os.ParcelFileDescriptor
 import android.system.Os
+import android.system.OsConstants
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -137,6 +138,43 @@ class PtyNativeContractTest {
         } finally {
             readEnd.close()
             writeEnd.close()
+        }
+    }
+
+    @Test
+    fun theTerminalErasesWholeUtf8Characters() {
+        val out = childOutput("stty -a")
+        assertTrue("iutf8 is not set: $out", Regex("(^|\\s)iutf8(\\s|$)").containsMatchIn(out))
+    }
+
+    @Test
+    fun theMasterIsClosedOnExec() {
+        val masterFd = PtyNative.forkPty("/system/bin/sh", arrayOf("sh", "-c", "sleep 1"), null, 24, 80)
+        assertTrue("forkPty failed", masterFd >= 0)
+        val pfd = ParcelFileDescriptor.adoptFd(masterFd)
+        try {
+            val flags = Os.fcntlInt(pfd.fileDescriptor, OsConstants.F_GETFD, 0)
+            assertTrue("FD_CLOEXEC is not set", flags and OsConstants.FD_CLOEXEC != 0)
+        } finally {
+            PtyNative.close(pfd.detachFd())
+        }
+    }
+
+    @Test
+    fun backspaceErasesAWholeUtf8Character() {
+        val masterFd = PtyNative.forkPty(
+            "/system/bin/sh",
+            arrayOf("sh", "-c", "read x; printf '<%s>' \"\$x\" | od -An -c; echo END"),
+            null, 24, 80)
+        assertTrue("forkPty failed", masterFd >= 0)
+        try {
+            Thread.sleep(300)
+            val input = "\u00e9".toByteArray(Charsets.UTF_8) + byteArrayOf(0x7f) + "a\n".toByteArray()
+            PtyNative.write(masterFd, input, 0, input.size)
+            val out = readUntil(masterFd) { it.contains("END") }
+            assertTrue("the erase left part of the character: $out", Regex("<\\s+a\\s+>").containsMatchIn(out))
+        } finally {
+            PtyNative.close(masterFd)
         }
     }
 }
