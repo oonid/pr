@@ -12,9 +12,9 @@ The T4.x sections below are the Phase 4 record; for current behaviour see "Sessi
 
 ```
 android/                                    # Android project root
-├── build.gradle.kts                        # Root: AGP 8.7.3, Kotlin 2.1.0, Compose plugin
+├── build.gradle.kts                        # Root: AGP 9.4.1, Kotlin 2.4.21, Compose plugin
 ├── settings.gradle.kts                     # Includes :app, :proot-engine, :session-core and :termlib modules
-├── gradle.properties                       # Kotlin test fixtures on (for :session-core)
+├── gradle.properties                       # AndroidX, Gradle JVM memory
 ├── app/
 │   ├── build.gradle.kts                    # App module: Compose BOM 2025.05.00, :proot-engine, :session-core and termlib deps
 │   └── src/
@@ -47,7 +47,7 @@ android/                                    # Android project root
 ├── termlib/
 │   ├── build.gradle.kts                    # Thin wrapper: pulls source from vendor/termlib submodule
 │   └── proguard-rules.pro                  # Empty (required by Android library plugin)
-└── gradle/wrapper/                         # Gradle 8.11.1 wrapper
+└── gradle/wrapper/                         # Gradle 9.8.2 wrapper
 vendor/termlib/                             # Git submodule: ConnectBot terminal library
 ```
 
@@ -380,8 +380,9 @@ Total APK size: ~15MB (debug, uncompressed assets).
 
 | Dependency | Version | Purpose |
 |---|---|---|
-| AGP | 8.7.3 | Android build |
-| Kotlin | 2.1.0 | Language |
+| AGP | 9.4.1 | Android build, with its built-in Kotlin support |
+| Kotlin | 2.4.21 | Language |
+| Gradle | 9.8.2 | Build tool (wrapper) |
 | Compose BOM | 2025.05.00 | Compose version management |
 | Material3 | (BOM) | UI components |
 | activity-compose | 1.9.3 | Compose in activities |
@@ -394,8 +395,8 @@ Total APK size: ~15MB (debug, uncompressed assets).
 
 ConnectBot's termlib (`vendor/termlib`) is integrated as a **thin Gradle wrapper module** (`android/termlib/`):
 
-- The wrapper `build.gradle.kts` uses our AGP 8.7.3 + Kotlin 2.1.0 (termlib upstream uses AGP 9.1.0 + Kotlin 2.3.20)
-- Sources pulled via `sourceSets["main"].java.srcDirs(file("../../vendor/termlib/lib/src/main/java"))`
+- The wrapper `build.gradle.kts` builds with our AGP 9.4.1 + Kotlin 2.4.21 and our Compose BOM
+- Sources pulled via `sourceSets { getByName("main").kotlin.directories.add(...) }` from `vendor/termlib/lib/src/main/java`
 - CMake path points to `vendor/termlib/lib/src/main/cpp/CMakeLists.txt` (builds libvterm + `jni_cb_term.so`)
 - Namespace: `org.connectbot.terminal` (matches upstream)
 - This approach keeps the submodule pristine while building with our compatible toolchain
