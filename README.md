@@ -89,6 +89,12 @@ cp src/pr-cli/target/aarch64-linux-android/release/pr-cli \
 (cd android && ./gradlew assembleDebug)
 ```
 
+### Release build
+
+`./gradlew :app:assembleRelease` shrinks the app with R8. termlib's keep rules come from `vendor/termlib/lib/consumer-rules.pro`; its native code looks up `TerminalCallbacks` and other classes by name, and the app crashes when a terminal opens without them.
+
+The version comes from `-PprVersionCode=<n>` and `-PprVersionName=<name>` (default 1 and 1.0.0). To sign, set `prReleaseStoreFile`, `prReleaseStorePassword`, `prReleaseKeyAlias` and `prReleaseKeyPassword` as Gradle properties, in `~/.gradle/gradle.properties` or as `ORG_GRADLE_PROJECT_<name>` environment variables; without them the build gives `app-release-unsigned.apk`. Keep the keystore and its passwords out of the repository.
+
 ## Testing
 
 CI runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds the APK.
