@@ -6,6 +6,30 @@ import org.junit.Test
 class SessionNotificationsTest {
 
     @Test
+    fun aTaskAloneIsTheTitle() {
+        assertEquals("Installing debian:stable…", runningTitle(emptyList(), emptyList(), listOf("Installing debian:stable…")))
+        assertEquals("", runningText(emptyList(), emptyList(), keepAwake = false, exempt = true, tasks = listOf("Installing debian:stable…")))
+    }
+
+    @Test
+    fun twoTasksAloneAreCountedAndNamed() {
+        assertEquals("2 tasks running", runningTitle(emptyList(), emptyList(), listOf("Installing a…", "Testing b…")))
+        assertEquals(
+            "Installing a… · Testing b…",
+            runningText(emptyList(), emptyList(), keepAwake = false, exempt = true, tasks = listOf("Installing a…", "Testing b…")),
+        )
+    }
+
+    @Test
+    fun aTaskBesideASessionIsNamedInTheText() {
+        assertEquals("1 session running", runningTitle(listOf("alpine"), emptyList(), listOf("Installing debian…")))
+        assertEquals(
+            "Installing debian… · alpine",
+            runningText(listOf("alpine"), emptyList(), keepAwake = false, exempt = true, tasks = listOf("Installing debian…")),
+        )
+    }
+
+    @Test
     fun theRunningTitleCountsSessions() {
         assertEquals("1 session running", runningTitle(listOf("a")))
         assertEquals("2 sessions running", runningTitle(listOf("a", "b")))

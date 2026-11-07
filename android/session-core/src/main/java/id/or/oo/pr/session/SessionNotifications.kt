@@ -29,10 +29,11 @@ object SessionNotifications {
         keepAwake: Boolean,
         exempt: Boolean,
         ending: List<String> = emptyList(),
+        tasks: List<String> = emptyList(),
     ): Notification {
-        val title = runningTitle(aliases, ending)
-        val details = runningText(aliases, ending, keepAwake, exempt)
-        return NotificationCompat.Builder(context, CHANNEL_RUNNING)
+        val title = runningTitle(aliases, ending, tasks)
+        val details = runningText(aliases, ending, keepAwake, exempt, tasks)
+        val builder = NotificationCompat.Builder(context, CHANNEL_RUNNING)
             .setSmallIcon(context.sessionHost.notificationIcon)
             .setContentTitle(title)
             .setContentText(details)
@@ -40,13 +41,18 @@ object SessionNotifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openList(context))
-            .addAction(0, "End all", serviceAction(context, SessionActions.endAll(context.packageName)))
-            .addAction(
-                0,
-                if (keepAwake) "Let CPU sleep" else "Keep CPU awake",
-                serviceAction(context, SessionActions.toggleWake(context.packageName)),
-            )
-            .build()
+        if (tasks.isNotEmpty()) {
+            builder.addAction(0, "Cancel", serviceAction(context, SessionActions.cancelTasks(context.packageName)))
+        }
+        if (aliases.isNotEmpty()) {
+            builder.addAction(0, "End all", serviceAction(context, SessionActions.endAll(context.packageName)))
+                .addAction(
+                    0,
+                    if (keepAwake) "Let CPU sleep" else "Keep CPU awake",
+                    serviceAction(context, SessionActions.toggleWake(context.packageName)),
+                )
+        }
+        return builder.build()
     }
 
     fun ended(context: Context, alias: String, exitCode: Int?): Notification {
@@ -75,9 +81,16 @@ object SessionNotifications {
     )
 }
 
-internal fun runningText(aliases: List<String>, ending: List<String>, keepAwake: Boolean, exempt: Boolean): String {
+internal fun runningText(
+    aliases: List<String>,
+    ending: List<String>,
+    keepAwake: Boolean,
+    exempt: Boolean,
+    tasks: List<String> = emptyList(),
+): String {
     val (stopping, active) = aliases.partition { it in ending }
     return buildList {
+        if (aliases.isNotEmpty() || tasks.size > 1) addAll(tasks)
         if (active.isNotEmpty()) add(active.joinToString(", "))
         if (stopping.isNotEmpty()) add("Stopping ${stopping.joinToString(", ")}…")
         if (keepAwake) add("CPU kept awake")
@@ -85,10 +98,16 @@ internal fun runningText(aliases: List<String>, ending: List<String>, keepAwake:
     }.joinToString(" · ")
 }
 
-internal fun runningTitle(aliases: List<String>, ending: List<String> = emptyList()): String {
+internal fun runningTitle(
+    aliases: List<String>,
+    ending: List<String> = emptyList(),
+    tasks: List<String> = emptyList(),
+): String {
     val stopping = aliases.count { it in ending }
     val active = aliases.size - stopping
     return when {
+        aliases.isEmpty() && tasks.size == 1 -> tasks.single()
+        aliases.isEmpty() && tasks.size > 1 -> "${tasks.size} tasks running"
         aliases.isEmpty() -> "Stopping…"
         active == 0 -> if (stopping == 1) "Stopping 1 session…" else "Stopping $stopping sessions…"
         active == 1 -> "1 session running"

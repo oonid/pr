@@ -4,4 +4,6 @@ object SessionActions {
     fun endAll(packageName: String): String = "$packageName.action.END_ALL"
 
     fun toggleWake(packageName: String): String = "$packageName.action.TOGGLE_WAKE"
+
+    fun cancelTasks(packageName: String): String = "$packageName.action.CANCEL_TASKS"
 }
