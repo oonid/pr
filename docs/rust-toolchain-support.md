@@ -227,6 +227,16 @@ ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
 printf("/proc/self/exe = %s\n", buf);
 ```
 
+Part A did not cover a program run through a link2symlink chain, for example a hard link
+that link2symlink stored as `.l2s.` files or a multi-call binary hard-linked in an image.
+Canonicalization follows the whole chain, so `host_exe_before_l2s` is already the `.l2s.`
+final file, and Part B's readlink rule then turns `/proc/self/exe` into EINVAL. Ubuntu's
+uutils coreutils aborts on that. `canonicalize()` now records the guest path of the last
+name whose symlink points into a `.l2s.` chain (`l2s_link_path`, reset by each
+`translate_path()`), and `translate_execve_enter()` uses it for `/proc/self/exe`, which is
+what the kernel reports for a real hard link. Test: readlink suite, "/proc/self/exe of a
+program run by a hard link".
+
 ### Files Changed (T8.2, both parts)
 
 | File | Change |
