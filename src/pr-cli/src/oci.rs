@@ -290,12 +290,200 @@ pub fn blob_url(registry_base: &str, repository: &str, digest: &str) -> String {
     format!("{}/v2/{}/blobs/{}", base, repo, digest)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Retry {
+    pub attempts: u32,
+    pub first_delay: std::time::Duration,
+    pub stall: std::time::Duration,
+}
+
+pub const NETWORK_RETRY: Retry = Retry {
+    attempts: 4,
+    first_delay: std::time::Duration::from_secs(2),
+    stall: std::time::Duration::from_secs(60),
+};
+
 pub async fn download_blob(
     url: &str,
     destination: &Path,
     expected_digest: &str,
 ) -> Result<(), String> {
     download_blob_with_bearer(url, destination, expected_digest, None).await
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct BearerTokenResponse {
+    token: Option<String>,
+    access_token: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct BearerChallenge {
+    pub(crate) realm: String,
+    pub(crate) service: Option<String>,
+    pub(crate) scope: Option<String>,
+}
+
+pub(crate) async fn fetch_bearer_token(
+    client: &reqwest::Client,
+    challenge: &BearerChallenge,
+) -> Result<String, String> {
+    let mut request = client.get(&challenge.realm);
+    if let Some(service) = challenge.service.as_deref() {
+        request = request.query(&[("service", service)]);
+    }
+    if let Some(scope) = challenge.scope.as_deref() {
+        request = request.query(&[("scope", scope)]);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("fetch OCI auth token: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "fetch OCI auth token failed with HTTP {}",
+            response.status()
+        ));
+    }
+    let body: BearerTokenResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("decode OCI auth token response: {}", e))?;
+    body.token
+        .or(body.access_token)
+        .ok_or_else(|| "OCI auth token response missing token field".to_string())
+}
+
+pub(crate) fn parse_bearer_challenge(header: &str) -> Option<BearerChallenge> {
+    let header = header.trim();
+    let rest = header.strip_prefix("Bearer ")?;
+    let mut realm = None;
+    let mut service = None;
+    let mut scope = None;
+
+    for part in rest.split(',') {
+        let (key, value) = part.trim().split_once('=')?;
+        let value = value.trim().trim_matches('"').to_string();
+        match key.trim() {
+            "realm" => realm = Some(value),
+            "service" => service = Some(value),
+            "scope" => scope = Some(value),
+            _ => {}
+        }
+    }
+
+    Some(BearerChallenge {
+        realm: realm?,
+        service,
+        scope,
+    })
+}
+
+pub(crate) enum Failure {
+    Retry(String),
+    Fatal(String),
+    Unauthorized(String),
+}
+
+pub(crate) fn status_failure(url: &str, response: &reqwest::Response) -> Failure {
+    let status = response.status();
+    let message = format!("request {} failed with HTTP {}", url, status);
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        match response
+            .headers()
+            .get(reqwest::header::WWW_AUTHENTICATE)
+            .and_then(|h| h.to_str().ok())
+        {
+            Some(challenge) => Failure::Unauthorized(challenge.to_string()),
+            None => Failure::Fatal(message),
+        }
+    } else if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        Failure::Retry(message)
+    } else {
+        Failure::Fatal(message)
+    }
+}
+
+pub(crate) fn http_client(
+    user_agent: &str,
+    stall: std::time::Duration,
+) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent(user_agent)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(stall)
+        .build()
+        .map_err(|e| format!("create HTTP client: {}", e))
+}
+
+pub async fn download_layer(
+    url: &str,
+    destination: &Path,
+    expected_digest: &str,
+    token: &mut Option<String>,
+    retry: Retry,
+) -> Result<(), String> {
+    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("create blob dir {}: {}", parent.display(), e))?;
+    }
+    let client = http_client("pr-cli-oci/0.1", retry.stall)?;
+    let partial = partial_blob_path(destination);
+    let mut delay = retry.first_delay;
+    let mut attempt = 1;
+    let mut refreshed = false;
+
+    let result = loop {
+        match download_to_partial(&client, url, &partial, &expected_sha256, token.as_deref()).await
+        {
+            Ok(()) => {
+                break fs::rename(&partial, destination).map_err(|e| {
+                    format!(
+                        "rename blob {} to {}: {}",
+                        partial.display(),
+                        destination.display(),
+                        e
+                    )
+                });
+            }
+            Err(Failure::Unauthorized(header)) if !refreshed => {
+                refreshed = true;
+                let Some(challenge) = parse_bearer_challenge(&header) else {
+                    break Err(format!(
+                        "download blob {}: unsupported challenge {}",
+                        url, header
+                    ));
+                };
+                match fetch_bearer_token(&client, &challenge).await {
+                    Ok(fresh) => *token = Some(fresh),
+                    Err(e) => break Err(e),
+                }
+            }
+            Err(Failure::Unauthorized(_)) => {
+                break Err(format!("download blob {} failed with HTTP 401", url));
+            }
+            Err(Failure::Fatal(e)) => break Err(e),
+            Err(Failure::Retry(e)) if attempt < retry.attempts => {
+                crate::shared::msg_status(&format!(
+                    "{}; retry {}/{} in {}s",
+                    e,
+                    attempt,
+                    retry.attempts - 1,
+                    delay.as_secs()
+                ));
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(std::time::Duration::from_secs(60));
+                attempt += 1;
+            }
+            Err(Failure::Retry(e)) => break Err(e),
+        }
+    };
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&partial).await;
+    }
+    result
 }
 
 pub fn partial_blob_path(destination: &Path) -> PathBuf {
@@ -323,44 +511,24 @@ pub async fn download_blob_with_bearer(
     expected_digest: &str,
     bearer_token: Option<&str>,
 ) -> Result<(), String> {
-    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create blob dir {}: {}", parent.display(), e))?;
-    }
-
-    let partial = partial_blob_path(destination);
-    let downloaded = download_to_partial(url, &partial, &expected_sha256, bearer_token)
-        .await
-        .and_then(|()| {
-            fs::rename(&partial, destination).map_err(|e| {
-                format!(
-                    "rename blob {} to {}: {}",
-                    partial.display(),
-                    destination.display(),
-                    e
-                )
-            })
-        });
-    if downloaded.is_err() {
-        let _ = tokio::fs::remove_file(&partial).await;
-    }
-    downloaded
+    let mut token = bearer_token.map(str::to_string);
+    let once = Retry {
+        attempts: 1,
+        ..NETWORK_RETRY
+    };
+    download_layer(url, destination, expected_digest, &mut token, once).await
 }
 
 async fn download_to_partial(
+    client: &reqwest::Client,
     url: &str,
     partial: &Path,
     expected_sha256: &str,
     bearer_token: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    let client = reqwest::Client::builder()
-        .user_agent("pr-cli-oci/0.1")
-        .build()
-        .map_err(|e| format!("create reqwest client: {}", e))?;
     let mut request = client.get(url);
     if let Some(token) = bearer_token {
         request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token));
@@ -368,39 +536,34 @@ async fn download_to_partial(
     let response = request
         .send()
         .await
-        .map_err(|e| format!("download blob {}: {}", url, e))?;
+        .map_err(|e| Failure::Retry(format!("download blob {}: {}", url, e)))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "download blob {} failed with HTTP {}",
-            url,
-            response.status()
-        ));
+        return Err(status_failure(url, &response));
     }
 
+    let fatal = |what: &str, e: std::io::Error| {
+        Failure::Fatal(format!("{} blob {}: {}", what, partial.display(), e))
+    };
     let mut file = tokio::fs::File::create(partial)
         .await
-        .map_err(|e| format!("create blob file {}: {}", partial.display(), e))?;
+        .map_err(|e| fatal("create", e))?;
     let mut hasher = sha2::Sha256::new();
     let mut stream = response.bytes_stream();
     while let Some(next) = stream.next().await {
-        let chunk = next.map_err(|e| format!("read blob stream {}: {}", url, e))?;
+        let chunk = next.map_err(|e| Failure::Retry(format!("read blob stream {}: {}", url, e)))?;
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
-            .map_err(|e| format!("write blob {}: {}", partial.display(), e))?;
+            .map_err(|e| fatal("write", e))?;
     }
-    file.flush()
-        .await
-        .map_err(|e| format!("flush blob {}: {}", partial.display(), e))?;
-    file.sync_all()
-        .await
-        .map_err(|e| format!("sync blob {}: {}", partial.display(), e))?;
+    file.flush().await.map_err(|e| fatal("flush", e))?;
+    file.sync_all().await.map_err(|e| fatal("sync", e))?;
     let actual_sha256 = hex_lower(&hasher.finalize());
     if actual_sha256 != expected_sha256 {
-        return Err(format!(
+        return Err(Failure::Retry(format!(
             "digest mismatch for {}: expected sha256:{}, got sha256:{}",
             url, expected_sha256, actual_sha256
-        ));
+        )));
     }
     Ok(())
 }
@@ -1779,6 +1942,142 @@ mod tests {
 
     fn test_body() -> Vec<u8> {
         (0..64 * 1024).map(|i| (i % 251) as u8).collect()
+    }
+
+    fn quick(attempts: u32) -> Retry {
+        Retry {
+            attempts,
+            first_delay: std::time::Duration::from_millis(10),
+            stall: std::time::Duration::from_millis(300),
+        }
+    }
+
+    fn fetch_layer(
+        base: &str,
+        body: &[u8],
+        token: &mut Option<String>,
+        retry: Retry,
+    ) -> (Result<(), String>, Vec<u8>) {
+        let tmp = unique_tmp_dir("oci-layer-retry");
+        let blob = tmp.join("blob");
+        let url = format!("{}/v2/test/blobs/x", base);
+        let result = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(download_layer(
+                &url,
+                &blob,
+                &sha256_digest(body),
+                token,
+                retry,
+            ));
+        let bytes = fs::read(&blob).unwrap_or_default();
+        let _ = fs::remove_dir_all(&tmp);
+        (result, bytes)
+    }
+
+    #[test]
+    fn a_layer_download_retries_a_server_error() {
+        use crate::test_http::*;
+        let body = test_body();
+        let server = serve(vec![status("503 Service Unavailable"), ok(&body)]);
+
+        let (result, bytes) = fetch_layer(&server.base, &body, &mut None, quick(3));
+
+        result.expect("second attempt succeeds");
+        assert_eq!(bytes, body);
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    #[test]
+    fn a_missing_layer_is_not_retried() {
+        use crate::test_http::*;
+        let body = test_body();
+        let server = serve(vec![status("404 Not Found"), ok(&body)]);
+
+        let (result, _) = fetch_layer(&server.base, &body, &mut None, quick(3));
+
+        assert!(result.is_err());
+        assert_eq!(server.requests().len(), 1);
+    }
+
+    #[test]
+    fn a_layer_download_gives_up_after_its_attempts() {
+        use crate::test_http::*;
+        let body = test_body();
+        let server = serve(vec![
+            status("500 Internal Server Error"),
+            status("500 Internal Server Error"),
+            status("500 Internal Server Error"),
+            ok(&body),
+        ]);
+
+        let (result, _) = fetch_layer(&server.base, &body, &mut None, quick(3));
+
+        assert!(result.is_err());
+        assert_eq!(server.requests().len(), 3);
+    }
+
+    #[test]
+    fn a_stalled_layer_download_is_retried() {
+        use crate::test_http::*;
+        let body = test_body();
+        let server = serve(vec![
+            Step::Stall {
+                body: body.clone(),
+                sent: body.len() / 2,
+                pause: std::time::Duration::from_secs(3),
+            },
+            ok(&body),
+        ]);
+        let started = std::time::Instant::now();
+
+        let (result, bytes) = fetch_layer(&server.base, &body, &mut None, quick(3));
+
+        result.expect("retry after the stall succeeds");
+        assert_eq!(bytes, body);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_layer_download_refreshes_an_expired_token() {
+        use crate::test_http::*;
+        let body = test_body();
+        let auth = serve(vec![ok(br#"{"token":"fresh"}"#)]);
+        let challenge = format!(
+            "Bearer realm=\"{}/token\",service=\"registry\",scope=\"repository:test:pull\"",
+            auth.base
+        );
+        let registry = serve(vec![
+            Step::Reply {
+                status: "401 Unauthorized",
+                headers: vec![("WWW-Authenticate".to_string(), challenge)],
+                body: Vec::new(),
+            },
+            ok(&body),
+        ]);
+        let mut token = Some("stale".to_string());
+
+        let (result, bytes) = fetch_layer(&registry.base, &body, &mut token, quick(3));
+
+        result.expect("download with a fresh token");
+        assert_eq!(bytes, body);
+        assert_eq!(token.as_deref(), Some("fresh"));
+        let auths: Vec<Option<String>> = registry
+            .requests()
+            .into_iter()
+            .map(|r| r.authorization)
+            .collect();
+        assert_eq!(
+            auths,
+            vec![
+                Some("Bearer stale".to_string()),
+                Some("Bearer fresh".to_string())
+            ]
+        );
     }
 
     #[test]

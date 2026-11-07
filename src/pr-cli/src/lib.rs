@@ -11,6 +11,8 @@ pub mod oci;
 pub mod plugin;
 pub mod shared;
 pub mod source_parse;
+#[cfg(test)]
+pub(crate) mod test_http;
 
 pub use install_model::{InstallDescriptor, InstallSource, InstallSourceKind};
 pub use oci::{
