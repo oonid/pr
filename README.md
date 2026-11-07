@@ -115,7 +115,7 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 (cd src/pr-cli && cargo test)
 ```
 
-**324 tests**: 295 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
+**325 tests**: 296 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
 
 ### Instrumented (requires connected Android device)
 
