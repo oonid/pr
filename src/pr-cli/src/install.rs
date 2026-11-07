@@ -717,7 +717,8 @@ fn extract_tarball(
     let root = Path::new(dest);
     fs::create_dir_all(root).map_err(|e| format!("create {}: {}", dest, e))?;
     let file = fs::File::open(archive_path).map_err(|e| format!("open archive: {}", e))?;
-    let decompressor = xz2::read::XzDecoder::new(file);
+    let decompressor = crate::oci::decompressed_reader(file)
+        .map_err(|e| format!("read archive {}: {}", archive_path, e))?;
     let mut archive = tar::Archive::new(decompressor);
 
     for entry in archive
@@ -1585,7 +1586,9 @@ pub fn command_install(
 
         if let Err(e) = extract_tarball(&archive_path, &rootfs, 1, &["dev"]) {
             msg_error(&format!("Extracting the rootfs failed: {}", e));
-            let _ = fs::remove_file(&archive_path);
+            if tarball_sha256.is_empty() {
+                let _ = fs::remove_file(&archive_path);
+            }
             return Err(e);
         }
 
@@ -1652,8 +1655,20 @@ mod tests {
 
     fn write_raw_xz_tar(path: &Path, entries: &[RawEntry]) {
         let file = fs::File::create(path).expect("create archive");
-        let encoder = xz2::write::XzEncoder::new(file, 1);
-        let mut builder = tar::Builder::new(encoder);
+        let mut encoder = xz2::write::XzEncoder::new(file, 1);
+        encoder.write_all(&raw_tar(entries)).expect("write xz");
+        encoder.finish().expect("finish xz");
+    }
+
+    fn write_raw_gz_tar(path: &Path, entries: &[RawEntry]) {
+        let file = fs::File::create(path).expect("create archive");
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        encoder.write_all(&raw_tar(entries)).expect("write gz");
+        encoder.finish().expect("finish gz");
+    }
+
+    fn raw_tar(entries: &[RawEntry]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
         for entry in entries {
             let mut header = tar::Header::new_gnu();
             let (name, link, kind, data, mode): (&str, Option<&str>, _, &[u8], u32) = match entry {
@@ -1674,11 +1689,7 @@ mod tests {
             header.set_cksum();
             builder.append(&header, data).expect("append entry");
         }
-        builder
-            .into_inner()
-            .expect("finish tar")
-            .finish()
-            .expect("finish xz");
+        builder.into_inner().expect("finish tar")
     }
 
     #[test]
@@ -2969,6 +2980,96 @@ mod tests {
 
     fn cached(cache: &Path, url: &str) -> PathBuf {
         PathBuf::from(archive_cache_path(&cache.to_string_lossy(), url))
+    }
+
+    const GOOD_ROOTFS: &[RawEntry<'static>] = &[
+        RawEntry::Dir("top/"),
+        RawEntry::Dir("top/etc/"),
+        RawEntry::File("top/etc/os-release", b"ID=test\n", 0o644),
+        RawEntry::Dir("top/bin/"),
+        RawEntry::File("top/bin/sh", b"\x7fELFsh", 0o755),
+    ];
+
+    #[test]
+    fn an_aliased_tarball_install_lands_under_the_alias() {
+        with_test_prefix("pr-cli-install-alias-tarball", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+
+            command_install(
+                "testdistro",
+                Some("tdcopy"),
+                Some("https://example.invalid/good.tar.xz"),
+                None,
+            )
+            .expect("install under the alias");
+
+            assert!(prefix
+                .join("var/lib/pr/installed-rootfs/tdcopy/etc/os-release")
+                .exists());
+            assert!(prefix.join("etc/pr/tdcopy.override.sh").exists());
+        });
+    }
+
+    #[test]
+    fn an_aliased_tarball_install_of_a_catalog_name_lands_under_the_alias() {
+        with_test_prefix("pr-cli-install-alias-catalog", GOOD_PLUGIN, |prefix| {
+            seed_good_archive(prefix);
+
+            command_install(
+                "debian",
+                Some("deb2"),
+                Some("https://example.invalid/good.tar.xz"),
+                None,
+            )
+            .expect("install under the alias");
+
+            assert!(prefix
+                .join("var/lib/pr/installed-rootfs/deb2/etc/os-release")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn a_gzip_tarball_installs() {
+        let plugin =
+            "DISTRO_NAME=\"Test\"\nTARBALL_URL_x86_64=\"https://example.invalid/good.tar.gz\"\n";
+        with_test_prefix("pr-cli-install-gzip", plugin, |prefix| {
+            let cache = prefix.join("var/lib/pr/dlcache");
+            fs::create_dir_all(&cache).expect("create cache");
+            write_raw_gz_tar(
+                &cached(&cache, "https://example.invalid/good.tar.gz"),
+                GOOD_ROOTFS,
+            );
+
+            command_install("testdistro", None, None, None).expect("install from gzip");
+
+            assert!(prefix
+                .join("var/lib/pr/installed-rootfs/testdistro/etc/os-release")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn a_failed_extraction_keeps_an_archive_that_passed_its_checksum() {
+        let plugin =
+            "DISTRO_NAME=\"Test\"\nTARBALL_URL_x86_64=\"https://example.invalid/broken.tar.xz\"\n";
+        with_test_prefix("pr-cli-install-verified-broken", plugin, |prefix| {
+            let cache = prefix.join("var/lib/pr/dlcache");
+            fs::create_dir_all(&cache).expect("create cache");
+            let archive = cached(&cache, "https://example.invalid/broken.tar.xz");
+            fs::write(&archive, b"not an archive").expect("seed archive");
+            let sum = format!("{:x}", Sha256::digest(b"not an archive"));
+
+            let result = command_install(
+                "testdistro",
+                None,
+                Some("https://example.invalid/broken.tar.xz"),
+                Some(&sum),
+            );
+
+            assert!(result.is_err());
+            assert!(archive.exists(), "a verified archive is kept");
+        });
     }
 
     fn seed_good_archive(prefix: &Path) {
