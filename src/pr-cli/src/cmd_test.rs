@@ -296,12 +296,30 @@ fn binary_suite(suite: &str) -> (&str, bool) {
     }
 }
 
-fn run_test_binary(rootfs: &str, suite: &str) -> Result<TapResult, String> {
+fn rootfs_alias(dir: &Path, distro: &str, rootfs: &str) -> Result<String, String> {
+    let alias = dir.join(format!("pit-rootfs-{}", distro));
+    let _ = fs::remove_file(&alias);
+    std::os::unix::fs::symlink(rootfs, &alias)
+        .map_err(|e| format!("link {}: {}", alias.display(), e))?;
+    Ok(alias.to_string_lossy().into_owned())
+}
+
+fn run_test_binary(
+    rootfs: &str,
+    suite: &str,
+    alias_dir: &Path,
+    distro: &str,
+) -> Result<TapResult, String> {
     msg_status(&format!("Running test suite: {}...", suite));
 
     let (name, isolated) = binary_suite(suite);
     let cmd = format!("{} {} 2>&1", PIT_BIN, name);
-    let output = run_proot_command(rootfs, &cmd, isolated)?;
+    let output = if isolated {
+        let alias = rootfs_alias(alias_dir, distro, rootfs)?;
+        run_proot_command(&alias, &cmd, true)?
+    } else {
+        run_proot_command(rootfs, &cmd, false)?
+    };
 
     let result = parse_tap(&output);
     Ok(result)
@@ -384,7 +402,7 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
     let mut all_failures: Vec<String> = Vec::new();
 
     for suite_name in &target_suites {
-        match run_test_binary(&rootfs, suite_name) {
+        match run_test_binary(&rootfs, suite_name, Path::new(&cache_dir), distro) {
             Ok(result) => {
                 total_passed += result.passed;
                 total_failed += result.failed;
@@ -422,6 +440,23 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rootfs_alias_is_a_symlink_to_the_rootfs_replaced_on_each_run() {
+        let tmp = unique_temp_dir("pr-cli-rootfs-alias");
+        let first = tmp.join("first");
+        let second = tmp.join("second");
+        fs::create_dir_all(&first).expect("first rootfs");
+        fs::create_dir_all(&second).expect("second rootfs");
+
+        let alias = rootfs_alias(&tmp, "box", first.to_str().unwrap()).expect("alias");
+        let again = rootfs_alias(&tmp, "box", second.to_str().unwrap()).expect("alias again");
+
+        assert_eq!(alias, again);
+        assert_eq!(fs::read_link(&again).expect("read alias"), second);
+        assert_ne!(Path::new(&again), second.as_path());
+        let _ = fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn an_isolated_suite_runs_the_binary_suite_of_its_name_under_isolation() {
