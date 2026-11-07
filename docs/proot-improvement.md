@@ -228,6 +228,8 @@ The `default:` case in the SIGSYS handler differentiates between syscalls:
 | `PR_statx` handling | Delegates to `handle_statx_syscall()` from `tracee/statx.c` |
 | `PR_ioctl` FICLONE fix | Changes EACCES to EOPNOTSUPP for FICLONE ioctl (from termux) |
 | `PR_readlink`/`PR_readlinkat` `.l2s.` hiding | After `detranslate_path()`, applies `substitute_binding()` to replace detranslated path with host-side binding path for absolute paths, then returns EINVAL if the result's basename starts with `L2S_PREFIX` (`.l2s.`, so it holds whether L2S files live in `PROOT_L2S_DIR` or beside the original) — makes link2symlink's fake symlinks invisible to `readlink()`, preserving original hard-link semantics |
+| Truncated `readlink` result | When the kernel's result fills the caller's buffer, re-reads the whole target from the host before `detranslate_path()` and the `.l2s.` check, then truncates; a truncated host path could otherwise detranslate to a short guest path the caller takes as complete |
+| Aliased rootfs in symlink targets | `detranslate_path()`: an absolute symlink target outside the root gets its parent resolved with `realpath()`, and is mapped back if that lands in the root. On Android the app directory has two paths (`/data/user/0/<package>`, `/data/data/<package>`); proot canonicalizes the rootfs to one while link2symlink chains (pr-cli's and proot's own, from `PROOT_L2S_DIR`) store the other, so with `--isolated` they did not resolve |
 
 ### From termux
 - Negative result debug logging (first 50 calls)

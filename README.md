@@ -104,7 +104,7 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 (cd src/pr-cli && cargo test)
 ```
 
-**292 tests**: 263 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
+**293 tests**: 264 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
 
 ### Instrumented (requires connected Android device)
 
@@ -122,7 +122,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-In the app, **Test** in an installed container's menu runs the same suite. **56 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot
+In the app, **Test** in an installed container's menu runs the same suite. **57 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot; Test also runs readlink again under isolation, 66 results in all
 
 ## Project structure
 
@@ -149,7 +149,7 @@ docs/                       # Technical documentation
 | [`docs/proot-improvement.md`](docs/proot-improvement.md) | Our proot fork vs upstream and Termux (35 sections) |
 | [`docs/targetsdk35-compatibility.md`](docs/targetsdk35-compatibility.md) | How targetSdk 35 works (PROOT_LOADER mechanism) |
 | [`docs/rust-toolchain-support.md`](docs/rust-toolchain-support.md) | vfork/CLONE_VM fix, link2symlink readlink fix |
-| [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (56 tests) |
+| [`docs/integration-tests.md`](docs/integration-tests.md) | Integration test suite (57 tests) |
 | [`docs/plans/`](docs/plans/) | Historical implementation plans; the design docs and the code are authoritative |
 
 ## Credits
