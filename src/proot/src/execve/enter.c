@@ -641,9 +641,14 @@ int translate_execve_enter(Tracee *tracee)
 	talloc_unlink(tracee, tracee->host_exe);
 	tracee->host_exe = talloc_strdup(tracee, host_path);
 
-	strcpy(new_exe, tracee->host_exe_before_l2s[0] != '\0'
-		? tracee->host_exe_before_l2s : host_path);
-	status = detranslate_path(tracee, new_exe, NULL);
+	if (tracee->l2s_link_path[0] != '\0') {
+		strcpy(new_exe, tracee->l2s_link_path);
+		status = 0;
+	} else {
+		strcpy(new_exe, tracee->host_exe_before_l2s[0] != '\0'
+			? tracee->host_exe_before_l2s : host_path);
+		status = detranslate_path(tracee, new_exe, NULL);
+	}
 	if (status >= 0) {
 		talloc_unlink(tracee, tracee->new_exe);
 		tracee->new_exe = talloc_strdup(tracee, new_exe);

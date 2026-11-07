@@ -321,6 +321,9 @@ int translate_path(Tracee *tracee, char result[PATH_MAX], int dir_fd,
 	char guest_path[PATH_MAX];
 	int status;
 
+	if (tracee != NULL)
+		tracee->l2s_link_path[0] = '\0';
+
 	/* Use "/" as the base if it is an absolute guest path. */
 	if (user_path[0] == '/') {
 		strcpy(result, "/");

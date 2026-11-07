@@ -157,3 +157,30 @@ pub fn test_proc_fd_of_hard_link() -> TestResult {
     let _ = fs::remove_file(b);
     result
 }
+
+pub const PRINT_EXE: &str = "--print-exe";
+
+pub fn test_proc_self_exe_of_a_hard_link() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+    let a = "/tmp/pit-exe-a";
+    let b = "/tmp/pit-exe-b";
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {}", e))?;
+    fs::copy(&exe, a).map_err(|e| format!("copy: {}", e))?;
+    fs::set_permissions(a, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("chmod: {}", e))?;
+    fs::hard_link(a, b).map_err(|e| format!("link: {}", e))?;
+    let out = std::process::Command::new(b)
+        .arg(PRINT_EXE)
+        .output()
+        .map_err(|e| format!("run {}: {}", b, e));
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    let stdout = String::from_utf8_lossy(&out?.stdout).trim().to_string();
+    if stdout == b {
+        Ok(())
+    } else {
+        Err(format!("expected {}, got {:?}", b, stdout))
+    }
+}
