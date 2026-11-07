@@ -114,6 +114,68 @@ fn refresh_resolv_conf(rootfs: &Path) {
     }
 }
 
+fn environment_entries(content: &str) -> Vec<(String, String)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line);
+            let (key, value) = line.split_once('=')?;
+            let mut chars = key.chars();
+            let first = chars.next()?;
+            let valid = (first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+            valid.then(|| (key.to_string(), unquote(value).to_string()))
+        })
+        .collect()
+}
+
+fn unquote(value: &str) -> &str {
+    ['"', '\'']
+        .iter()
+        .find_map(|q| value.strip_prefix(*q)?.strip_suffix(*q))
+        .unwrap_or(value)
+}
+
+fn guest_command(extra_args: &[String]) -> Vec<String> {
+    let mut cmd_args = vec!["/bin/sh".to_string(), "-l".to_string()];
+    match extra_args {
+        [] => {}
+        [command] => cmd_args.extend(["-c".to_string(), command.clone()]),
+        words => {
+            let quoted: Vec<String> = words
+                .iter()
+                .map(|word| format!("'{}'", word.replace('\'', "'\\''")))
+                .collect();
+            cmd_args.extend(["-c".to_string(), quoted.join(" ")]);
+        }
+    }
+    cmd_args
+}
+
+fn login_process_env(
+    inherited: impl Iterator<Item = (String, String)>,
+    runtime: Vec<(String, String)>,
+    guest: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = Vec::new();
+    let proot_settings = inherited.filter(|(k, _)| k.starts_with("PROOT_"));
+    for (key, value) in proot_settings.chain(runtime).chain(guest) {
+        env.retain(|(k, _)| *k != key);
+        env.push((key, value));
+    }
+    env
+}
+
+fn login_command(proot: &Path, args: &[String], env: Vec<(String, String)>) -> Command {
+    let mut cmd = Command::new(proot);
+    cmd.arg0("proot");
+    cmd.env_clear();
+    cmd.envs(env);
+    cmd.args(args);
+    cmd
+}
+
 pub fn command_login(
     distro_name: &str,
     user: &str,
@@ -180,32 +242,19 @@ pub fn command_login(
         }
     }
 
-    // Read /etc/environment from rootfs
     let env_file = format!("{}/etc/environment", rootfs);
     if let Ok(content) = fs::read_to_string(&env_file) {
-        for line in content.lines() {
-            if line.contains('=') && !line.is_empty() {
-                let clean = line.trim_matches('\'').trim_matches('"');
-                if clean.contains('=')
-                    && !login_env
-                        .iter()
-                        .any(|e| e.split('=').next() == clean.split('=').next())
-                {
-                    login_env.push(clean.to_string());
-                }
+        for (key, value) in environment_entries(&content) {
+            if !login_env
+                .iter()
+                .any(|e| e.split('=').next() == Some(key.as_str()))
+            {
+                login_env.push(format!("{}={}", key, value));
             }
         }
     }
 
-    // Build command
-    let mut cmd_args: Vec<String> = Vec::new();
-    cmd_args.push("/bin/sh".to_string());
-    cmd_args.push("-l".to_string());
-
-    if !extra_args.is_empty() {
-        cmd_args.push("-c".to_string());
-        cmd_args.push(extra_args.join(" "));
-    }
+    let cmd_args = guest_command(extra_args);
 
     // The proot binary
     let proot = get_native_proot();
@@ -235,17 +284,15 @@ pub fn command_login(
     child_env.push(("LANG".to_string(), "en_US.UTF-8".to_string()));
     child_env.push(("TMPDIR".to_string(), "/tmp".to_string()));
 
-    let mut cmd = Command::new(&proot);
-    cmd.arg0("proot");
-
-    for (k, v) in &build_proot_runtime_env() {
-        cmd.env(k, v);
-    }
-    for (k, v) in &child_env {
-        cmd.env(k, v);
-    }
-
-    cmd.args(&full_args);
+    let runtime_env: Vec<(String, String)> = build_proot_runtime_env()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    let mut cmd = login_command(
+        Path::new(&proot),
+        &full_args,
+        login_process_env(std::env::vars(), runtime_env, child_env),
+    );
 
     let err = cmd.exec();
 
@@ -268,6 +315,90 @@ mod tests {
             .expect("time went backwards")
             .as_nanos();
         std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos))
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_login_without_a_command_starts_a_login_shell() {
+        assert_eq!(guest_command(&[]), strings(&["/bin/sh", "-l"]));
+    }
+
+    #[test]
+    fn a_single_command_runs_as_a_shell_command() {
+        assert_eq!(
+            guest_command(&strings(&["cd /root && exec hermes gateway run"])),
+            strings(&["/bin/sh", "-l", "-c", "cd /root && exec hermes gateway run"])
+        );
+    }
+
+    #[test]
+    fn several_arguments_reach_the_program_as_separate_words() {
+        assert_eq!(
+            guest_command(&strings(&["touch", "a b", "it's", "$HOME;x"])),
+            strings(&["/bin/sh", "-l", "-c", "'touch' 'a b' 'it'\\''s' '$HOME;x'"])
+        );
+    }
+
+    #[test]
+    fn environment_values_lose_matching_quotes() {
+        let content = "PATH=\"/usr/bin:/bin\"\nLANG='C.UTF-8'\n# NOTE=comment\n\nexport EDITOR=vi\nNOEQUALS\nBAD KEY=x\nEMPTY=\nMIXED=\"a'\n";
+        let expected: Vec<(String, String)> = [
+            ("PATH", "/usr/bin:/bin"),
+            ("LANG", "C.UTF-8"),
+            ("EDITOR", "vi"),
+            ("EMPTY", ""),
+            ("MIXED", "\"a'"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        assert_eq!(environment_entries(content), expected);
+    }
+
+    #[test]
+    fn the_guest_gets_only_proot_settings_from_the_app_environment() {
+        let inherited = [
+            ("APP_PREFIX", "/data/user/0/app/files/usr"),
+            ("HOME", "/data/user/0/app/files/home"),
+            ("PROOT_VERBOSE", "1"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        let env = login_process_env(
+            inherited,
+            vec![("PROOT_TMP_DIR".to_string(), "/cache".to_string())],
+            vec![("HOME".to_string(), "/root".to_string())],
+        );
+        let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(!keys.contains(&"APP_PREFIX"), "{:?}", env);
+        assert!(env.contains(&("PROOT_VERBOSE".to_string(), "1".to_string())));
+        assert!(env.contains(&("PROOT_TMP_DIR".to_string(), "/cache".to_string())));
+        assert_eq!(
+            env.iter().filter(|(k, _)| k == "HOME").count(),
+            1,
+            "{:?}",
+            env
+        );
+        assert!(env.contains(&("HOME".to_string(), "/root".to_string())));
+    }
+
+    #[test]
+    fn the_login_process_starts_with_only_the_given_environment() {
+        let _guard = env_lock().lock().expect("lock env");
+        std::env::set_var("PR_CLI_TEST_LEAK", "leaked");
+        let output = login_command(
+            Path::new("/usr/bin/env"),
+            &[],
+            vec![("ONLY".to_string(), "this".to_string())],
+        )
+        .output()
+        .expect("run env");
+        std::env::remove_var("PR_CLI_TEST_LEAK");
+        let printed = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(printed.trim(), "ONLY=this");
     }
 
     #[test]
