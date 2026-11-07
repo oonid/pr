@@ -5,18 +5,21 @@ Android app that runs Linux distributions via [proot](https://github.com/proot-m
 ## What it does
 
 - Install and run Linux distributions on any Android device: the list offers Alpine, Debian, Fedora and Ubuntu, and the custom-image card installs any OCI image, with Manjaro, openSUSE and Rocky Linux one tap away under **Images** (see [Supported distributions](#supported-distributions))
-- Native OCI container image support (`docker.io/library/...`), with a layer cache that is verified before reuse
+- Native OCI container image support (`docker.io/library/...`, by tag or pinned as `name[:tag]@sha256:<digest>`): manifests and layers are checked against their digests, and the layer cache is verified before reuse
+- Hard links in an image are stored once, the way proot's link2symlink stores them, instead of as copies: a fresh Ubuntu container takes about 130 MB instead of 1.2 GB
+- Downloads cope with slow and flaky networks: a stall timeout instead of a limit on the whole transfer, retries with a growing delay, a renewed registry token for long pulls, and archives that enter the cache only when complete
 - Background sessions: a session keeps running after its screen closes, for example a long-running agent or server, under a `specialUse` foreground service with an ongoing notification (End all, Keep CPU awake)
-- Background installs: install, remove and test run under the same foreground service, holding a wake lock until they finish, with Cancel in the notification
   - the notification counts the running sessions and names a session being ended as "Stopping <name>…" until it exits
   - Back asks End session / Keep running / Cancel; End sends SIGTERM to every process in the session, gives them up to 10 s to exit, then closes the shell and proot
   - "Keep CPU awake" holds a partial wake lock with the screen off; toggle it from the notification, or from the switch pinned above the list, shown while a session runs and background running is available
   - while Keep CPU awake is on and the app is not exempt from battery optimization, a banner offers the exemption, which guards against vendor battery savers
   - a session that ends on its own (not through End) while its screen is not visible posts a "session ended (exit N)" notification
   - the Android 12+ phantom-process limit and the Android 13+ Task Manager "Stop" can still end sessions (see [Session lifetime and Back](docs/android-apk-architecture.md#session-lifetime-and-back))
+- Background installs: install, remove and test run under the same foreground service, holding a wake lock until they finish, with Cancel in the notification
 - Install, remove and test containers from the list, with live output
   - Cancel stops `pr-cli` and everything it started; a cancelled install whose alias is known (every list install, and a custom install given an alias) removes its partial container, while a custom install without an alias leaves it for you to remove
   - Remove ends the container's running session first
+  - an install or remove that is killed partway leaves the name marked as unfinished: the list shows it as "Incomplete" with a Remove button, and `pr-cli` will not log into it (see [Unfinished installs](docs/android-apk-architecture.md#unfinished-installs))
   - sessions and operations survive rotation and dark-mode changes
 - Full package manager support: `apk`, `apt-get`
 - Compile and run C, Rust, and other programs inside the guest
@@ -38,7 +41,7 @@ On the command line, `pr-cli install <alias>` installs the same images under the
 
 The project consists of three layers:
 - **Patched proot** (C) — Handles Android-specific seccomp filters, SELinux, and W^X restrictions.
-- **pr-cli** (Rust) — High-performance, zero-copy CLI that replaces the original `proot-distro.sh` bash script. Supports native OCI extraction and robust quoting.
+- **pr-cli** (Rust) — High-performance, zero-copy CLI that replaces the original `proot-distro.sh` bash script. Supports native OCI extraction and robust quoting: `pr-cli login <distro> -- <args>` runs one argument as a shell command and several as a program with its arguments, in a clean environment.
 - **Android APK / Library** (Kotlin + Compose) — The `:proot-engine` exposes a clean Kotlin API (`ProotHost`, `ProotLauncher`), while `:app` provides a Jetpack Compose terminal UI with soft-keyboard resize support, an app-wide session manager that keeps sessions running under a foreground service, and an app-scoped runner for install, remove and test.
 
 ### Android compatibility
