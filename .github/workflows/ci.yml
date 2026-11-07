@@ -31,11 +31,15 @@ jobs:
         targets: aarch64-linux-android
         components: rustfmt, clippy
 
+    - name: Install NDK r27c
+      run: |
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018"
+        echo "PR_NDK=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
     - name: Configure Cargo for NDK
       run: |
-        # Replace hardcoded local NDK path with GitHub Runner's NDK path
-        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$ANDROID_NDK_LATEST_HOME|g" src/pr-cli/.cargo/config.toml
-        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$ANDROID_NDK_LATEST_HOME|g" src/proot-integration-test/.cargo/config.toml
+        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$PR_NDK|g" src/pr-cli/.cargo/config.toml
+        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$PR_NDK|g" src/proot-integration-test/.cargo/config.toml
 
     - name: Run Cargo Format (pr-cli)
       run: |
@@ -53,6 +57,16 @@ jobs:
         cd src/proot-integration-test
         cargo build --target aarch64-linux-android --release
 
+    - name: Run Cargo Clippy (proot-integration-test)
+      run: |
+        cd src/proot-integration-test
+        cargo clippy --target aarch64-linux-android --release -- -D warnings
+
+    - name: Run Cargo Clippy (pr-cli)
+      run: |
+        cd src/pr-cli
+        cargo clippy --all-targets -- -D warnings
+
     - name: Run Cargo Test (pr-cli)
       run: |
         cd src/pr-cli
@@ -60,7 +74,7 @@ jobs:
 
     - name: Build Proot C Binaries
       run: |
-        ./scripts/build.sh --arch=arm64 --ndk-path=$ANDROID_NDK_LATEST_HOME
+        ./scripts/build.sh --arch=arm64 --ndk-path=$PR_NDK
 
     - name: Build Rust CLI (pr-cli)
       run: |
