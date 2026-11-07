@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <termios.h>
 #include <errno.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -21,7 +22,7 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 static int open_ptm(void) {
-    int fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
+    int fd = open("/dev/ptmx", O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (fd < 0) {
         LOGE("open /dev/ptmx: %s", strerror(errno));
         return -1;
@@ -37,6 +38,13 @@ static int setup_slave(int ptm_fd) {
     if (unlockpt(ptm_fd) < 0) {
         LOGE("unlockpt: %s", strerror(errno));
         return -1;
+    }
+    struct termios tios;
+    if (tcgetattr(ptm_fd, &tios) == 0) {
+        tios.c_iflag |= IUTF8;
+        if (tcsetattr(ptm_fd, TCSANOW, &tios) < 0) LOGE("tcsetattr: %s", strerror(errno));
+    } else {
+        LOGE("tcgetattr: %s", strerror(errno));
     }
     return 0;
 }
