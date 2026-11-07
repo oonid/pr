@@ -39,7 +39,7 @@ android/                                    # Android project root
 ├── proot-engine/                           # Android library: ProotHost, ProotLauncher, PtyNative
 │   ├── build.gradle.kts                    # CMake for libptyjni.so
 │   └── src/
-│       ├── main/cpp/                       # ptyjni.c: PTY fork/exec with /dev/ptmx
+│       ├── main/cpp/                       # ptyjni.c: PTY fork/exec with /dev/ptmx (O_CLOEXEC, IUTF8 set)
 │       ├── main/jniLibs/arm64-v8a/         # libproot, libproot-loader, libpr-cli (.so)
 │       ├── test/                           # JVM unit tests
 │       └── androidTest/                    # Instrumented tests (PTY bridge, session reaping)
