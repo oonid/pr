@@ -95,6 +95,54 @@ mod tests {
         let bytes = builder.into_inner().expect("finish");
         assert!(bytes.iter().all(|b| *b == 0));
     }
+
+    #[test]
+    fn move_into_place_releases_every_name_before_deleting_the_old_copies() {
+        let base = std::env::temp_dir().join(format!(
+            "pr-cli-backup-move-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let dirs = BackupDirs {
+            staging: base.join("staging"),
+            plugins: base.join("plugins"),
+            legacy: base.join("legacy"),
+            containers: base.join("containers"),
+        };
+        let mut staged = BTreeMap::new();
+        for name in ["a", "b"] {
+            fs::create_dir_all(dirs.containers.join(name).join("rootfs/old")).expect("current");
+            let staging = dirs.staging.join(format!("oci-{}", name));
+            fs::create_dir_all(staging.join("rootfs/new")).expect("staged");
+            staged.insert(
+                (Kind::Oci, name.to_string()),
+                Staged {
+                    root: staging.join("rootfs"),
+                    staging,
+                },
+            );
+        }
+
+        let mut replaced = Vec::new();
+
+        let restored = move_into_place(&dirs, &mut staged, &[], &mut replaced).expect("move");
+
+        assert_eq!(restored, ["a", "b"]);
+        let olds: Vec<PathBuf> = ["a", "b"]
+            .iter()
+            .map(|name| dirs.staging.join(format!("oci-{}.old", name)))
+            .collect();
+        assert_eq!(replaced, olds);
+        for (name, old) in ["a", "b"].iter().zip(&olds) {
+            assert!(dirs.containers.join(name).join("rootfs/new").is_dir());
+            assert!(!crate::install_marker::has_marker(&dirs.containers, name));
+            assert!(old.join("rootfs/old").is_dir());
+        }
+        let _ = fs::remove_dir_all(base);
+    }
 }
 
 pub fn write_backup(output: &Path, members: &[(PathBuf, PathBuf)]) -> Result<(), String> {
@@ -277,11 +325,15 @@ fn plugin_alias(file: &str) -> &str {
 pub fn restore_backup(archive: &Path, dirs: &BackupDirs) -> Result<Vec<String>, String> {
     let mut staged: BTreeMap<(Kind, String), Staged> = BTreeMap::new();
     let mut plugins: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut replaced: Vec<PathBuf> = Vec::new();
     let result = unpack_backup(archive, dirs, &mut staged, &mut plugins)
         .and_then(|_| check_plugins(&staged, &plugins))
-        .and_then(|_| move_into_place(dirs, &mut staged, &plugins));
+        .and_then(|_| move_into_place(dirs, &mut staged, &plugins, &mut replaced));
     for entry in staged.values() {
         force_remove_dir_all(&entry.staging);
+    }
+    for old in &replaced {
+        force_remove_dir_all(old);
     }
     let _ = fs::remove_dir(&dirs.staging);
     result
@@ -314,6 +366,7 @@ fn move_into_place(
     dirs: &BackupDirs,
     staged: &mut BTreeMap<(Kind, String), Staged>,
     plugins: &[(String, Vec<u8>)],
+    replaced: &mut Vec<PathBuf>,
 ) -> Result<Vec<String>, String> {
     let mut restored = Vec::new();
     let keys: Vec<(Kind, String)> = staged.keys().cloned().collect();
@@ -366,7 +419,7 @@ fn move_into_place(
             return Err(format!("move {} into place: {}", name, e));
         }
         if had_old {
-            force_remove_dir_all(&old);
+            replaced.push(old);
         }
         if let Err(e) = marker.finish() {
             release(markers);

@@ -1731,6 +1731,19 @@ mod tests {
     }
 
     #[test]
+    fn restore_over_an_installed_container_deletes_the_replaced_copy() {
+        let env = TestPrefix::new("pr-cli-restore-replaced");
+        let output = backup_of_a_good_box(&env);
+        fs::create_dir_all(env.containers().join("box/rootfs/stale")).expect("current box");
+
+        command_restore(output.to_str().unwrap()).expect("restore");
+
+        assert_rootfs(&env.containers().join("box/rootfs"));
+        assert!(!env.containers().join("box/rootfs/stale").exists());
+        assert!(fs::symlink_metadata(env.prefix.join("var/lib/pr/.restore")).is_err());
+    }
+
+    #[test]
     fn force_remove_dir_all_removes_a_symlink_without_following_it() {
         let tmp_dir = unique_temp_dir("pr-cli-force-remove-symlink");
         let target = tmp_dir.join("target");
