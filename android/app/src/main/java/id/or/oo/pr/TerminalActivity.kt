@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -131,7 +132,7 @@ class TerminalActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Terminal(
                             terminalEmulator = current.emulator!!,
-                            modifier = Modifier.fillMaxSize().systemBarsPadding(),
+                            modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding(),
                             initialFontSize = 12.sp,
                             backgroundColor = Color(0xFF1a1a2e),
                             foregroundColor = Color.White,

@@ -299,7 +299,7 @@ Full terminal emulator using ConnectBot's termlib (115 lines):
   - Reads 8KB chunks from PTY master fd in a loop
   - Feeds data to `emulator.writeInput(buf, 0, n)`
   - Exits on EOF or error
-- Renders using termlib's `Terminal()` composable with `keyboardEnabled=true` and `Modifier.systemBarsPadding()` to prevent the first rows of output being hidden behind the camera notch and Android status bar
+- Renders using termlib's `Terminal()` composable with `keyboardEnabled=true`, `Modifier.systemBarsPadding()` so the first rows are not hidden behind the camera notch and status bar, and `imePadding()` so the soft keyboard shrinks the terminal instead of covering its last rows (at targetSdk 35 the window is edge to edge and `adjustResize` no longer resizes it)
 - Lifecycle: since background sessions, the PTY, emulator and reader thread live in
   `ManagedSession`; `onDestroy()` detaches from the session and never ends it (see "Session
   lifetime and Back")
