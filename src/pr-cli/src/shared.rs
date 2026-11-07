@@ -472,17 +472,17 @@ pub fn build_proot_args(
             }
         }
 
-        let app_dir = Path::new(&prefix).parent().unwrap().parent().unwrap();
+        if let Some(app_dir) = Path::new(&prefix).parent().and_then(Path::parent) {
+            let apps_dir = app_dir.join("files/apps");
+            if apps_dir.is_dir() {
+                args.push(format!("--bind={}", apps_dir.display()));
+            }
 
-        let apps_dir = app_dir.join("files/apps");
-        if apps_dir.is_dir() {
-            args.push(format!("--bind={}", apps_dir.display()));
-        }
-
-        args.push(format!("--bind={}/cache", app_dir.display()));
-        args.push(format!("--bind={}", app_dir.display()));
-        if let Some(alias) = app_dir_alias(app_dir).filter(|a| a.is_dir()) {
-            args.push(format!("--bind={}", alias.display()));
+            args.push(format!("--bind={}/cache", app_dir.display()));
+            args.push(format!("--bind={}", app_dir.display()));
+            if let Some(alias) = app_dir_alias(app_dir).filter(|a| a.is_dir()) {
+                args.push(format!("--bind={}", alias.display()));
+            }
         }
 
         if can_list_dir("/storage") {
@@ -869,6 +869,18 @@ mod tests {
 
         let _ = fs::remove_dir_all(base);
         std::env::remove_var("PROOT_L2S_DIR");
+    }
+
+    #[test]
+    fn a_shallow_app_prefix_skips_the_app_binds_instead_of_panicking() {
+        let _guard = env_lock().lock().expect("lock env");
+        std::env::set_var("APP_PREFIX", "/usr");
+        let args =
+            std::panic::catch_unwind(|| build_proot_args("/nonexistent-rootfs", false, false, &[]));
+        std::env::remove_var("APP_PREFIX");
+        std::env::remove_var("PROOT_L2S_DIR");
+        let args = args.expect("build_proot_args panicked");
+        assert!(!args.iter().any(|a| a.ends_with("/cache")), "{:?}", args);
     }
 
     #[test]
