@@ -141,6 +141,13 @@ fn resolve_oci_reference(input: &str) -> Result<ResolvedOciReference, String> {
         if name.is_empty() || digest.is_empty() {
             return Err(format!("invalid OCI reference '{}'", input));
         }
+        crate::oci::normalize_expected_sha256(digest)
+            .map_err(|e| format!("invalid OCI digest reference '{}': {}", input, e))?;
+        let name = match (name.rfind('/'), name.rfind(':')) {
+            (Some(slash), Some(colon)) if colon > slash => &name[..colon],
+            (None, Some(colon)) => &name[..colon],
+            _ => name,
+        };
         (name, digest.to_string(), true)
     } else {
         let last_slash = input.rfind('/');
@@ -245,6 +252,14 @@ fn derive_oci_install_name(
     }
 
     Ok("container".to_string())
+}
+
+fn image_label(reference: &ResolvedOciReference) -> String {
+    let separator = if reference.digest_reference { '@' } else { ':' };
+    format!(
+        "{}{}{}",
+        reference.repository, separator, reference.reference
+    )
 }
 
 fn normalized_oci_reference(reference: &ResolvedOciReference) -> String {
@@ -387,6 +402,7 @@ fn parse_bearer_challenge(header: &str) -> Option<BearerChallenge> {
 async fn fetch_manifest_json(
     client: &reqwest::Client,
     url: &str,
+    expected_digest: Option<&str>,
 ) -> Result<(RegistryManifestResponse, Option<String>, Option<String>), String> {
     let accept = format!(
         "{},{},{},{}",
@@ -439,9 +455,19 @@ async fn fetch_manifest_json(
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|h| h.to_str().ok())
             .map(|v| v.to_string());
-        let body = response
-            .json::<RegistryManifestResponse>()
+        let bytes = response
+            .bytes()
             .await
+            .map_err(|e| format!("read OCI manifest {}: {}", url, e))?;
+        if let Some(digest) = expected_digest {
+            if !crate::oci::bytes_match_digest(&bytes, digest)? {
+                return Err(format!(
+                    "OCI manifest {} does not match digest {}",
+                    url, digest
+                ));
+            }
+        }
+        let body = serde_json::from_slice::<RegistryManifestResponse>(&bytes)
             .map_err(|e| format!("decode OCI manifest {}: {}", url, e))?;
         return Ok((body, content_type, bearer_token.clone()));
     }
@@ -464,8 +490,11 @@ async fn resolve_oci_manifest(
         oci_ref.repository.trim_matches('/'),
         oci_ref.reference
     );
+    let pinned = oci_ref
+        .digest_reference
+        .then_some(oci_ref.reference.as_str());
     let (top_manifest, top_content_type, top_token) =
-        fetch_manifest_json(&client, &manifest_url).await?;
+        fetch_manifest_json(&client, &manifest_url, pinned).await?;
 
     let top_media_type = top_manifest
         .media_type
@@ -495,7 +524,8 @@ async fn resolve_oci_manifest(
             oci_ref.repository.trim_matches('/'),
             selected.digest
         );
-        let (manifest, _, token) = fetch_manifest_json(&client, &selected_url).await?;
+        let (manifest, _, token) =
+            fetch_manifest_json(&client, &selected_url, Some(&selected.digest)).await?;
         (manifest, token.or(top_token))
     } else {
         (top_manifest, top_token)
@@ -651,8 +681,9 @@ fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> 
 
     install_oci_container(&install_name, || {
         msg_status(&format!(
-            "Installing OCI image {}:{} as '{}'...",
-            resolved.repository, resolved.reference, install_name
+            "Installing OCI image {} as '{}'...",
+            image_label(&resolved),
+            install_name
         ));
         populate_oci_container(reference, &resolved, &install_name)
     })?;
@@ -1910,6 +1941,174 @@ mod tests {
         assert_eq!(resolved.registry_base, "https://ghcr.io");
         assert_eq!(resolved.repository, "example/app");
         assert_eq!(resolved.reference, "1.2.3");
+    }
+
+    const PIN: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_tagged_digest_reference_drops_the_tag() {
+        let resolved = resolve_oci_reference(&format!("alpine:3.20@{}", PIN)).expect("resolve");
+        assert_eq!(resolved.repository, "library/alpine");
+        assert_eq!(resolved.reference, PIN);
+        assert!(resolved.digest_reference);
+
+        let resolved =
+            resolve_oci_reference(&format!("registry.example.com:5000/team/app:1.0@{}", PIN))
+                .expect("resolve with port");
+        assert_eq!(resolved.registry_base, "https://registry.example.com:5000");
+        assert_eq!(resolved.repository, "team/app");
+        assert_eq!(resolved.reference, PIN);
+    }
+
+    #[test]
+    fn the_install_message_names_a_digest_with_an_at_sign() {
+        let pinned = resolve_oci_reference(&format!("alpine:3.20@{}", PIN)).expect("resolve");
+        assert_eq!(image_label(&pinned), format!("library/alpine@{}", PIN));
+        let tagged = resolve_oci_reference("alpine:3.20").expect("resolve tag");
+        assert_eq!(image_label(&tagged), "library/alpine:3.20");
+    }
+
+    #[test]
+    fn a_digest_reference_must_be_a_sha256_digest() {
+        for bad in [
+            "alpine@sha256:abc",
+            "alpine@md5:0123456789abcdef0123456789abcdef",
+            "alpine@latest",
+            "alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(resolve_oci_reference(bad).is_err(), "{}", bad);
+        }
+    }
+
+    fn manifest_bytes(marker: &str) -> Vec<u8> {
+        format!(
+            "{{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"config\":{{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"digest\":\"{}\",\"size\":2}},\"layers\":[],\"annotations\":{{\"m\":\"{}\"}}}}",
+            PIN, marker
+        )
+        .into_bytes()
+    }
+
+    fn index_bytes(entry_digest: &str) -> Vec<u8> {
+        format!(
+            "{{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.index.v1+json\",\"manifests\":[{{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"{}\",\"size\":10,\"platform\":{{\"architecture\":\"arm64\",\"os\":\"linux\"}}}}]}}",
+            entry_digest
+        )
+        .into_bytes()
+    }
+
+    fn digest_of(bytes: &[u8]) -> String {
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+
+    fn serve_registry(routes: Vec<(String, Vec<u8>)>) -> String {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("local addr"));
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = std::io::BufReader::new(stream.try_clone().expect("clone"));
+                let mut request = String::new();
+                reader.read_line(&mut request).expect("request line");
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).expect("header");
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                let path = request.split_whitespace().nth(1).unwrap_or("").to_string();
+                match routes.iter().find(|(p, _)| *p == path) {
+                    Some((_, body)) => {
+                        let media = if body.windows(11).any(|w| w == b"\"manifests\"") {
+                            "application/vnd.oci.image.index.v1+json"
+                        } else {
+                            "application/vnd.oci.image.manifest.v1+json"
+                        };
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            media,
+                            body.len()
+                        );
+                        let _ = stream.write_all(body);
+                    }
+                    None => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
+                    }
+                }
+            }
+        });
+        base
+    }
+
+    fn resolve_from(
+        base: &str,
+        reference: &str,
+        digest_reference: bool,
+    ) -> Result<ResolvedOciManifest, String> {
+        let oci_ref = ResolvedOciReference {
+            registry_base: base.to_string(),
+            repository: "library/box".to_string(),
+            reference: reference.to_string(),
+            digest_reference,
+        };
+        tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(resolve_oci_manifest(&oci_ref, "aarch64"))
+    }
+
+    #[test]
+    fn a_pinned_manifest_must_match_its_digest() {
+        let served = manifest_bytes("served");
+        let pinned = digest_of(&manifest_bytes("expected"));
+        let base = serve_registry(vec![(
+            format!("/v2/library/box/manifests/{}", pinned),
+            served.clone(),
+        )]);
+
+        let err = resolve_from(&base, &pinned, true).expect_err("must refuse a mismatch");
+        assert!(err.contains("does not match"), "{}", err);
+
+        let good = digest_of(&served);
+        let base = serve_registry(vec![(
+            format!("/v2/library/box/manifests/{}", good),
+            served,
+        )]);
+        resolve_from(&base, &good, true).expect("a matching manifest is used");
+    }
+
+    #[test]
+    fn a_manifest_picked_from_an_index_must_match_its_entry() {
+        let served = manifest_bytes("served");
+        let listed = digest_of(&manifest_bytes("listed"));
+        let base = serve_registry(vec![
+            (
+                "/v2/library/box/manifests/latest".to_string(),
+                index_bytes(&listed),
+            ),
+            (
+                format!("/v2/library/box/manifests/{}", listed),
+                served.clone(),
+            ),
+        ]);
+
+        let err = resolve_from(&base, "latest", false).expect_err("must refuse a mismatch");
+        assert!(err.contains("does not match"), "{}", err);
+
+        let good = digest_of(&served);
+        let base = serve_registry(vec![
+            (
+                "/v2/library/box/manifests/latest".to_string(),
+                index_bytes(&good),
+            ),
+            (format!("/v2/library/box/manifests/{}", good), served),
+        ]);
+        resolve_from(&base, "latest", false).expect("a matching manifest is used");
     }
 
     #[test]
