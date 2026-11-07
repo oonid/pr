@@ -856,7 +856,12 @@ fn remove_path_if_exists_with_protection(
     Ok(())
 }
 
-fn normalize_expected_sha256(digest: &str) -> Result<String, String> {
+pub(crate) fn bytes_match_digest(bytes: &[u8], expected_digest: &str) -> Result<bool, String> {
+    let expected_sha256 = normalize_expected_sha256(expected_digest)?;
+    Ok(hex_lower(&sha2::Sha256::digest(bytes)) == expected_sha256)
+}
+
+pub(crate) fn normalize_expected_sha256(digest: &str) -> Result<String, String> {
     let Some((algorithm, hex)) = digest.split_once(':') else {
         return Err(format!("invalid digest format: {}", digest));
     };
