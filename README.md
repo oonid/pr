@@ -97,7 +97,7 @@ The version comes from `-PprVersionCode=<n>` and `-PprVersionName=<name>` (defau
 
 ## Testing
 
-CI runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds the APK.
+CI checks formatting and runs clippy with warnings as errors on pr-cli and the test binary, runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds proot with NDK r27c and the APK.
 
 ### Android unit tests (JVM)
 
