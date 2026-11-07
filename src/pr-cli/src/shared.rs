@@ -368,7 +368,7 @@ pub fn get_native_lib_dir() -> String {
     std::fs::read_link("/proc/self/exe")
         .ok()
         .and_then(|p| p.parent().map(|p| p.display().to_string()))
-        .unwrap_or_else(|| get_bin_dir())
+        .unwrap_or_else(get_bin_dir)
 }
 
 pub fn get_native_proot() -> String {
@@ -380,17 +380,11 @@ pub fn get_native_loader() -> String {
 }
 
 pub fn msg_status(text: &str) {
-    println!(
-        "{}\x1b[1;34m[\x1b[32m*\x1b[1;34m\x1b[36m {}\x1b[0m",
-        "", text
-    );
+    println!("\x1b[1;34m[\x1b[32m*\x1b[1;34m\x1b[36m {}\x1b[0m", text);
 }
 
 pub fn msg_error(text: &str) {
-    println!(
-        "{}\x1b[1;34m[\x1b[31m!\x1b[1;34m\x1b[36m {}\x1b[0m",
-        "", text
-    );
+    println!("\x1b[1;34m[\x1b[31m!\x1b[1;34m\x1b[36m {}\x1b[0m", text);
 }
 
 pub fn can_read_dir(path: &str) -> bool {

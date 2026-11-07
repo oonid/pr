@@ -346,14 +346,13 @@ fn command_list(verbose: bool) {
         } else {
             for entry in &installed {
                 println!(
-                    "  {}* {}{} {}< {}{}>{}",
+                    "  {}* {}{} {}< {}{}>",
                     CYAN,
                     YELLOW,
                     entry.alias,
                     GREEN,
                     source_label(entry),
-                    RESET,
-                    ""
+                    RESET
                 );
             }
         }
@@ -365,6 +364,110 @@ fn command_list(verbose: bool) {
         CYAN, GREEN, RESET
     );
     println!();
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Install {
+            distro,
+            override_alias,
+            override_tarball_url,
+            override_tarball_sha256,
+        } => {
+            if let Err(e) = command_install(
+                &distro,
+                override_alias.as_deref(),
+                override_tarball_url.as_deref(),
+                override_tarball_sha256.as_deref(),
+            ) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Login {
+            distro,
+            user,
+            isolated,
+            no_link2symlink,
+            custom_bind,
+            command,
+        } => {
+            if let Err(e) = command_login(
+                &distro,
+                &user,
+                isolated,
+                no_link2symlink,
+                &custom_bind,
+                &command,
+            ) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Remove { distro } => {
+            if let Err(e) = commands_extra::command_remove(&distro, false) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::List { verbose } => {
+            command_list(verbose);
+        }
+        Commands::Backup { distro, output } => {
+            if let Err(e) = commands_extra::command_backup(&distro, output.as_deref()) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Restore { distro } => {
+            if let Err(e) = commands_extra::command_restore(&distro) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Rename {
+            old_alias,
+            new_alias,
+        } => {
+            if let Err(e) = commands_extra::command_rename(&old_alias, &new_alias) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Reset { distro } => {
+            if let Err(e) = commands_extra::command_reset(&distro) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Copy {
+            src_distro,
+            dst_distro,
+        } => {
+            if let Err(e) = commands_extra::command_copy(&src_distro, &dst_distro) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Test {
+            distro,
+            suite,
+            verbose,
+        } => {
+            if let Err(e) = command_test(&distro, suite.as_deref(), verbose) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::ClearCache { .. } => {
+            if let Err(e) = commands_extra::command_clear_cache() {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -666,109 +769,5 @@ mod tests {
 
         std::env::remove_var("APP_PREFIX");
         let _ = fs::remove_dir_all(base);
-    }
-}
-
-fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Install {
-            distro,
-            override_alias,
-            override_tarball_url,
-            override_tarball_sha256,
-        } => {
-            if let Err(e) = command_install(
-                &distro,
-                override_alias.as_deref(),
-                override_tarball_url.as_deref(),
-                override_tarball_sha256.as_deref(),
-            ) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Login {
-            distro,
-            user,
-            isolated,
-            no_link2symlink,
-            custom_bind,
-            command,
-        } => {
-            if let Err(e) = command_login(
-                &distro,
-                &user,
-                isolated,
-                no_link2symlink,
-                &custom_bind,
-                &command,
-            ) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Remove { distro } => {
-            if let Err(e) = commands_extra::command_remove(&distro, false) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::List { verbose } => {
-            command_list(verbose);
-        }
-        Commands::Backup { distro, output } => {
-            if let Err(e) = commands_extra::command_backup(&distro, output.as_deref()) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Restore { distro } => {
-            if let Err(e) = commands_extra::command_restore(&distro) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Rename {
-            old_alias,
-            new_alias,
-        } => {
-            if let Err(e) = commands_extra::command_rename(&old_alias, &new_alias) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Reset { distro } => {
-            if let Err(e) = commands_extra::command_reset(&distro) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Copy {
-            src_distro,
-            dst_distro,
-        } => {
-            if let Err(e) = commands_extra::command_copy(&src_distro, &dst_distro) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::Test {
-            distro,
-            suite,
-            verbose,
-        } => {
-            if let Err(e) = command_test(&distro, suite.as_deref(), verbose) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-        Commands::ClearCache { .. } => {
-            if let Err(e) = commands_extra::command_clear_cache() {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        }
     }
 }

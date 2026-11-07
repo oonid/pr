@@ -39,9 +39,10 @@ pub fn test_readlink_einval() -> TestResult {
         .output()
         .map_err(|e| format!("readlink: {}", e))?;
     let output = std::str::from_utf8(&out.stdout).unwrap_or("");
-    if output.contains("exit=0") && !output.contains(".l2s") {
-        Ok(())
-    } else if output.contains("Invalid") || output.contains("exit=1") {
+    if (output.contains("exit=0") && !output.contains(".l2s"))
+        || output.contains("Invalid")
+        || output.contains("exit=1")
+    {
         Ok(())
     } else {
         Err(format!("unexpected readlink output: {:?}", output))

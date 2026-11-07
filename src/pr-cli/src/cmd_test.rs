@@ -111,8 +111,7 @@ fn parse_tap(tap_output: &str) -> TapResult {
                 .map(|(_, n)| n.to_string())
                 .unwrap_or_default();
             println!(
-                "  {} {}{}",
-                "\x1b[32m✓\x1b[0m",
+                "  \x1b[32m✓\x1b[0m {}{}",
                 name,
                 if line.contains("# SKIP") {
                     " \x1b[33m(SKIP)\x1b[0m".to_string()
@@ -128,7 +127,7 @@ fn parse_tap(tap_output: &str) -> TapResult {
                 .map(|(_, n)| n.to_string())
                 .unwrap_or_default();
             result.failures.push(name.clone());
-            println!("  {} {}", "\x1b[31m✗\x1b[0m", name);
+            println!("  \x1b[31m✗\x1b[0m {}", name);
         } else {
             println!("    {}", line);
         }
@@ -391,7 +390,7 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
             Err(e) => {
                 total_failed += 1;
                 all_failures.push(format!("{}: {}", suite_name, e));
-                println!("  {} {} — {}", "\x1b[31m✗\x1b[0m", suite_name, e);
+                println!("  \x1b[31m✗\x1b[0m {} — {}", suite_name, e);
             }
         }
         println!();
