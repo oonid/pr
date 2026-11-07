@@ -998,7 +998,7 @@ fn verify_sha256(expected: &str, filepath: &str) -> Result<(), String> {
     let hash = hasher.finalize();
     let actual = format!("{:x}", hash);
 
-    if actual == expected {
+    if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
         Err(format!(
@@ -2451,6 +2451,19 @@ mod tests {
             file_path.to_str().expect("path")
         )
         .is_err());
+
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn verify_sha256_ignores_hex_case() {
+        let tmp_dir = unique_temp_dir("pr-cli-sha256-case");
+        fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        let file_path = tmp_dir.join("payload.txt");
+        fs::write(&file_path, b"hello case").expect("write payload");
+        let digest = format!("{:X}", Sha256::digest(b"hello case"));
+
+        verify_sha256(&digest, file_path.to_str().expect("path")).expect("uppercase sha matches");
 
         let _ = fs::remove_dir_all(tmp_dir);
     }
