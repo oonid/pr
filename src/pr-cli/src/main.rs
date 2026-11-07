@@ -132,7 +132,7 @@ fn source_label(entry: &InstalledEntry) -> String {
     let source = entry.source.as_str();
     match entry.pending {
         None => source.to_string(),
-        Some(PendingInstall::InProgress) => format!("{}, installing", source),
+        Some(PendingInstall::InProgress) => format!("{}, busy", source),
         Some(PendingInstall::Interrupted) => format!("{}, interrupted", source),
     }
 }
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                ("box".to_string(), "oci, installing".to_string()),
+                ("box".to_string(), "oci, busy".to_string()),
                 ("deb".to_string(), "legacy, interrupted".to_string()),
                 ("early".to_string(), "legacy, interrupted".to_string()),
             ]

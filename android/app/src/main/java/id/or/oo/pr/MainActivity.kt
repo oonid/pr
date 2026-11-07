@@ -382,7 +382,7 @@ fun DistroCard(
                     text = when {
                         isRunning -> "● Running"
                         distro.isInstalled -> "● Installed"
-                        distro.isUnfinished -> "● Install did not finish"
+                        distro.isUnfinished -> "● Incomplete"
                         else -> "○ Not installed"
                     },
                     style = MaterialTheme.typography.labelSmall,

@@ -71,23 +71,15 @@ pub(crate) fn force_remove_dir_all(path: &Path) {
 }
 
 pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
+    remove_with(distro_name, is_reset, force_remove_dir_all)
+}
+
+fn remove_with(distro_name: &str, is_reset: bool, wipe: impl FnOnce(&Path)) -> Result<(), String> {
     let plugins_dir = get_plugins_dir();
-    let (rootfs, source_type, marker) = match resolve_installed_rootfs(distro_name) {
-        Some((rootfs, source_type)) => (rootfs, source_type, None),
+    let (rootfs, source_type, pending) = match resolve_installed_rootfs(distro_name) {
+        Some((rootfs, source_type)) => (rootfs, source_type, false),
         None => match pending_container(distro_name) {
-            Some((dir, source_type, _)) => {
-                let parent = container_parent_dir(source_type);
-                let marker = InstallMarker::claim_reporting(Path::new(&parent), distro_name)?;
-                if !marker.took_over() {
-                    marker.finish()?;
-                    msg_error(&format!(
-                        "the install of '{}' finished meanwhile; run remove again to remove it.",
-                        distro_name
-                    ));
-                    return Err("installed meanwhile".to_string());
-                }
-                (dir, source_type, Some(marker))
-            }
+            Some((dir, source_type, _)) => (dir, source_type, true),
             None => {
                 println!();
                 msg_error(&format!("distribution '{}' is not installed.", distro_name));
@@ -96,6 +88,16 @@ pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
             }
         },
     };
+    let parent = container_parent_dir(source_type);
+    let marker = InstallMarker::claim_reporting(Path::new(&parent), distro_name)?;
+    if pending && !marker.took_over() {
+        marker.finish()?;
+        msg_error(&format!(
+            "'{}' changed while remove waited; run remove again if it is still listed.",
+            distro_name
+        ));
+        return Err("changed meanwhile".to_string());
+    }
 
     if !is_reset && source_type == InstalledSourceType::Legacy {
         let override_path = format!("{}/{}.override.sh", plugins_dir, distro_name);
@@ -118,14 +120,12 @@ pub fn command_remove(distro_name: &str, is_reset: bool) -> Result<(), String> {
 
     let rootfs_path = Path::new(&install_path);
     if rootfs_path.exists() {
-        force_remove_dir_all(rootfs_path);
+        wipe(rootfs_path);
     }
     if rootfs_path.exists() {
         return Err(format!("failed to fully remove path '{}'", install_path));
     }
-    if let Some(marker) = marker {
-        marker.finish()?;
-    }
+    marker.finish()?;
 
     msg_status("Finished.");
     Ok(())
@@ -418,7 +418,7 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
 
     if has_marker(Path::new(&installed_rootfs_dir), old_alias) {
         msg_error(&format!(
-            "'{}' was not fully installed; install it again or remove it.",
+            "an install or removal of '{}' is running or did not finish; install it again or remove it.",
             old_alias
         ));
         return Err("not fully installed".to_string());
@@ -468,19 +468,38 @@ pub fn command_rename(old_alias: &str, new_alias: &str) -> Result<(), String> {
 
     msg_status(&format!("Renaming '{}' to '{}'...", old_alias, new_alias));
 
-    let target = InstallMarker::claim_reporting(Path::new(&installed_rootfs_dir), new_alias)?;
+    let source = InstallMarker::claim_reporting(Path::new(&installed_rootfs_dir), old_alias)?;
+    if source.took_over() || !Path::new(&old_rootfs).is_dir() {
+        if !source.took_over() {
+            source.finish()?;
+        }
+        msg_error(&format!(
+            "'{}' changed while rename waited; check it with: pr-cli list",
+            old_alias
+        ));
+        return Err("changed meanwhile".to_string());
+    }
+    let target = match InstallMarker::claim_reporting(Path::new(&installed_rootfs_dir), new_alias) {
+        Ok(target) => target,
+        Err(e) => {
+            source.finish()?;
+            return Err(e);
+        }
+    };
     if target.took_over() || Path::new(&new_rootfs).exists() {
         if !target.took_over() {
             target.finish()?;
         }
+        source.finish()?;
         msg_error(&format!(
-            "cannot rename because '{}' is in use by an install.",
+            "cannot rename because '{}' is in use by an install or removal.",
             new_alias
         ));
         return Err("target exists".to_string());
     }
     let renamed = fs::rename(&old_rootfs, &new_rootfs).map_err(|e| format!("rename rootfs: {}", e));
     target.finish()?;
+    source.finish()?;
     renamed?;
 
     let old_plugin = format!("{}/{}.sh", plugins_dir, old_alias);
@@ -1275,6 +1294,49 @@ mod tests {
     }
 
     #[test]
+    fn remove_holds_the_marker_while_it_deletes_an_installed_container() {
+        use crate::install_marker::PendingInstall;
+        let env = TestPrefix::new("pr-cli-remove-marks");
+        seed_rootfs(&env.legacy().join("deb"));
+        seed_rootfs(&env.containers().join("box/rootfs"));
+
+        for (parent, name) in [(env.legacy(), "deb"), (env.containers(), "box")] {
+            let mut seen = None;
+            remove_with(name, false, |dir| {
+                seen = pending_install(&parent, name);
+                force_remove_dir_all(dir);
+            })
+            .expect("remove");
+
+            assert_eq!(seen, Some(PendingInstall::InProgress), "{}", name);
+            assert_eq!(pending_install(&parent, name), None, "{}", name);
+        }
+        assert!(!env.legacy().join("deb").exists());
+        assert!(!env.containers().join("box").exists());
+    }
+
+    #[test]
+    fn a_remove_that_stops_partway_leaves_an_interrupted_install() {
+        use crate::install_marker::PendingInstall;
+        let env = TestPrefix::new("pr-cli-remove-stops");
+        seed_rootfs(&env.containers().join("box/rootfs"));
+
+        let result = remove_with("box", false, |dir| {
+            force_remove_dir_all(&dir.join("rootfs/bin"));
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            pending_install(&env.containers(), "box"),
+            Some(PendingInstall::Interrupted)
+        );
+        assert!(resolve_installed_rootfs("box").is_none());
+        command_remove("box", false).expect("remove the rest");
+        assert!(!env.containers().join("box").exists());
+        assert_eq!(pending_install(&env.containers(), "box"), None);
+    }
+
+    #[test]
     fn remove_refuses_a_container_that_is_being_installed() {
         let env = TestPrefix::new("pr-cli-remove-running");
         let running = InstallMarker::claim(&env.containers(), "box").expect("mark");
@@ -1350,6 +1412,8 @@ mod tests {
 
         assert!(!env.legacy().join("mydistro").exists());
         assert_rootfs(&env.legacy().join("mydistro-old"));
+        assert!(!has_marker(&env.legacy(), "mydistro"));
+        assert!(!has_marker(&env.legacy(), "mydistro-old"));
     }
 
     #[test]

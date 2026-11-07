@@ -563,13 +563,13 @@ fn claim_container(
     let marker = InstallMarker::claim_reporting(parent, name)?;
     if marker.took_over() {
         msg_status(&format!(
-            "Removing the interrupted install of '{}'...",
+            "Removing what an interrupted install or removal of '{}' left...",
             name
         ));
         force_remove_dir_all(dir);
         if fs::symlink_metadata(dir).is_ok() {
             return Err(format!(
-                "could not remove the interrupted install '{}'",
+                "could not remove what an interrupted install or removal of '{}' left",
                 dir.display()
             ));
         }
@@ -583,7 +583,7 @@ fn claim_container(
 fn refuse_unfinished_install_in(other_parent: &str, name: &str) -> Result<(), String> {
     if pending_install(Path::new(other_parent), name).is_some() {
         msg_error(&format!(
-            "'{}' has an unfinished install of another kind. Remove it with: pr-cli remove {}",
+            "'{}' has an unfinished install or removal of another kind. Remove it with: pr-cli remove {}",
             name, name
         ));
         return Err(format!("'{}' has an unfinished install", name));
