@@ -289,7 +289,7 @@ Full terminal emulator using ConnectBot's termlib (115 lines):
 - Creates `TerminalEmulator` via `TerminalEmulatorFactory.create()` with:
   - 24 rows x 80 cols initial size
   - Dark theme: background `#1a1a2e`, foreground `Color.White`, font `12sp`
-  - `onKeyboardInput` callback: writes bytes to PTY master fd
+  - `onKeyboardInput` callback: queues the bytes on the session's writer thread (`pty-writer-<alias>`), which writes them to the PTY master fd in order, so a paste into a program that is not reading never blocks the main thread
   - `onResize` callback: forwards `TerminalDimensions` changes to `session.resize(rows, cols)` so apps inside proot (nano, htop, shell prompts) see the correct terminal size when the soft keyboard opens or the device rotates
 - Starts PTY session via `ProotLauncher.startSession(distroName)`
 - Spawns reader thread (`"pty-reader"`) that:

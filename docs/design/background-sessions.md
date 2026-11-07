@@ -77,6 +77,12 @@ What `TerminalActivity` held before this work, moved out of it:
 - the `TerminalEmulator`, which keeps the screen contents while no screen is attached;
 - the reader thread, which keeps draining PTY output with no screen attached, so a program that
   writes a lot never blocks on a full PTY buffer;
+- the writer thread, which takes keyboard input off a queue and writes it to the PTY in order.
+  termlib calls `onKeyboardInput` on the main thread with its own lock held; writing there
+  would block the UI when a large paste fills the input buffer of a program that is not
+  reading. Writes, resize and EOF share a read/write lock, so a resize does not wait behind a
+  blocked write, and closing the PTY takes it alone, so nothing is written after close; queued
+  input is dropped when the session finishes;
 - the emulator runs on the main looper (`TerminalEmulatorFactory.create(looper = …)`). termlib
   resizes on the caller's thread, the main thread, while it applies output on the emulator's
   looper, and the two are not synchronised; on a separate looper a resize during output can index
