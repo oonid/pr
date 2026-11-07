@@ -176,79 +176,29 @@ dpkg aborts on ENOENT.
 
 ---
 
-### Failure 2 — openssh-client postinst: groupadd cannot lock /etc/group
+### Failure 2 — openssh-client postinst: groupadd cannot lock /etc/group (fixed)
 
 **Symptom:**
 ```
 groupadd: /etc/group.23430 file stat error: No such file or directory
 groupadd: cannot lock /etc/group; try again later.
 fatal: `/sbin/groupadd -g 101 _ssh' returned error code 10. Exiting.
-dpkg: error processing package openssh-client (--configure):
-  installed openssh-client package post-installation script subprocess returned error exit status 82
 ```
 
 **Cause:** `groupadd` locks `/etc/group` by creating a hard link `/etc/group.NNNNN`. Android
-SELinux (`untrusted_app`) blocks `link()` outright with EPERM, so link2symlink intercepts it
-and creates an L2S symlink chain instead. `groupadd` then calls `stat("/etc/group.NNNNN")` to
-verify the link — but the L2S symlink points into the app cache dir (a different filesystem),
-which is inaccessible to the stat call inside proot. groupadd exits with code 10 ("cannot lock").
+SELinux (`untrusted_app`) blocks `link()`, so link2symlink turns it into an L2S symlink chain
+whose content lives in `PROOT_L2S_DIR`. When that directory was the app cache dir, on a
+different filesystem from the rootfs, the chain could not be followed and `groupadd` exited 10.
 
-**Root cause of the cross-filesystem issue:** L2S metadata is stored in `PROOT_L2S_DIR`. If
-that directory is on a different filesystem from the rootfs (e.g. Android cache dir vs the
-rootfs partition), hard-linking from L2S content back to the rootfs fails. This is pre-empted
-by `install_tools()` pre-creating `.l2s/` inside the rootfs itself.
+**Fix:** every container now has its own `<rootfs>/.l2s`, created at install, and pr-cli sets
+`PROOT_L2S_DIR` to it (`shared.rs`). `groupadd`, `groupadd --system` and `groupdel` work in an
+Ubuntu container (checked 2026-11-07), and openssh-client's postinst creates `_ssh` itself.
 
----
-
-### Failure 3 — openssh-client postinst: chgrp '_ssh' invalid group
-
-**Symptom:**
-```
-chgrp: invalid group: '_ssh'
-dpkg: error processing package openssh-client (--configure): ...error exit status 1
-```
-
-**Cause:** The postinst calls `groupadd -g 101 _ssh` to create the group, then immediately
-calls `chgrp _ssh /some/file`. With groupadd stubbed out (see fix below), the stub exits 0
-but does not write to `/etc/group`, so `chgrp` cannot resolve the group name.
-
----
-
-### Solution — two-pass apt install with groupadd stub
-
-`install_tools()` in `src/pr-cli/src/cmd_test.rs` runs two apt-get passes for Debian:
-
-**Pass 1** — install main tools normally:
-```sh
-apt-get install -y vim gcc rustc cargo git
-```
-None of these packages have postinst scripts that call groupadd.
-
-**Pass 2** — prepare environment, then install openssh-client:
-```sh
-# 1. Replace groupadd/groupdel with no-op stubs.
-#    Real groupadd cannot work on Android (link() blocked by SELinux).
-printf '#!/bin/sh\nexit 0\n' > /usr/sbin/groupadd && chmod +x /usr/sbin/groupadd
-printf '#!/bin/sh\nexit 0\n' > /usr/sbin/groupdel && chmod +x /usr/sbin/groupdel
-
-# 2. Manually append _ssh and _sshd to /etc/group and /etc/gshadow.
-#    This satisfies the chgrp call in the postinst without needing groupadd
-#    to actually write the entries.
-grep -q '^_ssh:'  /etc/group   || echo '_ssh:x:101:'  >> /etc/group
-grep -q '^_sshd:' /etc/group   || echo '_sshd:x:102:' >> /etc/group
-grep -q '^_ssh:'  /etc/gshadow || echo '_ssh:!::'     >> /etc/gshadow
-grep -q '^_sshd:' /etc/gshadow || echo '_sshd:!::'    >> /etc/gshadow
-
-# 3. Now openssh-client installs cleanly.
-apt-get install -y openssh-client
-```
-
-The groupadd/groupdel stubs are left in place permanently. Real `groupadd` cannot work in
-this environment (link() is always blocked), so the stubs are the correct long-term state.
-
-### Key file
-
-`src/pr-cli/src/cmd_test.rs` — `install_tools()`, `"apt"` branch.
+Until 2026-11, `pr-cli test` worked around this by replacing `groupadd`/`groupdel` with no-op
+scripts and appending `_ssh`/`_sshd` to `/etc/group` by hand. The scripts stayed in the
+container after the test. A Debian or Ubuntu container that ran the test with an older pr-cli
+still has them; reinstalling the `passwd` package restores the real binaries:
+`apt-get install --reinstall passwd`.
 
 ---
 
