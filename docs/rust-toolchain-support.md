@@ -1,5 +1,7 @@
 # Rust Toolchain Support (vfork/CLONE_VM and link2symlink Fixes)
 
+> Historical record of the T8 fixes (2026-04), with follow-ups dated in the text. Later changes: readlink re-reads a target the kernel truncated, so busybox `readlink` returns EINVAL instead of a short path (docs/proot-improvement.md, readlink test 9); the SIGSYS log is `$PROOT_TMP_DIR/sigsys-log.txt`, trimmed only over 256 KiB.
+
 Date: 2026-04-16
 Status: T8.1 Complete, T8.2 Complete, T8.3 Complete, T8.4 Complete
 Device: Samsung SM-XXXXX (Galaxy X), Android 16 (SDK 36), aarch64

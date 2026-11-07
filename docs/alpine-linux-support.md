@@ -1,5 +1,7 @@
 # Alpine Linux on Android via proot
 
+> Historical record of the Alpine bring-up (Phase 5, targetSdk 28). Several details have changed since: `linkat` now returns `-EPERM`, the set*id handlers return 0, sessions run as fake root (uid 0), and targetSdk is 35. The current seccomp handlers are in docs/proot-improvement.md §2.
+
 ## Status: Login + package management + openssh work
 
 Alpine 3.23.3 installs, logs in, and runs `apk update`/`apk add`/`apk del` successfully from

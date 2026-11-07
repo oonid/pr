@@ -1,5 +1,7 @@
 # Porting proot-distro to Standalone Android — Exploration Report
 
+> Historical exploration report written before the port; the code and the current docs (docs/README.md) are authoritative.
+
 ## 1. Overview
 
 This document captures the findings from exploring the three vendor projects

@@ -1,5 +1,7 @@
 # Design Spec: Background Sessions
 
+> Design spec as of 2026-10-17. It is not kept up to date: since then install, remove and test also run under the service as tasks with a wake lock and a Cancel action, a cancelled install is cleaned up when its install marker remains, the notifications-off and background-error banners have Allow and Retry, and the session classes live in `:session-core`. docs/android-apk-architecture.md ("Session lifetime and Back") and the code are authoritative.
+
 **Date:** 2026-10-17
 **Topic:** Keep terminal sessions running after leaving their screen
 **Baseline:** tag `pre-background-sessions` (main `86d9e93`, before this work)

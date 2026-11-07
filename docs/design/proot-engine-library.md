@@ -1,5 +1,7 @@
 # Design Spec: Extract `:proot-engine` Android Library
 
+> Historical design spec for extracting `:proot-engine` (done). Since then `ProotHost` gained `dnsServers`, `scripts/build.sh` still writes to `build/out/<arch>` (the copy into `jniLibs` is manual), and bash and busybox are no longer shipped.
+
 **Date:** 2026-09-13
 **Topic:** Proot Engine Library Refactoring
 

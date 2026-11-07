@@ -53,7 +53,7 @@ like `setsockopt`, `socket`, `bind`, `connect`, `mount`, `chroot`, `clone`, `for
 |---------|---------|----------------|----------|
 | `PR_chdir` | `chdir` | 49 | Translate path, update `tracee->fs->cwd` via talloc, return success |
 | `PR_fchdir` | `fchdir` | 50 | Resolve dirfd to path, update cwd, return success |
-| `PR_linkat` | `linkat` | 37 | Translate paths, try `renameat()`, fallback to copy+delete on EXDEV/EACCES |
+| `PR_linkat` | `linkat` | 37 | Return `-EPERM` (§34); link2symlink handles hard links before this point |
 | `PR_getcwd` | `getcwd` | 17 | Read `tracee->fs->cwd`, write to tracee buffer, return length |
 | `PR_faccessat2` | `faccessat2` | 439 | Downgrade to `faccessat` (drop flags arg) and restart |
 | `PR_faccessat` | `faccessat` | 48 | Return 0 (noop — zygote blocks even the base `faccessat` on some kernels) |
@@ -93,14 +93,13 @@ to read clobbered values — e.g. `fchdir(3)` appeared as `fchdir(0)` (stdin).
 
 **Fix**: All handlers that read `SYSARG_1` now use `ORIGINAL` register version (saved by
 `save_current_regs(ORIGINAL_SECCOMP_REWRITE)` right after `fetch_regs()`) instead of
-`CURRENT`. Affected handlers: `PR_chdir`, `PR_fchdir`, `PR_linkat`. `SYSARG_2`-`SYSARG_6`
+`CURRENT`. Affected handlers: `PR_chdir`, `PR_fchdir` (and `PR_linkat` until §34 made it return `-EPERM`). `SYSARG_2`-`SYSARG_6`
 (x1-x5) are NOT affected since they don't overlap with the result register.
 
 **linkat**: Alpine's `apk` uses `linkat` for atomic file replacement (create temp file,
-hard-link to target, unlink temp). SELinux blocks hard links on `app_data_file`, and
-cross-directory renames fail with EXDEV due to Android FBE encryption contexts. The handler
-tries `renameat()` first. If that fails with EXDEV or EACCES, it copies the file content
-via a read/write loop and unlinks the original.
+hard-link to target, unlink temp). SELinux blocks hard links on `app_data_file`. The handler
+first tried `renameat()` with a copy fallback; it now returns `-EPERM` (§34), since
+link2symlink turns hard links into symlinks before the syscall reaches the kernel.
 
 **faccessat2**: Modern musl uses `faccessat2` (with flags) for `access()`. The zygote blocks
 it. The handler clears SYSARG_4 (flags) to downgrade to `faccessat` (without flags), which

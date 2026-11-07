@@ -71,7 +71,7 @@ src/proot-integration-test/
 
 1. **detect PM** — checks for apk (Alpine) or apt (Debian)
 2. **update repos** — `apk update` or `apt-get update`
-3. **install tools** — `apk add vim gcc rust cargo git` (idempotent, skips if tools present)
+3. **install tools** — `apk add vim gcc rust cargo git openssh-client` (idempotent, skips if tools present)
 4. **verify vim** — `vim --version | head -1` contains "VIM"
 5. **verify gcc** — `cc --version | head -1` non-empty
 6. **verify rustc** — `rustc --version` contains "rustc"
@@ -156,9 +156,8 @@ Each test uses `run_sh_timed()` which prints timing diagnostics to stderr:
 
 #### ssh (4 tests)
 
-Probe: `/usr/bin/ssh` exists (installed by the apt second-pass in `install_tools()`).
-Auto-skipped on Alpine (openssh-client not in apk add list) and on any distro where
-openssh-client is absent.
+Probe: `/usr/bin/ssh` exists (`apk add` on Alpine, the apt second pass in `install_tools()`
+on Debian and Ubuntu). Skipped on any distro where openssh-client is absent.
 
 1. **ssh -V (OpenSSH version)** — `ssh -V 2>&1` contains "OpenSSH"
 2. **ssh-keygen ed25519 key generation** — `ssh-keygen -t ed25519 -N '' -f /tmp/pit-ssh-ed25519` exits 0

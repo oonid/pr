@@ -34,7 +34,7 @@ src/proot/                  # Patched proot C source (working copy, NOT vendor/)
 src/pr-cli/                 # Rust CLI (replaces proot-distro.sh)
 src/proot-integration-test/ # Guest-side test binary (runs inside proot, TAP output)
 android/                    # Android APK (Kotlin + Compose + JNI)
-scripts/                    # Host-side build scripts (build.sh, download-*.sh)
+scripts/                    # Host-side build script (build.sh)
 vendor/                     # Git submodules — READ ONLY, never modify
 docs/                       # Architecture and feature documentation
 build/                      # Build artifacts (gitignored)
@@ -56,7 +56,7 @@ scripts/build.sh --arch=arm64
 ```bash
 # MUST run from src/pr-cli/ (required for .cargo/config.toml resolution)
 cd src/pr-cli && cargo build --target aarch64-linux-android --release
-# Output: target/aarch64-linux-android/release/pr-cli (~900KB)
+# Output: target/aarch64-linux-android/release/pr-cli (about 3.4 MB, with the guest test binary embedded)
 # Copy to android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
 ```
 
@@ -140,7 +140,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 
 ### Known test failures (Alpine-specific)
 
-- **rust suite on Alpine**: Previously 1/4 pass — rustc compile and cargo build failed with "linker `cc` not found". **Root cause:** hardcoded package name in bind mounts (see `docs/pr-improvements.md` #1). The bind mount pointed at `/data/data/id.or.oo.pr` regardless of the actual app package, which broke `.l2s` symlink resolution. Fixed by deriving `app_dir` dynamically from `APP_PREFIX` in `shared.rs`.
+- **rust suite on Alpine**: Previously 1/4 pass — rustc compile and cargo build failed with "linker `cc` not found". **Root cause:** hardcoded package name in bind mounts (see `docs/proot-improvement.md` §29). The bind mount pointed at `/data/data/id.or.oo.pr` regardless of the actual app package, which broke `.l2s` symlink resolution. Fixed by deriving `app_dir` dynamically from `APP_PREFIX` in `shared.rs`.
 
 ## Code Conventions
 
@@ -163,7 +163,7 @@ All native binaries (proot, loader, pr-cli) are named `lib*.so` in jniLibs/ so A
 - `APP_PREFIX` — app files directory (e.g. `/data/data/id.or.oo.pr/files/usr`)
 - `APP_HOME` — app home directory
 - `APP_PACKAGE` — `id.or.oo.pr`
-- `PROOT_NO_SECCOMP=1` — disables proot's own seccomp filter (not the zygote's)
+- `PROOT_NO_SECCOMP=1` — silences proot's seccomp hint; proot installs no filter of its own, and the zygote's cannot be removed
 - `PROOT_LOADER` — path to proot loader in nativeLibraryDir
 
 ### Shell commands inside proot
@@ -227,6 +227,7 @@ Save their documents in the neutral docs layout, not the skills' default `docs/s
 
 ## Key References
 
+- `docs/README.md` — Index of all documentation: current docs, design specs and historical records
 - `docs/important-notes.md` — Critical constraints, seccomp handlers, pr-cli caveats, read first
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot; §29 covers bind mount bug
 - `docs/rust-toolchain-support.md` — vfork/CLONE_VM fix, link2symlink readlink fix

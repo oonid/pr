@@ -26,7 +26,7 @@ package `id.or.oo.pr.session` so pr's imports barely change:
 | `session/ProotSessionFactory` | The interactive terminal session, unchanged (later it gained optional binds; see §4) |
 | `ProcessRunner` | Moves with its package and now implements `CommandRunner` |
 | `PrCliCommand` and its `DistroCommand` interface | Take a `ProotHost` instead of pr's `App` |
-| The bootstrap in `App.kt` (prefix directories, native-library and busybox links, `bootstrap.sh`) | Becomes a reusable `PrBootstrap`; `assets/scripts/bootstrap.sh` moves with it |
+| The bootstrap in `App.kt` (prefix directories, native-library and busybox links, `bootstrap.sh`) | Becomes a reusable `PrBootstrap`; `assets/scripts/bootstrap.sh` moves with it. Since then the busybox links and `bootstrap.sh` are gone: `PrBootstrap` creates the directories and links with Kotlin file APIs, and `NativeLinks` deletes the old names |
 
 Their JVM tests move with them (`session/*Test`, `ProcessRunnerTest`, and the fakes). pr keeps
 `App`, `MainActivity`, `TerminalActivity`, `DistroOperations`, `InstalledContainers` and
