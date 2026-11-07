@@ -327,6 +327,17 @@ int canonicalize(Tracee *tracee, const char *user_path, bool deref_final,
 		if (status < 0)
 			return status;
 
+		if (tracee != NULL && tracee->l2s_link_path[0] == '\0') {
+			const char *referee = strrchr(scratch_path, '/');
+			referee = referee != NULL ? referee + 1 : scratch_path;
+			if (strncmp(referee, L2S_PREFIX, strlen(L2S_PREFIX)) == 0
+			    && strncmp(component, L2S_PREFIX, strlen(L2S_PREFIX)) != 0) {
+				status = join_paths(2, tracee->l2s_link_path, guest_path, component);
+				if (status < 0)
+					return status;
+			}
+		}
+
 	canon:
 		/* Canonicalize recursively the referee in case it
 		 * is/contains a link, moreover if it is not an

@@ -163,6 +163,10 @@ const SUITES: &[Suite] = &[
                 name: "readlink /proc/self/fd of a hard link",
                 run: readlink::test_proc_fd_of_hard_link,
             },
+            Test {
+                name: "/proc/self/exe of a program run by a hard link",
+                run: readlink::test_proc_self_exe_of_a_hard_link,
+            },
         ],
     },
     Suite {
@@ -396,6 +400,13 @@ fn now() -> String {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some(readlink::PRINT_EXE) {
+        match std::fs::read_link("/proc/self/exe") {
+            Ok(path) => println!("{}", path.display()),
+            Err(e) => println!("error: {}", e),
+        }
+        return;
+    }
     let suite_name = args.get(1).map(|s| s.as_str()).unwrap_or("all");
 
     let selected: Vec<&Suite> = if suite_name == "all" {

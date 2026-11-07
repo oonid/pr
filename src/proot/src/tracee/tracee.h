@@ -264,6 +264,7 @@ typedef struct tracee {
 	char *new_exe;
 	char *host_exe;
 	char host_exe_before_l2s[PATH_MAX];
+	char l2s_link_path[PATH_MAX];
 
 
 	/**********************************************************************
