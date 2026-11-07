@@ -111,8 +111,8 @@ CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testD
 
 ```bash
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
-# session-core, 178 tests: sessions, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
-# app, 32 tests: DistroOperations, InstalledContainers
+# session-core, 195 tests: sessions, tasks, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# app, 36 tests: DistroOperations, InstalledContainers
 ```
 
 ### Host-side (pr-cli unit/integration)
