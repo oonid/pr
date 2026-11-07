@@ -122,7 +122,7 @@ pr-cli embeds the guest test binary (`include_bytes!` in `cmd_test.rs`), so buil
 ```bash
 (cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
 (cd src/pr-cli && cargo test)
-# 298 tests: 269 library unit + 15 binary (13 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
+# 304 tests: 275 library unit + 15 binary (13 main.rs + 2 enosys_test) + 14 integration (plugin parsers)
 ```
 
 ### On-device integration tests
@@ -182,15 +182,7 @@ Command::new("/bin/sh").args(["-c", "apk update 2>&1"]).output()
 
 **`touch` on older proot builds:** before the utimensat ENOENT fix, `touch /new/file` exited 0 without creating the file. Current builds create it; scripts that must also run on older builds can keep `echo > /path/to/file`. See `docs/important-notes.md` § pr-cli Caveats.
 
-**Double shell wrapping via `pr-cli login`:** `pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')>"`. Never pass `/bin/sh -c` as trailing args — it causes double wrapping and broken quoting:
-```bash
-# WRONG — double-wrapped, quotes get stripped:
-pr-cli login alpine -- /bin/sh -c "apk update && apk add rust"
-
-# CORRECT — pass the raw command string directly:
-pr-cli login alpine -- "apk update && apk add rust"
-```
-See `docs/important-notes.md` § pr-cli Caveats.
+**Commands after `pr-cli login <distro> --`:** one argument runs as a shell command (`/bin/sh -l -c "<arg>"`), so `-- "apk update && apk add rust"` works and is what hr and rs pass. Two or more arguments are a program and its arguments: each is single-quoted, so `-- touch "a b"` makes one file and `$`, `;` or quotes inside an argument stay literal. The guest gets a clean environment: the login variables and `/etc/environment`, plus proot's own `PROOT_*` settings, nothing else from the app. See `docs/important-notes.md` § pr-cli Caveats.
 
 **OCI container path vs legacy plugin path:** OCI installs land in `var/lib/pr/containers/<alias>/rootfs/`. Legacy plugin installs land in `var/lib/pr/installed-rootfs/<distro>/`. See `docs/android-apk-architecture.md` § OCI Container Paths.
 

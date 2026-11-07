@@ -333,29 +333,26 @@ Critical Constraint 7 now requires `--change-id=0:0`: dpkg and other tools check
 Each of these changes what existing scripts see (`id`, `$SHELL`, `$PWD`), so it needs its own
 tests and a device run.
 
-### Double shell wrapping via `pr-cli login`
+### Commands and environment of `pr-cli login`
 
-`pr-cli login <distro> -- <args>` internally prepends `/bin/sh -l -c "<args.join(' ')\>"`
-before calling proot. If callers explicitly pass `/bin/sh -c` as trailing args, the
-command gets double-wrapped:
+`pr-cli login <distro> -- <args>` runs `/bin/sh -l` in the guest:
 
-```
-/bin/sh -l -c "/bin/sh -c command"
-```
+- with one argument, as a shell command: `/bin/sh -l -c "<arg>"`. hr's gateway command and
+  rs's scripts rely on this: `pr-cli login alpine -- "apk update && apk add rust"`;
+- with two or more, as a program and its arguments: each is single-quoted (a `'` becomes
+  `'\''`) and the words are joined, so `-- touch "a b"` makes one file and `$HOME;x` stays
+  literal. `-- /bin/sh -c "apk update && apk add rust"` now works too.
 
-The inner quotes are stripped during `.join(' ')`, breaking the inner shell's
-argument parsing.
+Until 2026-11 the arguments were joined with spaces into one `-c` string, which split
+arguments with spaces and let `$`, `;` and quotes inside them act as shell syntax.
 
-**Rule:** Pass the raw command string directly as the trailing argument — never
-wrap it in `/bin/sh -c` yourself:
-
-```bash
-# WRONG — double-wrapped, inner quotes stripped:
-pr-cli login alpine -- /bin/sh -c "apk update && apk add rust"
-
-# CORRECT — pr-cli adds the shell wrapper itself:
-pr-cli login alpine -- "apk update && apk add rust"
-```
+The guest starts from a clean environment: `PATH`, `HOME`, `USER`, `TERM`, `COLORTERM`,
+`LANG`, `TMPDIR`, the Android variables pr-cli has (`ANDROID_ROOT`, `BOOTCLASSPATH` and
+others), the container's
+`/etc/environment` (a value loses one pair of matching quotes, `export ` and comments are
+skipped, keys must be shell names), and proot's own `PROOT_*` settings, which proot reads
+from its environment. Variables of the app or of whoever ran `pr-cli` (`APP_PREFIX`, the
+app's `HOME`) no longer reach the guest.
 
 ---
 
