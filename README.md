@@ -115,7 +115,7 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
 ```
 
-**8 tests** of the PTY bridge (`PtyNative`) and session reaping.
+**11 tests** of the PTY bridge (`PtyNative`) and session reaping, including UTF-8 erase (`IUTF8`) and a close-on-exec master.
 
 ### On-device integration suite (requires connected Android device)
 
