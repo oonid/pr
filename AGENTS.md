@@ -105,7 +105,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Testing
 
-CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the test binary), `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests, with NDK r27c. Keep pr-cli and the test binary free of clippy warnings.
+CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the test binary), `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests, with NDK r27c and Rust 1.97.1. Keep pr-cli and the test binary free of clippy warnings; raise the pinned Rust version on purpose, fixing any new lints in the same change.
 
 ### Android unit tests (JVM)
 
