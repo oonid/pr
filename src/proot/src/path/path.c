@@ -32,6 +32,7 @@
 #include <errno.h>     /* E*, */
 #include <stddef.h>    /* ptrdiff_t, */
 #include <inttypes.h>  /* PRI*, */
+#include <stdlib.h>    /* realpath(3), */
 
 #include "path/path.h"
 #include "path/binding.h"
@@ -400,6 +401,35 @@ skip:
 	return 0;
 }
 
+static bool canonical_parent_under(const char *root, char path[PATH_MAX])
+{
+	char parent[PATH_MAX];
+	char real[PATH_MAX];
+	const char *name = strrchr(path, '/');
+	size_t length;
+	Comparison comparison;
+
+	if (name == NULL || name == path)
+		return false;
+
+	length = name - path;
+	memcpy(parent, path, length);
+	parent[length] = '\0';
+
+	if (realpath(parent, real) == NULL || strcmp(real, parent) == 0)
+		return false;
+	if (strlen(real) + strlen(name) >= PATH_MAX)
+		return false;
+	strcat(real, name);
+
+	comparison = compare_paths(root, real);
+	if (comparison != PATH1_IS_PREFIX && comparison != PATHS_ARE_EQUAL)
+		return false;
+
+	strcpy(path, real);
+	return true;
+}
+
 /**
  * Remove/substitute the leading part of a "translated" @path.  It
  * returns 0 if no transformation is required (ie. symmetric binding),
@@ -489,6 +519,16 @@ int detranslate_path(Tracee *tracee, char path[PATH_MAX], const char t_referrer[
 			break;
 		}
 	}
+
+	if (t_referrer != NULL)
+		switch (compare_paths(get_root(tracee), path)) {
+		case PATH1_IS_PREFIX:
+		case PATHS_ARE_EQUAL:
+			break;
+		default:
+			(void) canonical_parent_under(get_root(tracee), path);
+			break;
+		}
 
 	switch (compare_paths(get_root(tracee), path)) {
 	case PATH1_IS_PREFIX:
