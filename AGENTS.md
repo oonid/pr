@@ -105,7 +105,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Testing
 
-CI runs `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests.
+CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the test binary), `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests, with NDK r27c. Keep pr-cli and the test binary free of clippy warnings.
 
 ### Android unit tests (JVM)
 

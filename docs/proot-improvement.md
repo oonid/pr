@@ -892,10 +892,10 @@ Not fixed here: when link2symlink is off, the seccomp `PR_linkat` fallback
   `"sp"`, `"pc"` in `loader/assembly-arm.h`, removes both inline-asm warnings. The asm never
   returns (`__builtin_unreachable()` follows), and with NDK r27c both loaders and `proot`
   came out byte-identical. proot-me and termux-proot still have the clobbers.
-- **CI toolchain:** CI builds with the runner's newest NDK (`$ANDROID_NDK_LATEST_HOME`,
-  30.x in 2026-10), while `scripts/build.sh` defaults to r27c and the committed binaries are
-  built with r27c. The warnings match, but CI does not build the toolchain that ships.
-  Pinning CI to r27c (cached download) would close that gap.
+- **CI toolchain:** CI installs NDK r27c (27.2.12479018) with `sdkmanager` and builds proot
+  and the Rust binaries with it, the same NDK `scripts/build.sh` defaults to and the
+  committed binaries are built with. Until 2026-11 CI used the runner's newest NDK
+  (`$ANDROID_NDK_LATEST_HOME`, 30.x).
 
 ---
 
