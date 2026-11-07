@@ -14,10 +14,11 @@ use crate::commands_extra::force_remove_dir_all;
 use crate::install_marker::{pending_install, InstallMarker, PendingInstall};
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
-    apply_layer_blob, blob_matches_digest, blob_path, blob_url, download_blob_with_bearer,
-    link_inside_root, resolve_in_root, sanitize_layer_path, select_manifest_descriptor,
-    OciDescriptor, OciManifest, OciPlatform, DOCKER_MANIFEST_LIST_MEDIA_TYPE,
-    DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+    apply_layer_blob, blob_matches_digest, blob_path, blob_url, fetch_bearer_token,
+    link_inside_root, parse_bearer_challenge, resolve_in_root, sanitize_layer_path,
+    select_manifest_descriptor, OciDescriptor, OciManifest, OciPlatform,
+    DOCKER_MANIFEST_LIST_MEDIA_TYPE, DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE,
+    OCI_IMAGE_MANIFEST_MEDIA_TYPE,
 };
 use crate::plugin::{load_plugins, DistroPlugin};
 use crate::shared::{
@@ -110,19 +111,6 @@ struct RegistryPlatform {
     os_version: Option<String>,
     #[serde(default, rename = "os.features")]
     os_features: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BearerTokenResponse {
-    token: Option<String>,
-    access_token: Option<String>,
-}
-
-#[derive(Debug)]
-struct BearerChallenge {
-    realm: String,
-    service: Option<String>,
-    scope: Option<String>,
 }
 
 #[derive(Debug)]
@@ -343,62 +331,6 @@ fn map_descriptor(input: RegistryDescriptor) -> OciDescriptor {
     }
 }
 
-async fn fetch_bearer_token(
-    client: &reqwest::Client,
-    challenge: &BearerChallenge,
-) -> Result<String, String> {
-    let mut request = client.get(&challenge.realm);
-    if let Some(service) = challenge.service.as_deref() {
-        request = request.query(&[("service", service)]);
-    }
-    if let Some(scope) = challenge.scope.as_deref() {
-        request = request.query(&[("scope", scope)]);
-    }
-
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("fetch OCI auth token: {}", e))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "fetch OCI auth token failed with HTTP {}",
-            response.status()
-        ));
-    }
-    let body: BearerTokenResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("decode OCI auth token response: {}", e))?;
-    body.token
-        .or(body.access_token)
-        .ok_or_else(|| "OCI auth token response missing token field".to_string())
-}
-
-fn parse_bearer_challenge(header: &str) -> Option<BearerChallenge> {
-    let header = header.trim();
-    let rest = header.strip_prefix("Bearer ")?;
-    let mut realm = None;
-    let mut service = None;
-    let mut scope = None;
-
-    for part in rest.split(',') {
-        let (key, value) = part.trim().split_once('=')?;
-        let value = value.trim().trim_matches('"').to_string();
-        match key.trim() {
-            "realm" => realm = Some(value),
-            "service" => service = Some(value),
-            "scope" => scope = Some(value),
-            _ => {}
-        }
-    }
-
-    Some(BearerChallenge {
-        realm: realm?,
-        service,
-        scope,
-    })
-}
-
 async fn fetch_manifest_json(
     client: &reqwest::Client,
     url: &str,
@@ -479,10 +411,7 @@ async fn resolve_oci_manifest(
     oci_ref: &ResolvedOciReference,
     architecture: &str,
 ) -> Result<ResolvedOciManifest, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("pr-cli-oci/0.1")
-        .build()
-        .map_err(|e| format!("create OCI registry client: {}", e))?;
+    let client = crate::oci::http_client("pr-cli-oci/0.1", crate::oci::NETWORK_RETRY.stall)?;
 
     let manifest_url = format!(
         "{}/v2/{}/manifests/{}",
@@ -729,7 +658,7 @@ fn populate_oci_container(
     let device_arch = detect_device_arch();
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create tokio runtime: {}", e))?;
     let resolved_manifest = rt.block_on(resolve_oci_manifest(resolved, &device_arch))?;
-    let bearer_token = resolved_manifest.bearer_token;
+    let mut bearer_token = resolved_manifest.bearer_token;
     let manifest = resolved_manifest.manifest;
 
     if manifest.layers.is_empty() {
@@ -744,11 +673,12 @@ fn populate_oci_container(
         Path::new(&rootfs),
         |layer, blob| {
             let url = blob_url(&resolved.registry_base, &resolved.repository, &layer.digest);
-            rt.block_on(download_blob_with_bearer(
+            rt.block_on(crate::oci::download_layer(
                 &url,
                 blob,
                 &layer.digest,
-                bearer_token.as_deref(),
+                &mut bearer_token,
+                crate::oci::NETWORK_RETRY,
             ))
         },
     )?;
@@ -934,103 +864,121 @@ fn fix_elf_execute_bits(rootfs: &str) {
     }
 }
 
-fn download_file(url: &str, output_path: &str, max_retries: u32) -> Result<(), String> {
-    let mut retry = 0;
-    let mut delay = 5u64;
+fn archive_cache_path(cache_dir: &str, url: &str) -> String {
+    let name = url.rsplit('/').next().unwrap_or("rootfs.tar.xz");
+    let key = format!("{:x}", Sha256::digest(url.as_bytes()));
+    format!("{}/{}-{}", cache_dir, &key[..16], name)
+}
 
-    while retry < max_retries {
-        if retry > 0 {
+fn download_file_with(url: &str, output: &Path, retry: crate::oci::Retry) -> Result<(), String> {
+    use crate::oci::Failure;
+    let partial = PathBuf::from(format!("{}.partial", output.display()));
+    let client = crate::oci::http_client("pr-cli/0.1", retry.stall)?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create tokio runtime: {}", e))?;
+    let mut delay = retry.first_delay;
+
+    for attempt in 1..=retry.attempts {
+        if attempt > 1 {
             println!(
                 "{}[{}*{}{}] Retry {}/{} after {}s...{}",
-                BLUE, YELLOW, BLUE, CYAN, retry, max_retries, delay, RESET
+                BLUE,
+                YELLOW,
+                BLUE,
+                CYAN,
+                attempt - 1,
+                retry.attempts - 1,
+                delay.as_secs(),
+                RESET
             );
-            std::thread::sleep(std::time::Duration::from_secs(delay));
-            delay = (delay * 2).min(60);
+            std::thread::sleep(delay);
+            delay = (delay * 2).min(std::time::Duration::from_secs(60));
         }
-
-        let _ = fs::remove_file(output_path);
-
-        let rt =
-            tokio::runtime::Runtime::new().map_err(|e| format!("create tokio runtime: {}", e))?;
-
-        let result = rt.block_on(async {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .connect_timeout(std::time::Duration::from_secs(30))
-                .build()
-                .map_err(|e| format!("build HTTP client: {}", e))?;
-
-            let resp = client.get(url).send().await.map_err(|e| {
-                let mut msg = format!("HTTP request failed: {}", e);
-                let mut source: Option<&dyn Error> = e.source();
-                while let Some(err) = source {
-                    msg.push_str(&format!("\n  caused by: {}", err));
-                    source = err.source();
-                }
-                eprintln!("{}", msg);
-                msg
-            })?;
-
-            if !resp.status().is_success() {
-                return Err(format!("HTTP {}", resp.status()));
-            }
-
-            let total = resp.content_length();
-            let mut file =
-                fs::File::create(output_path).map_err(|e| format!("create file: {}", e))?;
-
-            let mut downloaded: u64 = 0;
-            let mut stream = resp.bytes_stream();
-            use futures_util::StreamExt;
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|e| format!("read chunk: {}", e))?;
-                file.write_all(&chunk)
-                    .map_err(|e| format!("write chunk: {}", e))?;
-                downloaded += chunk.len() as u64;
-
-                if let Some(total) = total {
-                    if total > 0 {
-                        let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
-                        println!(
-                            "\r{}[{}*{}{}] {:.1}MB / {:.1}MB ({}%){}   ",
-                            BLUE,
-                            GREEN,
-                            BLUE,
-                            CYAN,
-                            downloaded as f64 / (1024.0 * 1024.0),
-                            total as f64 / (1024.0 * 1024.0),
-                            pct,
-                            RESET
-                        );
-                    }
-                }
-            }
-
-            file.sync_all().map_err(|e| format!("flush file: {}", e))?;
-            drop(file);
-
-            Ok(())
-        });
-
-        match result {
+        let _ = fs::remove_file(&partial);
+        match rt.block_on(fetch_archive(&client, url, &partial)) {
             Ok(()) => {
-                if Path::new(output_path).exists()
-                    && fs::metadata(output_path).map(|m| m.len()).unwrap_or(0) > 0
-                {
-                    return Ok(());
-                }
+                return fs::rename(&partial, output).map_err(|e| {
+                    let _ = fs::remove_file(&partial);
+                    format!("move {} into place: {}", output.display(), e)
+                });
             }
-            Err(e) => {
+            Err(Failure::Fatal(e)) => {
+                let _ = fs::remove_file(&partial);
+                return Err(e);
+            }
+            Err(Failure::Retry(e)) | Err(Failure::Unauthorized(e)) => {
                 eprintln!("download error: {}", e);
             }
         }
-
-        retry += 1;
     }
 
-    let _ = fs::remove_file(output_path);
-    Err(format!("download failed after {} retries", max_retries))
+    let _ = fs::remove_file(&partial);
+    Err(format!("download failed after {} attempts", retry.attempts))
+}
+
+async fn fetch_archive(
+    client: &reqwest::Client,
+    url: &str,
+    partial: &Path,
+) -> Result<(), crate::oci::Failure> {
+    use crate::oci::Failure;
+    use futures_util::StreamExt;
+
+    let resp = client.get(url).send().await.map_err(|e| {
+        let mut msg = format!("HTTP request failed: {}", e);
+        let mut source: Option<&dyn Error> = e.source();
+        while let Some(err) = source {
+            msg.push_str(&format!("\n  caused by: {}", err));
+            source = err.source();
+        }
+        Failure::Retry(msg)
+    })?;
+    if !resp.status().is_success() {
+        return Err(crate::oci::status_failure(url, &resp));
+    }
+
+    let total = resp.content_length();
+    let mut file =
+        fs::File::create(partial).map_err(|e| Failure::Fatal(format!("create file: {}", e)))?;
+    let mut downloaded: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| Failure::Retry(format!("read chunk: {}", e)))?;
+        file.write_all(&chunk)
+            .map_err(|e| Failure::Fatal(format!("write chunk: {}", e)))?;
+        downloaded += chunk.len() as u64;
+        if let Some(total) = total.filter(|t| *t > 0) {
+            let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
+            println!(
+                "\r{}[{}*{}{}] {:.1}MB / {:.1}MB ({}%){}   ",
+                BLUE,
+                GREEN,
+                BLUE,
+                CYAN,
+                downloaded as f64 / (1024.0 * 1024.0),
+                total as f64 / (1024.0 * 1024.0),
+                pct,
+                RESET
+            );
+        }
+    }
+    file.sync_all()
+        .map_err(|e| Failure::Fatal(format!("flush file: {}", e)))?;
+    if downloaded == 0 {
+        return Err(Failure::Retry("empty download".to_string()));
+    }
+    Ok(())
+}
+
+fn download_file(url: &str, output_path: &str, max_retries: u32) -> Result<(), String> {
+    download_file_with(
+        url,
+        Path::new(output_path),
+        crate::oci::Retry {
+            attempts: max_retries,
+            first_delay: std::time::Duration::from_secs(5),
+            stall: crate::oci::NETWORK_RETRY.stall,
+        },
+    )
 }
 
 fn verify_sha256(expected: &str, filepath: &str) -> Result<(), String> {
@@ -1603,13 +1551,8 @@ pub fn command_install(
         }
 
         // Download
-        let archive_name = tarball_url
-            .rsplit('/')
-            .next()
-            .unwrap_or("rootfs.tar.xz")
-            .to_string();
         fs::create_dir_all(&download_cache_dir).map_err(|e| format!("create cache dir: {}", e))?;
-        let archive_path = format!("{}/{}", download_cache_dir, archive_name);
+        let archive_path = archive_cache_path(&download_cache_dir, &tarball_url);
 
         if Path::new(&archive_path).exists() {
             msg_status("Using cached rootfs archive...");
@@ -1944,6 +1887,168 @@ mod tests {
     }
 
     const PIN: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn quick_retry(attempts: u32) -> crate::oci::Retry {
+        crate::oci::Retry {
+            attempts,
+            first_delay: std::time::Duration::from_millis(10),
+            stall: std::time::Duration::from_millis(400),
+        }
+    }
+
+    fn archive_body() -> Vec<u8> {
+        (0..32 * 1024).map(|i| (i % 253) as u8).collect()
+    }
+
+    #[test]
+    fn a_cut_off_download_leaves_no_file_behind() {
+        use crate::test_http::*;
+        let body = archive_body();
+        let server = serve(vec![
+            Step::Truncated {
+                body: body.clone(),
+                sent: body.len() / 2,
+            },
+            Step::Truncated {
+                body: body.clone(),
+                sent: body.len() / 2,
+            },
+        ]);
+        let tmp = unique_temp_dir("pr-cli-download-cut");
+        fs::create_dir_all(&tmp).expect("tmp");
+        let output = tmp.join("rootfs.tar.xz");
+
+        let result = download_file_with(
+            &format!("{}/rootfs.tar.xz", server.base),
+            &output,
+            quick_retry(2),
+        );
+
+        assert!(result.is_err());
+        let left: Vec<_> = fs::read_dir(&tmp).expect("read tmp").collect();
+        assert!(left.is_empty(), "{:?}", left);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_download_in_progress_is_not_at_the_final_path() {
+        use crate::test_http::*;
+        let body = archive_body();
+        let server = serve(vec![Step::Stall {
+            body: body.clone(),
+            sent: body.len() / 2,
+            pause: std::time::Duration::from_millis(800),
+        }]);
+        let tmp = unique_temp_dir("pr-cli-download-partial");
+        fs::create_dir_all(&tmp).expect("tmp");
+        let output = tmp.join("rootfs.tar.xz");
+        let url = format!("{}/rootfs.tar.xz", server.base);
+        let target = output.clone();
+        let retry = crate::oci::Retry {
+            stall: std::time::Duration::from_secs(5),
+            ..quick_retry(1)
+        };
+        let download = std::thread::spawn(move || download_file_with(&url, &target, retry));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        assert!(
+            !output.exists(),
+            "a half-written archive is at the final path"
+        );
+        download.join().expect("join").expect("download completes");
+        assert_eq!(fs::read(&output).expect("read output"), body);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_slow_but_steady_download_completes() {
+        use crate::test_http::*;
+        let body = archive_body();
+        let server = serve(vec![Step::Trickle {
+            body: body.clone(),
+            chunks: 8,
+            gap: std::time::Duration::from_millis(150),
+        }]);
+        let tmp = unique_temp_dir("pr-cli-download-slow");
+        fs::create_dir_all(&tmp).expect("tmp");
+        let output = tmp.join("rootfs.tar.xz");
+
+        download_file_with(
+            &format!("{}/rootfs.tar.xz", server.base),
+            &output,
+            quick_retry(1),
+        )
+        .expect("a steady download is not cut");
+
+        assert_eq!(fs::read(&output).expect("read output"), body);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_stalled_download_is_retried() {
+        use crate::test_http::*;
+        let body = archive_body();
+        let server = serve(vec![
+            Step::Stall {
+                body: body.clone(),
+                sent: body.len() / 2,
+                pause: std::time::Duration::from_secs(3),
+            },
+            ok(&body),
+        ]);
+        let tmp = unique_temp_dir("pr-cli-download-stall");
+        fs::create_dir_all(&tmp).expect("tmp");
+        let output = tmp.join("rootfs.tar.xz");
+        let started = std::time::Instant::now();
+
+        download_file_with(
+            &format!("{}/rootfs.tar.xz", server.base),
+            &output,
+            quick_retry(3),
+        )
+        .expect("retry after the stall succeeds");
+
+        assert_eq!(fs::read(&output).expect("read output"), body);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_missing_archive_is_not_retried() {
+        use crate::test_http::*;
+        let server = serve(vec![status("404 Not Found"), ok(b"late")]);
+        let tmp = unique_temp_dir("pr-cli-download-missing");
+        fs::create_dir_all(&tmp).expect("tmp");
+
+        let result = download_file_with(
+            &format!("{}/rootfs.tar.xz", server.base),
+            &tmp.join("rootfs.tar.xz"),
+            quick_retry(3),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(server.requests().len(), 1);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn the_archive_cache_is_keyed_by_the_whole_url() {
+        let a = archive_cache_path("/cache", "https://a.example/x/rootfs.tar.xz");
+        let b = archive_cache_path("/cache", "https://b.example/x/rootfs.tar.xz");
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            archive_cache_path("/cache", "https://a.example/x/rootfs.tar.xz")
+        );
+        for path in [&a, &b] {
+            assert!(path.starts_with("/cache/"), "{}", path);
+            assert!(path.ends_with("-rootfs.tar.xz"), "{}", path);
+        }
+    }
 
     #[test]
     fn a_tagged_digest_reference_drops_the_tag() {
@@ -2862,11 +2967,15 @@ mod tests {
     const GOOD_PLUGIN: &str =
         "DISTRO_NAME=\"Test\"\nTARBALL_URL_x86_64=\"https://example.invalid/good.tar.xz\"\n";
 
+    fn cached(cache: &Path, url: &str) -> PathBuf {
+        PathBuf::from(archive_cache_path(&cache.to_string_lossy(), url))
+    }
+
     fn seed_good_archive(prefix: &Path) {
         let cache = prefix.join("var/lib/pr/dlcache");
         fs::create_dir_all(&cache).expect("create cache");
         write_raw_xz_tar(
-            &cache.join("good.tar.xz"),
+            &cached(&cache, "https://example.invalid/good.tar.xz"),
             &[
                 RawEntry::Dir("top/"),
                 RawEntry::Dir("top/etc/"),
@@ -3144,7 +3253,11 @@ mod tests {
         let prefix = unique_temp_dir("pr-cli-install-catalog-tarball").join("usr");
         let cache = prefix.join("var/lib/pr/dlcache");
         fs::create_dir_all(&cache).expect("create cache");
-        fs::write(cache.join("broken.tar.xz"), b"not an archive").expect("seed archive");
+        fs::write(
+            cached(&cache, "https://example.invalid/broken.tar.xz"),
+            b"not an archive",
+        )
+        .expect("seed archive");
         std::env::set_var("APP_PREFIX", &prefix);
         std::env::set_var("DISTRO_ARCH", "x86_64");
 
@@ -3160,7 +3273,7 @@ mod tests {
         let err = result.expect_err("the archive is broken");
         assert!(!err.contains("not supported"), "{}", err);
         assert!(
-            !cache.join("broken.tar.xz").exists(),
+            !cached(&cache, "https://example.invalid/broken.tar.xz").exists(),
             "extraction was not tried"
         );
         assert!(!prefix.join("var/lib/pr/installed-rootfs/debian").exists());
@@ -3174,13 +3287,17 @@ mod tests {
         with_test_prefix("pr-cli-install-broken-archive", plugin, |prefix| {
             let cache = prefix.join("var/lib/pr/dlcache");
             fs::create_dir_all(&cache).expect("create cache");
-            fs::write(cache.join("broken.tar.xz"), b"not an archive").expect("seed archive");
+            fs::write(
+                cached(&cache, "https://example.invalid/broken.tar.xz"),
+                b"not an archive",
+            )
+            .expect("seed archive");
 
             assert!(command_install("testdistro", None, None, None).is_err());
             assert!(!prefix
                 .join("var/lib/pr/installed-rootfs/testdistro")
                 .exists());
-            assert!(!cache.join("broken.tar.xz").exists());
+            assert!(!cached(&cache, "https://example.invalid/broken.tar.xz").exists());
         });
     }
 
