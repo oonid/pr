@@ -7,6 +7,7 @@ BUILD_DIR="${PROJECT_ROOT}/build"
 SRC_DIR="${PROJECT_ROOT}/src/proot"
 
 NDK_VERSION="r27c"
+NDK_SHA256="59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc"
 NDK_URL_BASE="https://dl.google.com/android/repository"
 
 TALLOC_SRC="${PROJECT_ROOT}/vendor/samba/lib/talloc"
@@ -60,7 +61,7 @@ step() {
 
 check_deps() {
     local missing=()
-    for cmd in make python3 readelf file curl; do
+    for cmd in make python3 readelf file curl unzip sha256sum; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
@@ -95,14 +96,25 @@ setup_ndk() {
 
     if [ ! -f "${ndk_dir}/${ndk_zip}" ]; then
         info "Downloading ${ndk_zip} ..."
-        curl -L -o "${ndk_dir}/${ndk_zip}" \
+        curl -fL -o "${ndk_dir}/${ndk_zip}.partial" \
             "${NDK_URL_BASE}/${ndk_zip}" \
             || die "Failed to download NDK"
+        mv "${ndk_dir}/${ndk_zip}.partial" "${ndk_dir}/${ndk_zip}"
     fi
 
+    info "Checking ${ndk_zip} ..."
+    echo "${NDK_SHA256}  ${ndk_dir}/${ndk_zip}" | sha256sum -c --quiet - \
+        || die "SHA-256 mismatch for ${ndk_dir}/${ndk_zip}; delete it and run again"
+
     info "Extracting NDK ..."
-    unzip -q "${ndk_dir}/${ndk_zip}" -d "$ndk_dir" \
-        || die "Failed to extract NDK"
+    local extract_dir="${ndk_dir}/extract.$$"
+    rm -rf "$extract_dir"
+    unzip -q "${ndk_dir}/${ndk_zip}" -d "$extract_dir" \
+        || { rm -rf "$extract_dir"; die "Failed to extract NDK"; }
+    [ -d "${extract_dir}/android-ndk-${NDK_VERSION}" ] \
+        || { rm -rf "$extract_dir"; die "android-ndk-${NDK_VERSION} not found in ${ndk_zip}"; }
+    mv "${extract_dir}/android-ndk-${NDK_VERSION}" "$ndk_install"
+    rm -rf "$extract_dir"
 
     NDK="$ndk_install"
     info "NDK installed at: $NDK"
@@ -120,13 +132,22 @@ get_sysroot() {
     echo "${BUILD_DIR}/sysroot/${arch}"
 }
 
+toolchain_id() {
+    local triple="$1"
+    echo "${NDK}"
+    "$(get_ndk_bin_dir)/${triple}${API_LEVEL}-clang" --version | head -1
+}
+
 setup_sysroot() {
     local arch="$1"
     local triple="${TRIPLE[$arch]}"
     local sysroot
     sysroot="$(get_sysroot "$arch")"
 
-    if [ -d "${sysroot}/usr/lib" ]; then
+    local wanted
+    wanted="$(toolchain_id "$triple")"
+
+    if [ -d "${sysroot}/usr/lib" ] && [ "$(cat "${sysroot}/.toolchain" 2>/dev/null)" = "$wanted" ]; then
         info "Sysroot for ${arch} already exists"
         return
     fi
@@ -135,10 +156,12 @@ setup_sysroot() {
 
     local ndk_sysroot="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
+    rm -rf "$sysroot"
     mkdir -p "${sysroot}/usr/lib" "${sysroot}/usr/include"
 
     cp -a "${ndk_sysroot}/usr/include" "${sysroot}/usr/"
     cp -a "${ndk_sysroot}/usr/lib/${triple}" "${sysroot}/usr/lib/"
+    echo "$wanted" > "${sysroot}/.toolchain"
 
     info "Sysroot created at: ${sysroot}"
 }
@@ -150,8 +173,12 @@ build_talloc() {
     sysroot="$(get_sysroot "$arch")"
     local talloc_lib="${sysroot}/usr/lib/libtalloc.a"
     local talloc_inc="${sysroot}/usr/include/talloc.h"
+    local talloc_flags="-DNO_CONFIG_H=1 -D__STDC_WANT_LIB_EXT1__=1 -ffile-prefix-map=${PROJECT_ROOT}/= -O2 -Wall"
+    local talloc_id
+    talloc_id="$(toolchain_id "$triple"; echo "$talloc_flags")"
 
     if [ -f "$talloc_lib" ] && [ -f "$talloc_inc" ] \
+        && [ "$(cat "${talloc_lib}.id" 2>/dev/null)" = "$talloc_id" ] \
         && [ "$talloc_lib" -nt "${TALLOC_STUB}/replace.h" ] \
         && [ "$talloc_lib" -nt "${TALLOC_SRC}/talloc.c" ] \
         && [ "$talloc_lib" -nt "${TALLOC_SRC}/talloc.h" ]; then
@@ -185,9 +212,7 @@ build_talloc() {
         -I"${TALLOC_STUB}" \
         -I"${TALLOC_SRC}" \
         -I"${sysroot}/usr/include" \
-        -DNO_CONFIG_H=1 \
-        -D__STDC_WANT_LIB_EXT1__=1 \
-        -O2 -Wall \
+        ${talloc_flags} \
         -c "${TALLOC_SRC}/talloc.c" \
         -o "${build_dir}/talloc.o" \
         || die "talloc compile failed for ${arch}"
@@ -199,6 +224,7 @@ build_talloc() {
         || die "talloc ranlib failed for ${arch}"
 
     cp "${TALLOC_SRC}/talloc.h" "${talloc_inc}"
+    echo "$talloc_id" > "${talloc_lib}.id"
 
     info "libtalloc built: $(du -h "${talloc_lib}" | cut -f1)"
 }
@@ -227,7 +253,7 @@ build_proot() {
     [ -x "$objcopy" ] || die "OBJCOPY not found: $objcopy"
     [ -x "$objdump" ] || die "OBJDUMP not found: $objdump"
 
-    local cflags="--sysroot=${sysroot} -I${sysroot}/usr/include"
+    local cflags="--sysroot=${sysroot} -I${sysroot}/usr/include -ffile-prefix-map=${PROJECT_ROOT}/="
     local ldflags="--sysroot=${sysroot} -L${sysroot}/usr/lib -ltalloc -static -Wl,-z,noexecstack,-z,max-page-size=16384"
 
     info "Building with CC=${cc##*/} ..."
@@ -250,11 +276,11 @@ build_proot() {
         die "proot binary not found after build"
     fi
 
-    cp "${SRC_DIR}/src/proot" "${out_dir}/proot"
+    "$strip" -o "${out_dir}/proot" "${SRC_DIR}/src/proot"
     chmod 755 "${out_dir}/proot"
 
     if [ -f "${SRC_DIR}/src/loader/loader" ]; then
-        cp "${SRC_DIR}/src/loader/loader" "${out_dir}/loader"
+        "$strip" -o "${out_dir}/loader" "${SRC_DIR}/src/loader/loader"
         chmod 755 "${out_dir}/loader"
     fi
 
@@ -264,6 +290,11 @@ build_proot() {
 fix_tls_alignment() {
     local arch="$1"
     local binary="${BUILD_DIR}/out/${arch}/proot"
+
+    if ! readelf -h "$binary" | grep -q 'Class:.*ELF64'; then
+        info "Not a 64-bit ELF (skipping TLS alignment fix)"
+        return
+    fi
 
     local tls_align_hex
     tls_align_hex=$(readelf -W -l "$binary" 2>/dev/null \
