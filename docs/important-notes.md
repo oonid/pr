@@ -5,7 +5,7 @@ See also:
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (SELinux W^X bypass, seccomp analysis)
 - `docs/rust-port-pr-cli.md` — Replace proot-distro.sh with Rust binary
 - `docs/alpine-linux-support.md` — Alpine Linux investigation and fixes
-- `docs/integration-tests.md` — Integration test suite (59 tests, 68 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (60 tests, 69 runs with the isolated readlink pass)
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot
 
 ---
@@ -210,7 +210,7 @@ still has them; reinstalling the `passwd` package restores the real binaries:
 
 `touch` and Python's `Path.touch()` call `utimensat` on the path first and create
 the file only when it returns ENOENT. fake_id0's utimes EXIT handler forced every
-error to 0 (for dpkg on L2S symlinks), so `touch /new/file` exited 0 without
+error to 0 (for dpkg on L2S symlinks; since 2026-11 only EPERM, EACCES and ENOENT), so `touch /new/file` exited 0 without
 creating the file. The handler now lets ENOENT through when the target does not
 exist on the host (`docs/proot-improvement.md §28`); the integration test
 "touch creates a missing file" covers it. Proot binaries built before this fix
