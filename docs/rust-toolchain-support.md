@@ -1,6 +1,6 @@
 # Rust Toolchain Support (vfork/CLONE_VM and link2symlink Fixes)
 
-> Historical record of the T8 fixes (2026-04), with follow-ups dated in the text. Later changes: readlink re-reads a target the kernel truncated, so busybox `readlink` returns EINVAL instead of a short path (docs/proot-improvement.md, readlink test 9); the SIGSYS log is `$PROOT_TMP_DIR/sigsys-log.txt`, trimmed only over 256 KiB.
+> Historical record of the T8 fixes (2026-04), with follow-ups dated in the text. Later changes: readlink re-reads a target the kernel truncated, so busybox `readlink` returns EINVAL instead of a short path (docs/proot-improvement.md, readlink test 9); the SIGSYS log is `$PROOT_TMP_DIR/sigsys-log.txt`, trimmed only over 256 KiB; since 2026-11 the T8.1 stripping is gone from the ptrace path, because it made glibc's `posix_spawn` report success for a missing program and the hang no longer reproduces (docs/proot-improvement.md, `PR_clone`/`PR_clone3`; gcc tests 4 and 5).
 
 Date: 2026-04-16
 Status: T8.1 Complete, T8.2 Complete, T8.3 Complete, T8.4 Complete

@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass.
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests.
 
 ---
 
@@ -35,9 +35,9 @@ src/proot-integration-test/
   .cargo/config.toml      NDK cross-compilation (aarch64-linux-android)
   src/main.rs             TAP runner: proot-integration-test [suite|all]
   src/distro.rs           Package manager detection + tool installation (8 tests)
-  src/clone.rs            CLONE_VM stripping tests (5 tests)
+  src/clone.rs            process spawning: fork+exec, pipes, nesting, threads (5 tests)
   src/readlink.rs         .l2s. hiding, readlink, realpath tests (9 tests)
-  src/gcc.rs              GCC prefix resolution, C compilation (3 tests)
+  src/gcc.rs              GCC prefix resolution, C compilation, posix_spawn and vfork (5 tests)
   src/rust.rs             rustc, cargo build with timing diagnostics (4 tests)
   src/git.rs              git init, git config, cargo new with vcs git (3 tests)
   src/pipe.rs             pipe/pipe2 syscall availability (3 tests)
@@ -54,9 +54,9 @@ src/proot-integration-test/
 | Suite | Tests | Probe | Verifies |
 |-------|-------|-------|----------|
 | distro | 8 | always | Package manager detection, tool installation, os-release |
-| clone | 5 | always | T8.1 CLONE_VM/VFORK stripping (ptrace + SIGSYS paths) |
+| clone | 5 | always | Process spawning (fork+exec, piped output, nested spawns, threads, concurrent spawns) |
 | readlink | 9 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files; `/proc/self/exe` of a program run by a hard link; small readlink buffers; run again isolated as `readlink-isolated` |
-| gcc | 3 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe |
+| gcc | 5 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe; the distro libc's `posix_spawn` and `vfork` |
 | rust | 4 | `/usr/bin/rustc` exists | T8.3 si_syscall=-1 suppression, T8.4 SIGSYS handlers |
 | git | 3 | `/usr/bin/git` exists | T8.3 si_syscall=-1, T8.4 setuid/setgid handlers |
 | pipe | 3 | always | pipe2 availability (disproves blocked-by-seccomp theory) |
@@ -111,11 +111,13 @@ the app directory has two such paths (`/data/user/0/<package>` and `/data/data/<
 which one proot sees depends on how it was started; the symlink makes the check independent of
 that and of the device.
 
-#### gcc (3 tests)
+#### gcc (5 tests)
 
 1. **cc -print-search-dirs** — install path has no `.l2s.`
 2. **compile and run C program** — `printf("ok\n")` compiles and runs
 3. **/proc/self/exe after exec** — no `.l2s.` in exe path after exec
+4. **posix_spawn of a missing program is ENOENT** — a C program built with the distro's `cc`; glibc reports the exec error through memory the vfork child shares with the parent, so it needs `CLONE_VM` and `CLONE_VFORK` kept (with them stripped it returned 0)
+5. **vfork and exec return to the parent** — `vfork` + `execvp("true")` and `vfork` + a failed `execv`, under `timeout 20`, so a vfork that never returns fails instead of hanging the suite
 
 #### rust (4 tests)
 

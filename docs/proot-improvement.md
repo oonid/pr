@@ -387,7 +387,7 @@ define this constant.
 | `PR_execveat` | Converts to `PR_execve` when AT_FDCWD, else ENOSYS |
 | `PR_statx` | Separate handler with AT_SYMLINK_NOFOLLOW flag handling |
 | `PR_memfd_create` | Blocks specific names: `"JITCode:*"` (Qt JIT), `"opcache_lock"` (PHP 8.3), `"lib/apk/exec/*"` (apk-tools v3) |
-| `PR_clone`/`PR_clone3` | Strips `CLONE_VM` and `CLONE_VFORK` from clone flags when `CLONE_THREAD` is not set — converts Rust's `vfork`-style process spawns into regular `fork()` |
+| `PR_clone`/`PR_clone3` | No ptrace-path handler since 2026-11: `CLONE_VM` and `CLONE_VFORK` pass through, as in upstream and Termux proot. The T8.1 handler stripped them when `CLONE_THREAD` was not set, which made glibc's `posix_spawn` (and Rust's `Command`) report success for a program that does not exist; the vfork hang it worked around no longer reproduces (vfork + exec, posix_spawn, `cargo build` and the full suite pass with the flags kept). The SIGSYS path, for devices whose filter blocks `clone`/`clone3`, still strips them |
 
 ### Android ioctl translation
 
