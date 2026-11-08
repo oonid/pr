@@ -786,7 +786,7 @@ static bool utime_target_missing(Tracee *tracee, Reg path_sysarg)
 		return false;
 
 	size = read_string(tracee, path, address, PATH_MAX);
-	if (size <= 1 || size > PATH_MAX || path[0] != '/')
+	if (size <= 1 || size >= PATH_MAX || path[0] != '/')
 		return false;
 
 	return lstat(path, &statl) < 0 && errno == ENOENT;
