@@ -57,7 +57,7 @@ Our engine handles all of these:
 - SIGSYS handlers intercept blocked syscalls and emulate them in userspace
 - The `PROOT_LOADER` mechanism uses `nativeLibraryDir` to bypass W^X
 - Fake root (`--change-id=0:0`) makes `dpkg` and `apt-get` work without real root
-- `CLONE_VM`/`CLONE_VFORK` stripping enables Rust's `cargo build` to work inside proot
+- vfork-style spawns (`CLONE_VM`/`CLONE_VFORK`) pass through, so glibc's `posix_spawn` and Rust's `Command` report a missing program, and `cargo build` works
 
 ## Building
 
@@ -135,7 +135,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-In the app, **Test** in an installed container's menu runs the same suite. **57 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot; Test also runs readlink again under isolation, 66 results in all
+In the app, **Test** in an installed container's menu runs the same suite. **59 tests** across 11 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot; Test also runs readlink again under isolation, 68 results in all
 
 ## Project structure
 
