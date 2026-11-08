@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08).
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite.
 
 ---
 
@@ -44,8 +44,12 @@ src/proot-integration-test/
   src/general.rs          file I/O, symlinks, pipes, signals, env, touch, auxv, execveat, statx (9 tests)
   src/ssh.rs              openssh-client: version, keygen, fingerprint, scp (4 tests)
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
-  src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (7 tests)
+  src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (8 tests)
 ```
+
+The `exit` suite is not in the guest binary: a program inside proot cannot see proot's own exit status,
+so pr-cli runs it itself (`run_exit_suite` in `src/pr-cli/src/cmd_test.rs`), starting proot as the
+other suites do, with `--kill-on-exit`, and checking the status it exits with.
 
 ---
 
@@ -64,6 +68,7 @@ src/proot-integration-test/
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
+| exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
 
@@ -199,6 +204,19 @@ Each test calls `chroot()` in a forked child, so the runner keeps its root.
    fallback when proot runs without `--link2symlink` (the VM's no-l2s launcher)
 
 ---
+
+#### exit (4 tests, run by pr-cli)
+
+pr-cli starts proot with `/bin/sh -c '<case>'` and checks proot's exit status:
+
+1. **a normal exit keeps its code**: `exit 3` gives 3
+2. **a program killed by SIGKILL exits 137**: `kill -9 $$` gives 128 + 9
+3. **a program killed by SIGTERM exits 143**: `kill -TERM $$` gives 128 + 15
+4. **processes left behind do not change a clean exit**: `sleep 30 & exit 0` gives 0, although
+   `--kill-on-exit` SIGKILLs the `sleep`
+
+Before proot took a signal into its exit status (proot-improvement §36), cases 2 and 3 gave 255, or
+the code of whatever process had last exited normally.
 
 ## CLI Usage
 
