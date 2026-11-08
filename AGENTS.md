@@ -101,7 +101,7 @@ CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the te
 
 ```bash
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
-# session-core, 205 tests: sessions, tasks, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
+# session-core, 206 tests: sessions, tasks, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
 # app, 43 tests: DistroOperations, InstalledContainers, NotificationAccess, TerminalStart
 ```
 
