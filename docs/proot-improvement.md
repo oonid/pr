@@ -962,3 +962,17 @@ At initialization fake_id0 computes the cache gid from the real uid and keeps it
 the VM and desktop Linux are not, and get `(gid_t) -1`). `fake_owner_gid()` maps it like the
 real gid, so stat, statx and the USERLAND fstat path show the fake group. (`SO_PEERCRED` uses the
 same helper, but a peer's primary gid is never the cache gid.)
+
+## 36. Exit status when the program is killed by a signal
+
+`event_loop()` returns `last_exit_status`, set only when a tracee exits normally
+(`WIFEXITED`). When the program proot started was killed by a signal, the status stayed at
+whatever process had last exited normally, or -1 (exit 255) if none had: a gateway killed with
+SIGKILL, or by Android's low-memory killer, ended its session with "exit 0". Upstream proot and
+Termux's do the same.
+
+The tracee that carries `killall_on_exit` (the one proot started, with `--kill-on-exit`, which
+pr-cli always passes; the flag is not inherited by children) now sets
+`last_exit_status = 128 + WTERMSIG` when a signal ends it, as a shell reports it. The other
+tracees, which `kill_all_tracees()` then SIGKILLs, do not change it, so a clean exit with
+processes left behind stays 0. The `exit` suite (integration-tests.md) covers the four cases.
