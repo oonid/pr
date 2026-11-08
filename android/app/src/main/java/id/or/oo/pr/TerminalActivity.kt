@@ -14,15 +14,20 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -84,7 +89,32 @@ class TerminalActivity : ComponentActivity() {
             }
         })
 
-        if (open(alias) !is SessionManager.OpenResult.Failed) requestNotificationPermissionOnce()
+        val sessions = (application as App).sessions
+        when (terminalStart(restored = savedInstanceState != null, sessionOpen = sessions.isOpen(alias))) {
+            TerminalStart.SHOW_ENDED -> showEndedWhileStopped(alias)
+            TerminalStart.OPEN ->
+                if (open(alias) !is SessionManager.OpenResult.Failed) requestNotificationPermissionOnce()
+        }
+    }
+
+    private fun showEndedWhileStopped(alias: String) {
+        setContent {
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF1a1a2e)) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("The $alias session ended when pr was stopped.", color = Color.White)
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = {
+                            if (open(alias) !is SessionManager.OpenResult.Failed) requestNotificationPermissionOnce()
+                        }) { Text("Start a new session") }
+                    }
+                }
+            }
+        }
     }
 
     private fun open(alias: String): SessionManager.OpenResult {
