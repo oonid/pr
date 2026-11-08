@@ -42,6 +42,16 @@ scripts/build.sh --arch=arm64 --skip-ndk --skip-talloc
 4. Fix TLS alignment (Android Bionic requires 64-byte), for 64-bit ELF only
 5. Verify binary (ELF, static, correct arch)
 
+## `scripts/build-pr-cli.sh` — Build pr-cli for Android
+
+Builds the guest test binary (`src/proot-integration-test`) and then pr-cli (`src/pr-cli`), which
+embeds it, for `aarch64-linux-android` in release mode. It passes
+`--remap-path-prefix` for `$CARGO_HOME` (to `/cargo`) and the Rust sysroot (to `/rust`) through
+`cargo --config`, which adds to the rustflags in `.cargo/config.toml` instead of replacing them, so
+panic locations name `/cargo/registry/...` rather than the build machine's home directory. It copies
+pr-cli to `android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so`, checks the copy matches,
+and fails if `$CARGO_HOME`, the Rust sysroot or the project path is still in the binary. CI uses it.
+
 ## On-device tests
 
 The on-device integration suite runs inside a container through `pr-cli test <distro>`, from the app (Test in a container's menu) or over adb; see [integration-tests.md](integration-tests.md).

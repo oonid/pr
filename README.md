@@ -73,19 +73,14 @@ Our engine handles all of these:
 # 1. Build proot C binaries
 scripts/build.sh --arch=arm64
 
-# 2. Build test binary (guest-side)
-(cd src/proot-integration-test && cargo build --target aarch64-linux-android --release)
+# 2. Build the guest test binary and pr-cli (which embeds it) into the proot-engine library
+scripts/build-pr-cli.sh
 
-# 3. Build pr-cli (host-side)
-(cd src/pr-cli && cargo build --target aarch64-linux-android --release)
-
-# 4. Copy binaries to the proot-engine library
+# 3. Copy the proot binaries to the proot-engine library
 cp build/out/arm64/proot android/proot-engine/src/main/jniLibs/arm64-v8a/libproot.so
 cp build/out/arm64/loader android/proot-engine/src/main/jniLibs/arm64-v8a/libproot-loader.so
-cp src/pr-cli/target/aarch64-linux-android/release/pr-cli \
-   android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
 
-# 5. Build Android App and Engine AAR
+# 4. Build Android App and Engine AAR
 (cd android && ./gradlew assembleDebug)
 ```
 
