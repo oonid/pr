@@ -39,6 +39,24 @@ class ManagedSessionTest {
     }
 
     @Test
+    fun anOutputFailureDropsThatChunkAndKeepsTheSessionReading() {
+        var failNext = true
+        val s = session(sink = { buf, off, len ->
+            if (failNext) {
+                failNext = false
+                throw IllegalStateException("emulator failed")
+            }
+            output.append(String(buf, off, len))
+        })
+        pty.emit("lost")
+        eventually { !failNext }
+        pty.emit("kept")
+        eventually { output.toString() == "kept" }
+        assertNull(s.exit.value)
+        assertTrue(ended.isEmpty())
+    }
+
+    @Test
     fun programExitRecordsTheCodeAndClosesThePty() {
         val s = session()
         pty.exit(3)
@@ -330,11 +348,13 @@ class ManagedSessionTest {
     }
 
     @Test
-    fun throwingOutputStillEndsTheSession() {
+    fun anOutputThatAlwaysFailsStillEndsWhenTheProgramExits() {
         val s = session(sink = { _, _, _ -> throw IllegalStateException("boom") })
         pty.emit("x")
+        pty.emit("y")
+        pty.exit(3)
         eventually { ended.isNotEmpty() }
-        assertTrue(s.exit.value != null)
+        assertEquals(ManagedSession.Exit(3), s.exit.value)
         assertTrue(pty.closed)
     }
 

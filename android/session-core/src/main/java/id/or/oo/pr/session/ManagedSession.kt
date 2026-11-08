@@ -1,5 +1,6 @@
 package id.or.oo.pr.session
 
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.connectbot.terminal.TerminalEmulator
@@ -113,13 +114,21 @@ class ManagedSession(
 
     private fun readLoop() {
         val buf = ByteArray(8192)
+        var outputFailed = false
         try {
             while (true) {
                 val n = pty.read(buf)
                 if (n < 0) break
-                if (n > 0) output(buf, 0, n)
+                if (n == 0) continue
+                try {
+                    output(buf, 0, n)
+                } catch (e: Exception) {
+                    if (!outputFailed) Log.w(TAG, "the output of $alias failed; its output is dropped while it fails", e)
+                    outputFailed = true
+                }
             }
         } catch (e: Exception) {
+            Log.w(TAG, "reading $alias failed; ending the session", e)
         } finally {
             finish()
         }
@@ -166,6 +175,7 @@ class ManagedSession(
         const val EXIT_CODE_WAIT_MS = 2_000L
         const val KILL_EXIT_WAIT_MS = 500L
         private const val POLL_MS = 50L
+        private const val TAG = "PR"
         private val STOP = ByteArray(0)
         internal const val SCAN_MARGIN_MS = 1_000L
         internal const val TIMEOUT_HEADROOM_MS = 2_500L
