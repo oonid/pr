@@ -1,8 +1,8 @@
 [target.aarch64-linux-android]
-linker = "/home/o/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+linker = "../../build/ndk/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
 
 [env]
-CC_aarch64-linux-android = "/home/o/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
-AR_aarch64-linux-android = "/home/o/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+CC_aarch64-linux-android = { value = "../../build/ndk/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang", relative = true }
+AR_aarch64-linux-android = { value = "../../build/ndk/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar", relative = true }
 CFLAGS_aarch64-linux-android = "-target aarch64-linux-android28"
