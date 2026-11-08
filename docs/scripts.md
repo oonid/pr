@@ -48,7 +48,7 @@ Builds the guest test binary (`src/proot-integration-test`) and then pr-cli (`sr
 embeds it, for `aarch64-linux-android` in release mode. It passes
 `--remap-path-prefix` for `$CARGO_HOME` (to `/cargo`) and the Rust sysroot (to `/rust`) through
 `cargo --config`, which adds to the rustflags in `.cargo/config.toml` instead of replacing them, so
-panic locations name `/cargo/registry/...` rather than the build machine's home directory. It copies
+panic locations name `/cargo/registry/...` rather than the build machine's home directory. A third remap maps the Rust sysroot's `lib/rustlib/src/rust` to `/rustc/<commit-hash>`: with the `rust-src` component installed, rustc points standard-library locations at that local copy, while a toolchain without it (as in CI) keeps `/rustc/<commit-hash>/library`. With all three, a local build and CI's are byte-identical. It copies
 pr-cli to `android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so`, checks the copy matches,
 and fails if `$CARGO_HOME`, the Rust sysroot or the project path is still in the binary. CI uses it.
 
