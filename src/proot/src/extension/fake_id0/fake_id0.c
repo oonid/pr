@@ -791,6 +791,19 @@ static bool utime_target_missing(Tracee *tracee, Reg path_sysarg)
 
 	return lstat(path, &statl) < 0 && errno == ENOENT;
 }
+
+static bool utime_error_hidden(Tracee *tracee, int result, Reg path_sysarg)
+{
+	switch (result) {
+	case -EPERM:
+	case -EACCES:
+		return true;
+	case -ENOENT:
+		return !utime_target_missing(tracee, path_sysarg);
+	default:
+		return false;
+	}
+}
 #endif
 
 /**
@@ -984,14 +997,15 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 	case PR_utime: {
 		/* On Android, utimensat/utimes on L2S-converted symlinks returns
 		 * ENOENT (SELinux masquerades EPERM for timestamp ops on app data
-		 * files).  fake-root forces any error to 0 so dpkg/tar proceed,
-		 * except a real ENOENT for a missing target: touch(1) and
-		 * Python's Path.touch() create the file only after that ENOENT.
-		 * Successful calls (result==0) pass through unchanged. */
+		 * files).  fake-root turns that ENOENT, and EPERM or EACCES,
+		 * into 0 so dpkg/tar proceed.  A real ENOENT for a missing
+		 * target stays: touch(1) and Python's Path.touch() create the
+		 * file only after it.  Other errors (EBADF, EINVAL, EROFS...)
+		 * and successful calls pass through unchanged. */
 		word_t ts_result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
 		Reg ts_path = (sysnum == PR_utimes || sysnum == PR_utime) ? SYSARG_1 : SYSARG_2;
 		if (config->euid == 0 && (int) ts_result < 0
-		    && !((int) ts_result == -ENOENT && utime_target_missing(tracee, ts_path)))
+		    && utime_error_hidden(tracee, (int) ts_result, ts_path))
 			poke_reg(tracee, SYSARG_RESULT, 0);
 		return 0;
 	}
