@@ -37,10 +37,10 @@ jobs:
         "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018"
         echo "PR_NDK=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-    - name: Configure Cargo for NDK
+    - name: Link NDK r27c where the cargo configs expect it
       run: |
-        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$PR_NDK|g" src/pr-cli/.cargo/config.toml
-        sed -i "s|/home/o/Android/Sdk/ndk/[^/]*|$PR_NDK|g" src/proot-integration-test/.cargo/config.toml
+        mkdir -p build/ndk
+        ln -s "$PR_NDK" build/ndk/android-ndk-r27c
 
     - name: Run Cargo Format (pr-cli)
       run: |
