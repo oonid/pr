@@ -59,6 +59,7 @@ scripts/build-pr-cli.sh
 # with --remap-path-prefix for $CARGO_HOME and the Rust sysroot so no build-machine path
 # ends up in the binary; copies pr-cli to jniLibs/arm64-v8a/libpr-cli.so, checks the copy
 # matches and fails if a build-machine path is left. Output about 3.5 MB.
+# Links with build/ndk/android-ndk-r27c (relative path in .cargo/config.toml): run step 1 first.
 ```
 
 Cargo's `trim-paths` would do the same but is not stable in Rust 1.97. A plain
