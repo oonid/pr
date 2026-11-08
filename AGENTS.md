@@ -51,32 +51,28 @@ scripts/build.sh --arch=arm64
 # Copy to android/proot-engine/src/main/jniLibs/arm64-v8a/libproot-loader.so
 ```
 
-### 2. Build pr-cli (Rust, NDK cross-compilation)
+### 2. Build the test binary and pr-cli (Rust, NDK cross-compilation)
 
 ```bash
-# MUST run from src/pr-cli/ (required for .cargo/config.toml resolution)
-cd src/pr-cli && cargo build --target aarch64-linux-android --release
-# Output: target/aarch64-linux-android/release/pr-cli (about 3.4 MB, with the guest test binary embedded)
-# Copy to android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
+scripts/build-pr-cli.sh
+# Builds src/proot-integration-test, then src/pr-cli, which embeds it (include_bytes!),
+# with --remap-path-prefix for $CARGO_HOME and the Rust sysroot so no build-machine path
+# ends up in the binary; copies pr-cli to jniLibs/arm64-v8a/libpr-cli.so, checks the copy
+# matches and fails if a build-machine path is left. Output about 3.5 MB.
 ```
 
-### 3. Build test binary (guest-side, cross-compiled)
+Cargo's `trim-paths` would do the same but is not stable in Rust 1.97. A plain
+`cargo build` in `src/pr-cli/` or `src/proot-integration-test/` still works (run it from that
+directory for `.cargo/config.toml`), but leaves `$CARGO_HOME` paths in the binary.
 
-```bash
-# MUST run from src/proot-integration-test/
-cd src/proot-integration-test && cargo build --target aarch64-linux-android --release
-# Embedded into pr-cli via include_bytes! at build time
-# Must rebuild pr-cli after rebuilding test binary
-```
-
-### 4. Build APK
+### 3. Build APK
 
 ```bash
 cd android && ./gradlew assembleDebug
 # Output: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### 5. Install on device
+### 4. Install on device
 
 ```bash
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
@@ -86,22 +82,15 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ### Full rebuild sequence (after changing test binary)
 
 ```bash
-# 1. Build test binary
-cd src/proot-integration-test && cargo build --target aarch64-linux-android --release
-# 2. Build pr-cli (embeds test binary)
-cd src/pr-cli && cargo build --target aarch64-linux-android --release
-# 3. Copy to jniLibs (ALWAYS verify with md5sum)
-cp -f src/pr-cli/target/aarch64-linux-android/release/pr-cli \
-      android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
-md5sum src/pr-cli/target/aarch64-linux-android/release/pr-cli \
-       android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
+# 1-3. Build the test binary and pr-cli, copy to jniLibs and check the copy
+scripts/build-pr-cli.sh
 # 4. Build APK
 cd android && rm -rf app/build && ./gradlew assembleDebug
 # 5. Install
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**IMPORTANT:** Gradle caches jniLibs — always verify the copy succeeded with `md5sum` and clean `app/build` before building the APK.
+**IMPORTANT:** Gradle caches jniLibs — clean `app/build` before building the APK (`build-pr-cli.sh` already checks the copy).
 
 ## Testing
 
