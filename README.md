@@ -105,7 +105,7 @@ CI checks formatting and runs clippy with warnings as errors on pr-cli and the t
 cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-**204 tests in `:session-core`**: session lifetime (`SessionManager` with its sessions and tasks, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`, `Bind`, end policy, signal wait), terminal binds, the factories' constructors as a Java host sees them, End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **40 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`) and the notification banner's choices (`NotificationAccess`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 4 JVM tests.
+**205 tests in `:session-core`**: session lifetime (`SessionManager` with its sessions and tasks, `ManagedSession`, `ServiceState`, notifications and their actions), command sessions (`CommandSessionFactory`, `Bind`, end policy, signal wait), terminal binds, the factories' constructors as a Java host sees them, End's `/proc` scan through a fake process table (`ProotProcesses`), `PrCliCommand`, the bootstrap's links (`NativeLinks`) and `ProcessRunner`, which runs real `/bin/sh` processes and skips on hosts without `/proc`. **43 tests in `:app`**: the list's operations (`DistroOperations`, `InstalledContainers`), the notification banner's choices (`NotificationAccess`) and what a restored terminal does (`TerminalStart`). `./gradlew :proot-engine:testDebugUnitTest` runs the engine's 5 JVM tests.
 
 ### Host-side (pr-cli unit tests)
 
