@@ -412,6 +412,8 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 		VERBOSE(tracee, (int) (tracee->vpid != 1),
 			"vpid %" PRIu64 ": terminated with signal %d",
 			tracee->vpid, WTERMSIG(tracee_status));
+		if (tracee->killall_on_exit)
+			last_exit_status = 128 + WTERMSIG(tracee_status);
 		terminate_tracee(tracee);
 	}
 	else if (WIFSTOPPED(tracee_status)) {
