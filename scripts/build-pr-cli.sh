@@ -11,7 +11,8 @@ NDK="${PROJECT_ROOT}/build/ndk/android-ndk-r27c"
 
 cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
 rust_sysroot="$(rustc --print sysroot)"
-remap="target.${TARGET}.rustflags=['--remap-path-prefix=${cargo_home}=/cargo', '--remap-path-prefix=${rust_sysroot}=/rust']"
+rust_commit="$(rustc -vV | sed -n 's/^commit-hash: //p')"
+remap="target.${TARGET}.rustflags=['--remap-path-prefix=${cargo_home}=/cargo', '--remap-path-prefix=${rust_sysroot}=/rust', '--remap-path-prefix=${rust_sysroot}/lib/rustlib/src/rust=/rustc/${rust_commit}']"
 
 build() {
     echo "==> Building $1"
