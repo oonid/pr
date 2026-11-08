@@ -237,6 +237,14 @@ const SUITES: &[Suite] = &[
                 name: "/proc/self/exe after exec",
                 run: gcc::test_proc_exe,
             },
+            Test {
+                name: "posix_spawn of a missing program is ENOENT",
+                run: gcc::test_posix_spawn_missing_program,
+            },
+            Test {
+                name: "vfork and exec return to the parent",
+                run: gcc::test_vfork_exec_returns,
+            },
         ],
     },
     Suite {
