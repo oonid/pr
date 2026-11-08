@@ -77,17 +77,13 @@ jobs:
       run: |
         ./scripts/build.sh --arch=arm64 --ndk-path=$PR_NDK
 
-    - name: Build Rust CLI (pr-cli)
-      run: |
-        cd src/pr-cli
-        cargo build --target aarch64-linux-android --release
+    - name: Build Rust CLI (pr-cli) into proot-engine
+      run: ./scripts/build-pr-cli.sh
 
-    - name: Copy binaries to proot-engine
+    - name: Copy proot binaries to proot-engine
       run: |
-        mkdir -p android/proot-engine/src/main/jniLibs/arm64-v8a/
         cp build/out/arm64/proot android/proot-engine/src/main/jniLibs/arm64-v8a/libproot.so
         cp build/out/arm64/loader android/proot-engine/src/main/jniLibs/arm64-v8a/libproot-loader.so
-        cp src/pr-cli/target/aarch64-linux-android/release/pr-cli android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so
 
     - name: Run Android App Unit Tests
       run: |
