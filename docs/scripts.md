@@ -52,6 +52,8 @@ panic locations name `/cargo/registry/...` rather than the build machine's home 
 pr-cli to `android/proot-engine/src/main/jniLibs/arm64-v8a/libpr-cli.so`, checks the copy matches,
 and fails if `$CARGO_HOME`, the Rust sysroot or the project path is still in the binary. CI uses it.
 
+Both crates link with the NDK r27c that `build.sh` downloads and checks into `build/ndk/android-ndk-r27c`: their `.cargo/config.toml` names it by a path relative to the crate, so run `build.sh` once first. CI links that directory to the r27c it installs with `sdkmanager`.
+
 ## On-device tests
 
 The on-device integration suite runs inside a container through `pr-cli test <distro>`, from the app (Test in a container's menu) or over adb; see [integration-tests.md](integration-tests.md).
