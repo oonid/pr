@@ -78,6 +78,11 @@ class SessionManager(
     private val _backgroundError = MutableStateFlow<String?>(null)
     val backgroundError: StateFlow<String?> = _backgroundError
 
+    fun isOpen(alias: String): Boolean = synchronized(lock) {
+        val existing = sessions[alias] ?: return false
+        existing.exit.value == null || existing in retained
+    }
+
     fun open(alias: String, factory: SessionFactory = this.factory): OpenResult {
         val session = synchronized(lock) {
             val existing = sessions[alias]

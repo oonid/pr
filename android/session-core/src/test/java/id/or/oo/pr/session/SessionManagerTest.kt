@@ -1,6 +1,7 @@
 package id.or.oo.pr.session
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -324,6 +325,28 @@ class SessionManagerTest {
         eventually { manager.running.value.isEmpty() }
         Thread.sleep(50)
         assertTrue(endedNotices.isEmpty())
+    }
+
+    @Test
+    fun isOpenTellsWhetherOpenWouldReturnAnExistingSession() {
+        assertFalse(manager.isOpen("alpine"))
+        assertEquals(0, created.get())
+
+        val session = open("alpine")
+        assertTrue(manager.isOpen("alpine"))
+
+        val screen = ManagedSession.Screen {}
+        manager.attach(session, screen)
+        ptys.getValue("alpine").exit(2)
+        eventually { session.exit.value != null }
+        manager.detach(session, screen, retainEnded = true)
+        assertTrue(manager.isOpen("alpine"))
+
+        val recreated = ManagedSession.Screen {}
+        manager.attach(session, recreated)
+        manager.detach(session, recreated)
+        assertFalse(manager.isOpen("alpine"))
+        assertEquals(1, created.get())
     }
 
     @Test
