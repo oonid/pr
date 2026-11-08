@@ -147,28 +147,6 @@ int translate_syscall_enter(Tracee *tracee)
 		status = translate_ptrace_enter(tracee);
 		break;
 
-	case PR_clone: {
-		word_t flags = peek_reg(tracee, CURRENT, SYSARG_1);
-		if ((flags & CLONE_THREAD) == 0 &&
-		    (flags & (CLONE_VM | CLONE_VFORK)) != 0) {
-			flags &= ~(word_t)(CLONE_VM | CLONE_VFORK);
-			poke_reg(tracee, SYSARG_1, flags);
-		}
-		status = 0;
-		break;
-	}
-
-	case PR_clone3: {
-		word_t args_ptr = peek_reg(tracee, CURRENT, SYSARG_1);
-		word_t flags = peek_word(tracee, args_ptr);
-		if ((flags & CLONE_THREAD) == 0 &&
-		    (flags & (CLONE_VM | CLONE_VFORK)) != 0) {
-			flags &= ~(word_t)(CLONE_VM | CLONE_VFORK);
-			poke_word(tracee, args_ptr, flags);
-		}
-		status = 0;
-		break;
-	}
 
 	case PR_wait4:
 	case PR_waitpid:
