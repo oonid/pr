@@ -34,7 +34,7 @@ fn deploy_binary(cache_dir: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Result<String, String> {
+fn proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Command {
     let proot = get_native_proot();
     let binds = if isolated {
         crate::shared::android_system_binds()
@@ -61,8 +61,12 @@ fn run_proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Result<String, 
     for (k, v) in &child_env {
         command.env(k, v);
     }
-    let output = command
-        .args(&full_args)
+    command.args(&full_args);
+    command
+}
+
+fn run_proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Result<String, String> {
+    let output = proot_command(rootfs, cmd, isolated)
         .output()
         .map_err(|e| format!("proot exec: {}", e))?;
 
@@ -85,6 +89,63 @@ fn run_proot_command(rootfs: &str, cmd: &str, isolated: bool) -> Result<String, 
     }
 
     Ok(stdout)
+}
+
+const EXIT_CASES: [(&str, &str, i32); 4] = [
+    ("a normal exit keeps its code", "exit 3", 3),
+    ("a program killed by SIGKILL exits 137", "kill -9 $$", 137),
+    (
+        "a program killed by SIGTERM exits 143",
+        "kill -TERM $$",
+        143,
+    ),
+    (
+        "processes left behind do not change a clean exit",
+        "sleep 30 & exit 0",
+        0,
+    ),
+];
+
+fn exit_case_failure(name: &str, want: i32, got: Option<i32>) -> Option<String> {
+    match got {
+        Some(code) if code == want => None,
+        Some(code) => Some(format!("{}: exit {}, want {}", name, code, want)),
+        None => Some(format!("{}: no exit code, want {}", name, want)),
+    }
+}
+
+fn run_exit_suite(rootfs: &str) -> TapResult {
+    msg_status("Running test suite: exit...");
+    let mut result = TapResult {
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        failures: Vec::new(),
+    };
+    for (name, cmd, want) in EXIT_CASES {
+        let got = proot_command(rootfs, cmd, false)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok()
+            .and_then(|status| status.code());
+        match exit_case_failure(name, want, got) {
+            None => {
+                result.passed += 1;
+                println!("  \x1b[32m✓\x1b[0m {}", name);
+            }
+            Some(failure) => {
+                result.failed += 1;
+                println!("  \x1b[31m✗\x1b[0m {}", failure);
+                result.failures.push(format!("exit: {}", failure));
+            }
+        }
+    }
+    println!(
+        "{} passed, {} failed, {} skipped",
+        result.passed, result.failed, result.skipped
+    );
+    result
 }
 
 fn parse_tap(tap_output: &str) -> TapResult {
@@ -336,6 +397,7 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
         "ssh",
         "chroot",
         "fakeroot",
+        "exit",
     ];
     let target_suites: Vec<&str> = match suite {
         Some(s) => {
@@ -380,6 +442,14 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
     let mut all_failures: Vec<String> = Vec::new();
 
     for suite_name in &target_suites {
+        if *suite_name == "exit" {
+            let result = run_exit_suite(&rootfs);
+            total_passed += result.passed;
+            total_failed += result.failed;
+            all_failures.extend(result.failures);
+            println!();
+            continue;
+        }
         match run_test_binary(&rootfs, suite_name, Path::new(&cache_dir), distro) {
             Ok(result) => {
                 total_passed += result.passed;
@@ -418,6 +488,21 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_cases_expect_the_shell_conventions() {
+        assert_eq!(exit_case_failure("x", 137, Some(137)), None);
+        assert_eq!(
+            exit_case_failure("x", 137, Some(0)).as_deref(),
+            Some("x: exit 0, want 137")
+        );
+        assert_eq!(
+            exit_case_failure("x", 0, None).as_deref(),
+            Some("x: no exit code, want 0")
+        );
+        let wants: Vec<i32> = EXIT_CASES.iter().map(|c| c.2).collect();
+        assert_eq!(wants, vec![3, 128 + 9, 128 + 15, 0]);
+    }
 
     #[test]
     fn apt_tools_leave_groupadd_and_groupdel_alone() {
