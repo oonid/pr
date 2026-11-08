@@ -216,6 +216,10 @@ const SUITES: &[Suite] = &[
                 run: fakeroot::test_tmp_file_has_the_fake_group,
             },
             Test {
+                name: "utimensat reports errors fake root does not hide",
+                run: fakeroot::test_utimensat_reports_real_errors,
+            },
+            Test {
                 name: "blocked linkat keeps the source",
                 run: fakeroot::test_blocked_linkat_keeps_the_source,
             },

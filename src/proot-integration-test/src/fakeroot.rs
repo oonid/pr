@@ -130,6 +130,41 @@ pub fn test_fchown_closed_fd_is_ebadf() -> TestResult {
     expect_errno("fchown(AT_FDCWD)", rc, errno(), libc::EBADF)
 }
 
+pub fn test_utimensat_reports_real_errors() -> TestResult {
+    let file = "/tmp/pit-fr-utime";
+    fs::write(file, b"x").map_err(|e| format!("write: {}", e))?;
+    let path = c(file);
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) };
+    if rc != 0 {
+        let e = errno();
+        let _ = fs::remove_file(file);
+        return Err(format!(
+            "utimensat of an existing file: rc={} errno {}",
+            rc, e
+        ));
+    }
+    let rc =
+        unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0x7fff_0000) };
+    let flags = expect_errno("utimensat with invalid flags", rc, errno(), libc::EINVAL);
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    let _ = fs::remove_file(file);
+    flags?;
+    if fd < 0 {
+        return Err(format!("open: errno {}", errno()));
+    }
+    unsafe { libc::close(fd) };
+    let rc = unsafe { libc::utimensat(fd, std::ptr::null(), std::ptr::null(), 0) };
+    expect_errno("utimensat of a closed fd", rc, errno(), libc::EBADF)?;
+    let rel = c("pit-fr-relative");
+    let rc = unsafe { libc::utimensat(fd, rel.as_ptr(), std::ptr::null(), 0) };
+    expect_errno(
+        "utimensat relative to a closed dirfd",
+        rc,
+        errno(),
+        libc::EBADF,
+    )
+}
+
 pub fn test_owner_follows_effective_ids() -> TestResult {
     let file = "/var/tmp/pit-fr-owner";
     fs::write(file, b"x").map_err(|e| format!("write: {}", e))?;
