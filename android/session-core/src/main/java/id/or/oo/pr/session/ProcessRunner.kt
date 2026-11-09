@@ -72,8 +72,8 @@ class ProcessRunner(
 
     private fun stop(proc: Process, cmd: List<String>) {
         runCatching {
-            val roots = processes.children(parentPid, cmd)
-            val tree = processes.descendants(roots)
+            val roots = pidOf(proc)?.let(::listOf) ?: processes.children(parentPid, cmd)
+            val tree = roots + processes.descendants(roots)
             tree.forEach { signal(it, SIGTERM) }
             proc.destroy()
             if (exited(proc, tree)) return@runCatching
@@ -84,6 +84,10 @@ class ProcessRunner(
             proc.waitFor(stopWaitMs, TimeUnit.MILLISECONDS)
         }
     }
+
+    private fun pidOf(proc: Process): Int? =
+        runCatching { (Process::class.java.getMethod("pid").invoke(proc) as Long).toInt() }.getOrNull()
+            ?: pidIn(proc.toString())
 
     private fun exited(proc: Process, tree: List<Int>): Boolean {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(stopWaitMs)
@@ -99,5 +103,8 @@ class ProcessRunner(
         private const val POLL_MS = 20L
         private const val SIGTERM = 15
         private const val SIGKILL = 9
+        private val PID = Regex("""\bpid=(\d+)""")
+
+        internal fun pidIn(description: String): Int? = PID.find(description)?.groupValues?.get(1)?.toIntOrNull()
     }
 }

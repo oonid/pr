@@ -434,6 +434,11 @@ Current behaviour: install, remove and test run `pr-cli` as a plain child proces
 (`ProcessRunner`, standard input closed); `PrCliCommand` strips ANSI escapes from each output
 line. Terminal sessions and command sessions use a PTY.
 
+Cancelling a `ProcessRunner` command stops the process it started by pid (the JVM's
+`Process.pid()`, or the `pid=` in Android's `Process[pid=…]` description), not by its command
+line: `pr-cli login` replaces itself with proot, which ignores SIGTERM. The runner sends SIGTERM to
+that process and its descendants, waits, then sends SIGKILL to what is left.
+
 ### Session lifetime and Back
 
 Sessions live in `SessionManager` (`:session-core`, package `id.or.oo.pr.session`), owned by `App`: one `ManagedSession` per

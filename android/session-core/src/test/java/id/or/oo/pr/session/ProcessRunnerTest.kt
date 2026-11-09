@@ -32,7 +32,11 @@ class ProcessRunnerTest {
     }
 
     private fun runner(stopWaitMs: Long = ProcessRunner.STOP_WAIT_MS) =
-        ProcessRunner(myPid, { pid, signal -> ProcessBuilder("kill", "-$signal", "$pid").start().waitFor() }, stopWaitMs = stopWaitMs)
+        ProcessRunner(
+            myPid,
+            { pid, signal -> ProcessBuilder("kill", "-$signal", "$pid").start().waitFor() },
+            stopWaitMs = stopWaitMs,
+        )
 
     private fun cancelAfterTwoLines(runner: ProcessRunner, script: String): Pair<List<Int>, Long> = runBlocking {
         var returned: Int? = null
@@ -99,6 +103,26 @@ class ProcessRunnerTest {
         val (pids, tookMs) = cancelAfterTwoLines(runner(stopWaitMs = 300), "trap '' TERM; sleep 30 & echo \$!; echo \$\$; wait")
         assertTrue(pids.none(::alive))
         assertTrue("took $tookMs ms", tookMs >= 300)
+    }
+
+    @Test
+    fun aCommandThatExecsIntoAProgramIgnoringTermIsKilledThroughTheSignal() {
+        val sent = CopyOnWriteArrayList<Pair<Int, Int>>()
+        val recording = ProcessRunner(
+            myPid,
+            { pid, signal -> sent += pid to signal; ProcessBuilder("kill", "-$signal", "$pid").start().waitFor() },
+            stopWaitMs = 300,
+        )
+        val (pids, _) = cancelAfterTwoLines(recording, "trap '' TERM; echo \$\$; echo \$\$; exec sleep 30")
+        val root = pids.first()
+        assertTrue(sent.toString(), root to 9 in sent)
+        assertFalse(alive(root))
+    }
+
+    @Test
+    fun aPidIsReadFromAnAndroidProcessDescription() {
+        assertEquals(1234, ProcessRunner.pidIn("Process[pid=1234, hasExited=false, exitcode=0]"))
+        assertNull(ProcessRunner.pidIn("Process[hasExited=false]"))
     }
 
     @Test
