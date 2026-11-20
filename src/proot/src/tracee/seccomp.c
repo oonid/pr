@@ -11,7 +11,6 @@
 #include <time.h>      /* time(2), */
 #include <talloc.h>    /* talloc_*, */
 #include <fcntl.h>     /* AT_FDCWD, O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC */
-#include <sched.h>     /* CLONE_*, */
 #include <limits.h>    /* PATH_MAX, */
 
 #include "extension/extension.h"
@@ -19,10 +18,15 @@
 #include "syscall/chain.h"
 #include "syscall/syscall.h"
 #include "tracee/seccomp.h"
+#include "tracee/abi.h"
 #include "tracee/mem.h"
 #include "tracee/statx.h"
 #include "path/path.h"
 #include "path/temp.h"
+
+#if defined(ARCH_ARM64)
+#define SYSNUM_RSEQ 293
+#endif
 
 static int handle_seccomp_event_common(Tracee *tracee);
 
@@ -698,18 +702,20 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		break;
 
 	case PR_faccessat2:
+		if (peek_reg(tracee, ORIGINAL, SYSARG_4) != 0) {
+			set_result_after_seccomp(tracee, -ENOSYS);
+			break;
+		}
 		set_sysnum(tracee, PR_faccessat);
 		poke_reg(tracee, SYSARG_4, 0);
 		restart_syscall_after_seccomp(tracee);
 		break;
 
-	case PR_openat2:
-		set_sysnum(tracee, PR_openat);
-		poke_reg(tracee, SYSARG_5, 0);
-		restart_syscall_after_seccomp(tracee);
-		break;
-
 	case PR_renameat2:
+		if (peek_reg(tracee, ORIGINAL, SYSARG_5) != 0) {
+			set_result_after_seccomp(tracee, -ENOSYS);
+			break;
+		}
 		set_sysnum(tracee, PR_renameat);
 		restart_syscall_after_seccomp(tracee);
 		break;
@@ -719,41 +725,8 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		break;
 
 	case PR_clone3:
-	{
-		word_t args_ptr = peek_reg(tracee, ORIGINAL, SYSARG_1);
-		word_t flags = peek_word(tracee, args_ptr);
-		if (flags & CLONE_THREAD) {
-			set_result_after_seccomp(tracee, -ENOSYS);
-			break;
-		}
-		flags &= ~(word_t)(CLONE_VM | CLONE_VFORK);
-		word_t child_tid = peek_word(tracee, args_ptr + 16);
-		word_t parent_tid = peek_word(tracee, args_ptr + 24);
-		word_t exit_signal = peek_word(tracee, args_ptr + 32);
-		word_t stack = peek_word(tracee, args_ptr + 40);
-		word_t tls = peek_word(tracee, args_ptr + 56);
-		set_sysnum(tracee, PR_clone);
-		poke_reg(tracee, SYSARG_1, flags | exit_signal);
-		poke_reg(tracee, SYSARG_2, stack);
-		poke_reg(tracee, SYSARG_3, parent_tid);
-		poke_reg(tracee, SYSARG_4, child_tid);
-		poke_reg(tracee, SYSARG_5, tls);
-		restart_syscall_after_seccomp(tracee);
+		set_result_after_seccomp(tracee, -ENOSYS);
 		break;
-	}
-
-	case PR_clone:
-	{
-		word_t flags = peek_reg(tracee, ORIGINAL, SYSARG_1);
-		if (flags & CLONE_THREAD) {
-			set_result_after_seccomp(tracee, -ENOSYS);
-			break;
-		}
-		flags &= ~(word_t)(CLONE_VM | CLONE_VFORK);
-		poke_reg(tracee, SYSARG_1, flags);
-		restart_syscall_after_seccomp(tracee);
-		break;
-	}
 
 	case PR_setuid:
 	case PR_setgid:
@@ -767,6 +740,12 @@ static int handle_seccomp_event_common(Tracee *tracee)
 	default:
 	{
 		word_t kernel_num = peek_reg(tracee, CURRENT, SYSARG_NUM);
+#if defined(ARCH_ARM64)
+		if (get_abi(tracee) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {
+			set_result_after_seccomp(tracee, -ENOSYS);
+			break;
+		}
+#endif
 		char log_path[PATH_MAX];
 		FILE *f = sigsys_log_path(log_path) == 0 ? fopen(log_path, "a") : NULL;
 		if (f) {
