@@ -88,9 +88,16 @@ void trim_sigsys_log(void)
 {
 	char path[PATH_MAX];
 	struct stat statl;
+	int fd;
 
-	if (sigsys_log_path(path) == 0 && stat(path, &statl) == 0 && statl.st_size > SIGSYS_LOG_MAX)
-		(void) truncate(path, 0);
+	if (sigsys_log_path(path) != 0)
+		return;
+	fd = open(path, O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0)
+		return;
+	if (fstat(fd, &statl) == 0 && S_ISREG(statl.st_mode) && statl.st_size > SIGSYS_LOG_MAX)
+		(void) ftruncate(fd, 0);
+	close(fd);
 }
 
 int handle_seccomp_event(Tracee* tracee)
@@ -746,17 +753,30 @@ static int handle_seccomp_event_common(Tracee *tracee)
 			break;
 		}
 #endif
+		static unsigned char sigsys_seen[128];
+		int first = 1;
+		if (kernel_num < 1024) {
+			unsigned char bit = 1u << (kernel_num & 7);
+			first = !(sigsys_seen[kernel_num >> 3] & bit);
+			sigsys_seen[kernel_num >> 3] |= bit;
+		}
 		char log_path[PATH_MAX];
-		FILE *f = sigsys_log_path(log_path) == 0 ? fopen(log_path, "a") : NULL;
-		if (f) {
+		int fd = -1;
+		if (first && sigsys_log_path(log_path) == 0)
+			fd = open(log_path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+		if (fd >= 0) {
 			time_t now = time(NULL);
 			struct tm *tm = localtime(&now);
 			char comm[64];
 			char timebuf[32];
+			char comm_path[64];
 			FILE *commf;
-			strftime(timebuf, sizeof(timebuf), "%H:%M:%S", tm);
+			memset(timebuf, 0, sizeof(timebuf));
+			if (tm)
+				strftime(timebuf, sizeof(timebuf), "%H:%M:%S", tm);
 			memset(comm, 0, sizeof(comm));
-			commf = fopen("/proc/self/comm", "r");
+			snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)tracee->pid);
+			commf = fopen(comm_path, "re");
 			if (commf) {
 				if (fgets(comm, sizeof(comm), commf)) {
 					char *nl = strchr(comm, '\n');
@@ -764,10 +784,10 @@ static int handle_seccomp_event_common(Tracee *tracee)
 				}
 				fclose(commf);
 			}
-			fprintf(f, "SIGSYS: time=%s pid=%d comm=%s kernel_num=%lu pr=%d\n",
+			dprintf(fd, "SIGSYS: time=%s pid=%d comm=%s kernel_num=%lu pr=%d\n",
 				timebuf, (int)tracee->pid, comm,
 				(unsigned long)kernel_num, (int)sysnum);
-			fclose(f);
+			close(fd);
 		}
 		if (sysnum == PR_openat || sysnum == PR_fstatat64) {
 			set_result_after_seccomp(tracee, -ENOENT);
