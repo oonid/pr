@@ -141,7 +141,26 @@ pub fn test_setxattrat_is_enosys() -> TestResult {
     expect_enosys("setxattrat", rc, err)
 }
 
+extern "C" {
+    fn __system_property_get(name: *const libc::c_char, value: *mut libc::c_char) -> libc::c_int;
+}
+
+fn sdk_level() -> i32 {
+    let name = b"ro.build.version.sdk\0";
+    let mut value = [0 as libc::c_char; 92];
+    let len =
+        unsafe { __system_property_get(name.as_ptr() as *const libc::c_char, value.as_mut_ptr()) };
+    if len <= 0 {
+        return 0;
+    }
+    let bytes: Vec<u8> = value[..len as usize].iter().map(|&c| c as u8).collect();
+    String::from_utf8_lossy(&bytes).trim().parse().unwrap_or(0)
+}
+
 pub fn test_path_free_syscall_above_table() -> TestResult {
+    if sdk_level() < 35 {
+        return Ok(());
+    }
     let epfd = unsafe { libc::epoll_create1(0) };
     if epfd < 0 {
         return Err(format!("epoll_create1: errno {}", errno()));

@@ -69,7 +69,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
-| syscalls | 4 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS and change nothing; `epoll_pwait2` above the syscall table still works |
+| syscalls | 4 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
