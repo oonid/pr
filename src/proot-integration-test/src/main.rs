@@ -13,6 +13,7 @@ mod pipe;
 mod readlink;
 mod rust;
 mod ssh;
+mod syscalls;
 
 type TestResult = Result<(), String>;
 
@@ -222,6 +223,28 @@ const SUITES: &[Suite] = &[
             Test {
                 name: "blocked linkat keeps the source",
                 run: fakeroot::test_blocked_linkat_keeps_the_source,
+            },
+        ],
+    },
+    Suite {
+        name: "syscalls",
+        probe: syscalls::probe,
+        tests: &[
+            Test {
+                name: "openat2 is ENOSYS and leaves the file intact",
+                run: syscalls::test_openat2_is_enosys,
+            },
+            Test {
+                name: "fchmodat2 is ENOSYS",
+                run: syscalls::test_fchmodat2_is_enosys,
+            },
+            Test {
+                name: "setxattrat is ENOSYS",
+                run: syscalls::test_setxattrat_is_enosys,
+            },
+            Test {
+                name: "a path-free syscall above the table still works",
+                run: syscalls::test_path_free_syscall_above_table,
             },
         ],
     },
