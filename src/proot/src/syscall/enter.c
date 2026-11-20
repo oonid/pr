@@ -473,7 +473,6 @@ int translate_syscall_enter(Tracee *tracee)
 
 	case PR_fchmodat:
 	case PR_faccessat:
-	case PR_faccessat2:
 	case PR_futimesat:
 	case PR_mknodat:
 		dirfd = peek_reg(tracee, CURRENT, SYSARG_1);
@@ -483,6 +482,21 @@ int translate_syscall_enter(Tracee *tracee)
 			break;
 
 		status = translate_path2(tracee, dirfd, path, SYSARG_2, REGULAR);
+		break;
+
+	case PR_faccessat2:
+		dirfd = peek_reg(tracee, CURRENT, SYSARG_1);
+
+		status = get_sysarg_path(tracee, path, SYSARG_2);
+		if (status < 0)
+			break;
+
+		flags = peek_reg(tracee, CURRENT, SYSARG_4);
+
+		if ((flags & AT_SYMLINK_NOFOLLOW) != 0)
+			status = translate_path2(tracee, dirfd, path, SYSARG_2, SYMLINK);
+		else
+			status = translate_path2(tracee, dirfd, path, SYSARG_2, REGULAR);
 		break;
 
 	case PR_inotify_add_watch:
