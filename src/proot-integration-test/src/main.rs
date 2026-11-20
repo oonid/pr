@@ -246,6 +246,14 @@ const SUITES: &[Suite] = &[
                 name: "a path-free syscall above the table still works",
                 run: syscalls::test_path_free_syscall_above_table,
             },
+            Test {
+                name: "renameat2 NOREPLACE never overwrites",
+                run: syscalls::test_renameat2_noreplace,
+            },
+            Test {
+                name: "faccessat2 NOFOLLOW on a dangling symlink",
+                run: syscalls::test_faccessat2_nofollow_dangling,
+            },
         ],
     },
     Suite {
@@ -271,6 +279,14 @@ const SUITES: &[Suite] = &[
             Test {
                 name: "vfork and exec return to the parent",
                 run: gcc::test_vfork_exec_returns,
+            },
+            Test {
+                name: "system(\"true\") returns 0",
+                run: gcc::test_system_true,
+            },
+            Test {
+                name: "popen reads a child's output",
+                run: gcc::test_popen_reads_output,
             },
         ],
     },

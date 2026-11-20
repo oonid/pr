@@ -106,3 +106,28 @@ pub fn test_vfork_exec_returns() -> TestResult {
         ))
     }
 }
+
+pub fn test_system_true() -> TestResult {
+    let src = "#include <stdlib.h>\n#include <stdio.h>\n\
+               int main(void){int rc=system(\"true\");printf(\"rc=%d\\n\",rc);return 0;}";
+    let out = compile_and_run("system", src)?;
+    if out.contains("rc=0") && out.contains("exit=0") {
+        Ok(())
+    } else {
+        Err(format!("system(\"true\"): {:?}, want rc=0", out))
+    }
+}
+
+pub fn test_popen_reads_output() -> TestResult {
+    let src = "#include <stdio.h>\n\
+               int main(void){char b[64]={0};FILE *f=popen(\"echo pit\",\"r\");\
+               if(!f){printf(\"popen failed\\n\");return 1;}\
+               if(!fgets(b,sizeof b,f))b[0]=0;int st=pclose(f);\
+               printf(\"got=%s status=%d\\n\",b,st);return 0;}";
+    let out = compile_and_run("popen", src)?;
+    if out.contains("pit") && out.contains("status=0") && out.contains("exit=0") {
+        Ok(())
+    } else {
+        Err(format!("popen: {:?}, want pit with status=0", out))
+    }
+}
