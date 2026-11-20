@@ -88,6 +88,41 @@ static int translate_sysarg(Tracee *tracee, Reg reg, Type type)
 	return translate_path2(tracee, AT_FDCWD, old_path, reg, type);
 }
 
+#if defined(ARCH_ARM64)
+#define SYSNUM_OPENAT2 437
+#define SYSNUM_LAST_TABLE_ENTRY 440
+#define SYSNUM_EPOLL_PWAIT2 441
+#define SYSNUM_LANDLOCK_CREATE_RULESET 444
+#define SYSNUM_LANDLOCK_ADD_RULE 445
+#define SYSNUM_LANDLOCK_RESTRICT_SELF 446
+#define SYSNUM_MEMFD_SECRET 462
+
+static bool is_untranslatable_syscall(const Tracee *tracee)
+{
+	word_t number;
+
+	if (get_abi(tracee) != ABI_DEFAULT)
+		return false;
+
+	number = peek_reg(tracee, ORIGINAL, SYSARG_NUM);
+	if (number == SYSNUM_OPENAT2)
+		return true;
+	if (number <= SYSNUM_LAST_TABLE_ENTRY)
+		return false;
+
+	return number != SYSNUM_EPOLL_PWAIT2
+	    && number != SYSNUM_LANDLOCK_CREATE_RULESET
+	    && number != SYSNUM_LANDLOCK_ADD_RULE
+	    && number != SYSNUM_LANDLOCK_RESTRICT_SELF
+	    && number != SYSNUM_MEMFD_SECRET;
+}
+#else
+static bool is_untranslatable_syscall(const Tracee *tracee)
+{
+	return false;
+}
+#endif
+
 /**
  * Translate the input arguments of the current @tracee's syscall in the
  * @tracee->pid process area. This function sets @tracee->status to
@@ -110,6 +145,9 @@ int translate_syscall_enter(Tracee *tracee)
 
 	word_t syscall_number;
 	bool special = false;
+
+	if (is_untranslatable_syscall(tracee))
+		return -ENOSYS;
 
 	status = notify_extensions(tracee, SYSCALL_ENTER_START, 0, 0);
 	if (status < 0)
