@@ -155,8 +155,8 @@ fn sdk_level() -> i32 {
     if len <= 0 {
         return 0;
     }
-    let bytes: Vec<u8> = value[..len as usize].iter().map(|&c| c as u8).collect();
-    String::from_utf8_lossy(&bytes).trim().parse().unwrap_or(0)
+    let text = unsafe { std::ffi::CStr::from_ptr(value.as_ptr()) };
+    text.to_string_lossy().trim().parse().unwrap_or(0)
 }
 
 pub fn test_path_free_syscall_above_table() -> TestResult {
