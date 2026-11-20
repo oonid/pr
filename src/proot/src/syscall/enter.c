@@ -47,6 +47,7 @@
 #include "path/path.h"
 #include "path/canon.h"
 #include "arch.h"
+#include "attribute.h"
 
 /**
  * Translate @path and put the result in the @tracee's memory address
@@ -95,9 +96,9 @@ static int translate_sysarg(Tracee *tracee, Reg reg, Type type)
 #define SYSNUM_LANDLOCK_CREATE_RULESET 444
 #define SYSNUM_LANDLOCK_ADD_RULE 445
 #define SYSNUM_LANDLOCK_RESTRICT_SELF 446
-#define SYSNUM_MEMFD_SECRET 462
+#define SYSNUM_MSEAL 462
 
-static bool is_untranslatable_syscall(const Tracee *tracee)
+static bool refused_at_entry(const Tracee *tracee)
 {
 	word_t number;
 
@@ -114,10 +115,10 @@ static bool is_untranslatable_syscall(const Tracee *tracee)
 	    && number != SYSNUM_LANDLOCK_CREATE_RULESET
 	    && number != SYSNUM_LANDLOCK_ADD_RULE
 	    && number != SYSNUM_LANDLOCK_RESTRICT_SELF
-	    && number != SYSNUM_MEMFD_SECRET;
+	    && number != SYSNUM_MSEAL;
 }
 #else
-static bool is_untranslatable_syscall(const Tracee *tracee)
+static bool refused_at_entry(const Tracee *tracee UNUSED)
 {
 	return false;
 }
@@ -146,7 +147,7 @@ int translate_syscall_enter(Tracee *tracee)
 	word_t syscall_number;
 	bool special = false;
 
-	if (is_untranslatable_syscall(tracee))
+	if (refused_at_entry(tracee))
 		return -ENOSYS;
 
 	status = notify_extensions(tracee, SYSCALL_ENTER_START, 0, 0);
