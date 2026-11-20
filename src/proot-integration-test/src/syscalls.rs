@@ -3,7 +3,9 @@ use std::ffi::CString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+const SYS_RENAMEAT2: libc::c_long = 276;
 const SYS_OPENAT2: libc::c_long = 437;
+const SYS_FACCESSAT2: libc::c_long = 439;
 const SYS_EPOLL_PWAIT2: libc::c_long = 441;
 const SYS_FCHMODAT2: libc::c_long = 452;
 const SYS_SETXATTRAT: libc::c_long = 463;
@@ -187,5 +189,69 @@ pub fn test_path_free_syscall_above_table() -> TestResult {
         Ok(())
     } else {
         Err(format!("epoll_pwait2: rc={} errno={}, want 0", rc, err))
+    }
+}
+
+pub fn test_renameat2_noreplace() -> TestResult {
+    let a = "/tmp/pit-sc-rn-a";
+    let b = "/tmp/pit-sc-rn-b";
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    fs::write(a, b"A").map_err(|e| format!("write a: {}", e))?;
+    fs::write(b, b"B").map_err(|e| format!("write b: {}", e))?;
+    let pa = c(a);
+    let pb = c(b);
+    let rc = unsafe {
+        libc::syscall(
+            SYS_RENAMEAT2,
+            libc::AT_FDCWD,
+            pa.as_ptr(),
+            libc::AT_FDCWD,
+            pb.as_ptr(),
+            1 as libc::c_uint,
+        )
+    };
+    let err = errno();
+    let content = fs::read_to_string(b);
+    let _ = fs::remove_file(a);
+    let _ = fs::remove_file(b);
+    if !(rc == -1 && (err == libc::EEXIST || err == libc::ENOSYS)) {
+        return Err(format!(
+            "renameat2 NOREPLACE: rc={} errno={}, want -1 with EEXIST or ENOSYS",
+            rc, err
+        ));
+    }
+    match content {
+        Ok(ref s) if s == "B" => Ok(()),
+        Ok(s) => Err(format!("b reads {:?} after renameat2, want \"B\"", s)),
+        Err(e) => Err(format!("read b after renameat2: {}", e)),
+    }
+}
+
+pub fn test_faccessat2_nofollow_dangling() -> TestResult {
+    let link = "/tmp/pit-sc-dangling";
+    let target = "/tmp/pit-sc-nowhere";
+    let _ = fs::remove_file(link);
+    let _ = fs::remove_file(target);
+    std::os::unix::fs::symlink(target, link).map_err(|e| format!("symlink: {}", e))?;
+    let path = c(link);
+    let rc = unsafe {
+        libc::syscall(
+            SYS_FACCESSAT2,
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            libc::F_OK,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    let err = errno();
+    let _ = fs::remove_file(link);
+    if rc == 0 || (rc == -1 && err == libc::ENOSYS) {
+        Ok(())
+    } else {
+        Err(format!(
+            "faccessat2 NOFOLLOW on a dangling symlink: rc={} errno={}, want 0 or ENOSYS",
+            rc, err
+        ))
     }
 }

@@ -37,7 +37,7 @@ src/proot-integration-test/
   src/distro.rs           Package manager detection + tool installation (8 tests)
   src/clone.rs            process spawning: fork+exec, pipes, nesting, threads (5 tests)
   src/readlink.rs         .l2s. hiding, readlink, realpath tests (9 tests)
-  src/gcc.rs              GCC prefix resolution, C compilation, posix_spawn and vfork (5 tests)
+  src/gcc.rs              GCC prefix resolution, C compilation, posix_spawn, vfork, system and popen (7 tests)
   src/rust.rs             rustc, cargo build with timing diagnostics (4 tests)
   src/git.rs              git init, git config, cargo new with vcs git (3 tests)
   src/pipe.rs             pipe/pipe2 syscall availability (3 tests)
@@ -45,7 +45,7 @@ src/proot-integration-test/
   src/ssh.rs              openssh-client: version, keygen, fingerprint, scp (4 tests)
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
   src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (8 tests)
-  src/syscalls.rs         path syscalls proot cannot translate: ENOSYS, path-free ones still work (4 tests)
+  src/syscalls.rs         path syscalls proot cannot translate: ENOSYS, path-free ones still work (6 tests)
 ```
 
 The `exit` suite is not in the guest binary: a program inside proot cannot see proot's own exit status,
@@ -61,7 +61,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | distro | 8 | always | Package manager detection, tool installation, os-release |
 | clone | 5 | always | Process spawning (fork+exec, piped output, nested spawns, threads, concurrent spawns) |
 | readlink | 9 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files; `/proc/self/exe` of a program run by a hard link; small readlink buffers; run again isolated as `readlink-isolated` |
-| gcc | 5 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe; the distro libc's `posix_spawn` and `vfork` |
+| gcc | 7 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe; the distro libc's `posix_spawn` and `vfork` |
 | rust | 4 | `/usr/bin/rustc` exists | T8.3 si_syscall=-1 suppression, T8.4 SIGSYS handlers |
 | git | 3 | `/usr/bin/git` exists | T8.3 si_syscall=-1, T8.4 setuid/setgid handlers |
 | pipe | 3 | always | pipe2 availability (disproves blocked-by-seccomp theory) |
@@ -69,7 +69,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
-| syscalls | 4 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works |
+| syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST or ENOSYS); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
@@ -118,13 +118,15 @@ the app directory has two such paths (`/data/user/0/<package>` and `/data/data/<
 which one proot sees depends on how it was started; the symlink makes the check independent of
 that and of the device.
 
-#### gcc (5 tests)
+#### gcc (7 tests)
 
 1. **cc -print-search-dirs** — install path has no `.l2s.`
 2. **compile and run C program** — `printf("ok\n")` compiles and runs
 3. **/proc/self/exe after exec** — no `.l2s.` in exe path after exec
 4. **posix_spawn of a missing program is ENOENT** — a C program built with the distro's `cc`; glibc reports the exec error through memory the vfork child shares with the parent, so it needs `CLONE_VM` and `CLONE_VFORK` kept (with them stripped it returned 0)
 5. **vfork and exec return to the parent** — `vfork` + `execvp("true")` and `vfork` + a failed `execv`, under `timeout 20`, so a vfork that never returns fails instead of hanging the suite
+6. **system("true") returns 0** — glibc `system` through `posix_spawn`
+7. **popen reads a child's output** — `popen("echo pit","r")` yields `pit` and `pclose` returns 0
 
 #### rust (4 tests)
 
