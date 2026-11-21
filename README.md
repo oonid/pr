@@ -92,7 +92,7 @@ The version comes from `-PprVersionCode=<n>` and `-PprVersionName=<name>` (defau
 
 ## Testing
 
-CI checks formatting and runs clippy with warnings as errors on pr-cli and the test binary, runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds proot with NDK r27c and the APK.
+CI checks formatting and runs clippy with warnings as errors on pr-cli and the test binary, runs the host-side unit suites (`cargo test` for pr-cli, `:app:testDebugUnitTest`, `:session-core:testDebugUnitTest` and `:proot-engine:testDebugUnitTest`) on pushes to `main` and on pull requests, then builds proot with NDK r27c and the APK.
 
 ### Android unit tests (JVM)
 
@@ -118,7 +118,7 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
 ```
 
-**15 tests** of the PTY bridge (`PtyNative`) and session reaping, including UTF-8 erase (`IUTF8`), a close-on-exec master, size limits, reads and writes at an offset, a write larger than one 8 KiB chunk, and a close that sends the program nothing.
+**16 tests** of the PTY bridge (`PtyNative`) and session reaping, including UTF-8 erase (`IUTF8`), a close-on-exec master, size limits, reads and writes at an offset, a write larger than one 8 KiB chunk, and a close that sends the program nothing.
 
 Over wireless debugging, where the adb serial is `host:port`, AGP 9.4.1 marks this task failed even when every test passes: it escapes the colon when it records the device and then looks it up by the raw serial. Read the results in `proot-engine/build/outputs/androidTest-results/connected/debug/*.xml` instead; a USB serial is not affected.
 

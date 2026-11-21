@@ -95,7 +95,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Testing
 
-CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the test binary), `cargo test` (pr-cli), `:app:testDebugUnitTest` and `:session-core:testDebugUnitTest` on pushes to `main` and on pull requests, with NDK r27c and Rust 1.97.1. Keep pr-cli and the test binary free of clippy warnings; raise the pinned Rust version on purpose, fixing any new lints in the same change.
+CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the test binary), `cargo test` (pr-cli), `:app:testDebugUnitTest`, `:session-core:testDebugUnitTest` and `:proot-engine:testDebugUnitTest` on pushes to `main` and on pull requests, with NDK r27c and Rust 1.97.1. Keep pr-cli and the test binary free of clippy warnings; raise the pinned Rust version on purpose, fixing any new lints in the same change.
 
 ### Android unit tests (JVM)
 
@@ -104,6 +104,18 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 # session-core, 208 tests: sessions, tasks, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
 # app, 43 tests: DistroOperations, InstalledContainers, NotificationAccess, TerminalStart
 ```
+
+### PTY contract tests (instrumented)
+
+```bash
+cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
+# proot-engine, 16 instrumented tests (5 JVM tests run in CI)
+```
+
+- This runs on every connected device; set `ANDROID_SERIAL` to pick one.
+- On an x86_64 host, run the tests on an x86_64 emulator image with `-PprTestAbis=x86_64`. It builds the PTY library for x86_64 too; the shipped AAR and APK stay arm64-only. arm64 system images do not run on x86_64 hosts. Android 11 (API 30) is the oldest release checked.
+- Processes started with `adb run-as` have no app seccomp filter, so behaviour that depends on the filter (SIGSYS handlers, `close_range` before Android 13) must be checked from inside the app or an instrumented test.
+- On some phones Gradle reports "There were failing tests" and exits 1 although the results show none failed; read `proot-engine/build/reports/androidTests/connected/debug/index.html`.
 
 ### Host-side (pr-cli unit/integration)
 
