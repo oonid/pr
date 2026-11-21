@@ -805,24 +805,58 @@ fn move_into_l2s(l2s_dir: &Path, source: &Path) -> Result<Option<PathBuf>, Strin
         return Ok(None);
     };
     fs::create_dir_all(l2s_dir).map_err(failed)?;
-    let Some(intermediate) = (1..1000)
-        .map(|n| {
-            let mut file = std::ffi::OsString::from(L2S_PREFIX);
-            file.push(name);
-            file.push(format!("{:04}", n));
-            l2s_dir.join(file)
-        })
-        .find(|path| fs::symlink_metadata(path).is_err())
-    else {
-        return Ok(None);
+    for n in 1..=9999 {
+        let mut file = std::ffi::OsString::from(L2S_PREFIX);
+        file.push(name);
+        file.push(format!("{:04}", n));
+        let intermediate = l2s_dir.join(file);
+        let mut data = intermediate.clone().into_os_string();
+        data.push(".0002");
+        let data = PathBuf::from(data);
+        match std::os::unix::fs::symlink(&data, &intermediate) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(failed(e)),
+        }
+        if let Err(e) = rename_noreplace(source, &data) {
+            let _ = fs::remove_file(&intermediate);
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                continue;
+            }
+            return Err(failed(e));
+        }
+        if let Err(e) = std::os::unix::fs::symlink(&intermediate, source) {
+            if rename_noreplace(&data, source).is_ok() {
+                let _ = fs::remove_file(&intermediate);
+            }
+            return Err(failed(e));
+        }
+        return Ok(Some(intermediate));
+    }
+    Ok(None)
+}
+
+fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = |path: &Path| {
+        std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
     };
-    let mut data = intermediate.clone().into_os_string();
-    data.push(".0002");
-    let data = PathBuf::from(data);
-    fs::rename(source, &data).map_err(failed)?;
-    std::os::unix::fs::symlink(&data, &intermediate).map_err(failed)?;
-    std::os::unix::fs::symlink(&intermediate, source).map_err(failed)?;
-    Ok(Some(intermediate))
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub(crate) fn keep_dir_writable(path: &Path) -> Result<(), String> {
@@ -1665,6 +1699,30 @@ mod tests {
             b"other"
         );
         assert!(fs::symlink_metadata(l2s.join(".l2s.tool0001")).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn move_into_l2s_uses_number_1000_when_1_to_999_are_taken() {
+        let tmp = unique_tmp_dir("l2s-past-999");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        for n in 1..=999 {
+            symlink("nowhere", l2s.join(format!(".l2s.tool{:04}", n))).expect("plant");
+        }
+        let source = tmp.join("tool");
+        fs::write(&source, b"mine").expect("source");
+
+        let intermediate = move_into_l2s(&l2s, &source)
+            .expect("move")
+            .expect("a free number");
+
+        assert_eq!(intermediate, l2s.join(".l2s.tool1000"));
+        assert_eq!(fs::read(&source).expect("source"), b"mine");
+        assert_eq!(
+            fs::read(l2s.join(".l2s.tool1000.0002")).expect("data"),
+            b"mine"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 

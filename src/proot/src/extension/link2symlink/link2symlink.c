@@ -7,6 +7,8 @@
 #include <errno.h>     /* E*, */
 #include <limits.h>    /* PATH_MAX, */
 #include <ctype.h>     /* isdigit, */
+#include <fcntl.h>
+#include <sys/syscall.h>
 
 #include "cli/note.h"
 #include "extension/extension.h"
@@ -23,6 +25,10 @@
 #define PREFIX L2S_PREFIX
 #define DELETED_SUFFIX " (deleted)"
 
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+
 static int decrement_link_count(Tracee *tracee, Reg sysarg);
 
 /**
@@ -35,11 +41,29 @@ static int my_readlink(const char symlink[PATH_MAX], char value[PATH_MAX])
 
 	size = readlink(symlink, value, PATH_MAX);
 	if (size < 0)
-		return size;
+		return -errno;
 	if (size >= PATH_MAX)
 		return -ENAMETOOLONG;
 	value[size] = '\0';
 
+	return 0;
+}
+
+static int rename_noreplace(const char *oldpath, const char *newpath)
+{
+	if (syscall(SYS_renameat2, AT_FDCWD, oldpath, AT_FDCWD, newpath, RENAME_NOREPLACE) < 0)
+		return -errno;
+	return 0;
+}
+
+static int rename_back(Tracee *tracee, const char *from, const char *to)
+{
+	int status;
+
+	status = rename_noreplace(from, to);
+	if (status < 0)
+		return status;
+	notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) from, (intptr_t) to);
 	return 0;
 }
 
@@ -61,9 +85,10 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 	struct stat statl;
 	ssize_t size;
 	int status;
+	int length;
 	int link_count;
 	int first_link = 1;
-	int intermediate_suffix = 1;
+	int intermediate_suffix;
 
 	/* Note: this path was already canonicalized.  */
 	size = read_string(tracee, original, peek_reg(tracee, CURRENT, sysarg), PATH_MAX);
@@ -123,57 +148,82 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 	}
 
 	if (first_link) {
-		/*Move the original content to the new path. */
-		do {
-			sprintf(new_intermediate, "%s%04d", intermediate, intermediate_suffix);
-			intermediate_suffix++;
-		} while ((access(new_intermediate,F_OK) != -1) && (intermediate_suffix < 1000));
+		for (intermediate_suffix = 1; intermediate_suffix <= 9999; intermediate_suffix++) {
+			length = snprintf(new_intermediate, PATH_MAX, "%s%04d", intermediate, intermediate_suffix);
+			if (length < 0 || length >= PATH_MAX)
+				return -ENAMETOOLONG;
+			length = snprintf(final, PATH_MAX, "%s.0002", new_intermediate);
+			if (length < 0 || length >= PATH_MAX)
+				return -ENAMETOOLONG;
+
+			if (symlink(final, new_intermediate) < 0) {
+				if (errno == EEXIST)
+					continue;
+				return -errno;
+			}
+
+			status = rename_noreplace(original, final);
+			if (status == 0)
+				break;
+			unlink(new_intermediate);
+			if (status != -EEXIST)
+				return status;
+		}
+		if (intermediate_suffix > 9999)
+			return -EMLINK;
 		strcpy(intermediate, new_intermediate);
 
-		strcpy(final, intermediate);
-		strcat(final, ".0002");
-		status = rename(original, final);
-		if (status < 0)
-			return status;
 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) original, (intptr_t) final);
-		if (status < 0)
+		if (status < 0) {
+			if (rename_noreplace(final, original) == 0)
+				unlink(intermediate);
 			return status;
+		}
 
-		/* Symlink the intermediate to the final file.  */
-		status = symlink(final, intermediate);
-		if (status < 0)
+		if (symlink(intermediate, original) < 0) {
+			status = -errno;
+			if (rename_back(tracee, final, original) == 0)
+				unlink(intermediate);
 			return status;
-
-		/* Symlink the original path to the intermediate one.  */
-		status = symlink(intermediate, original);
-		if (status < 0)
-			return status;
+		}
 	} else {
-		/*Move the original content to new location, by incrementing count at end of path. */
 		size = my_readlink(intermediate, final);
 		if (size < 0)
 			return size;
 
-		link_count = atoi(final + strlen(final) - 4);
-		link_count++;
+		length = strlen(final);
+		if (length < 4)
+			return -EINVAL;
+		link_count = atoi(final + length - 4);
+		if (link_count >= 9999)
+			return -EMLINK;
 
-		strncpy(new_final, final, strlen(final) - 4);
-		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+		length = snprintf(new_final, PATH_MAX, "%.*s%04d", length - 4, final, link_count + 1);
+		if (length < 0 || length >= PATH_MAX)
+			return -ENAMETOOLONG;
 
-		status = rename(final, new_final);
+		status = rename_noreplace(final, new_final);
 		if (status < 0)
 			return status;
 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
-		if (status < 0)
+		if (status < 0) {
+			rename_noreplace(new_final, final);
 			return status;
-		strcpy(final, new_final);
-		/* Symlink the intermediate to the final file.  */
-		status = unlink(intermediate);
-		if (status < 0)
+		}
+
+		if (unlink(intermediate) < 0) {
+			status = -errno;
+			rename_back(tracee, new_final, final);
 			return status;
-		status = symlink(final, intermediate);
-		if (status < 0)
+		}
+		if (symlink(new_final, intermediate) < 0) {
+			status = -errno;
+			if (rename_back(tracee, new_final, final) == 0)
+				symlink(final, intermediate);
+			else
+				symlink(new_final, intermediate);
 			return status;
+		}
 	}
 
 	/* Perform symlink() operation within PRoot.  */
@@ -183,7 +233,6 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 		if (status < 0) status = -errno;
 	}
 	if (status < 0) {
-		status = -errno;
 		decrement_link_count(tracee, sysarg);
 		return status;
 	}
@@ -259,7 +308,7 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
 
 		status = rename(final, new_final);
 		if (status < 0)
-			return status;
+			return -errno;
 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
 		if (status < 0)
 			return status;
@@ -269,19 +318,19 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
 		/* Symlink the intermediate to the final file.  */
 		status = unlink(intermediate);
 		if (status < 0)
-			return status;
+			return -errno;
 
 		status = symlink(final, intermediate);
 		if (status < 0)
-			return status;
+			return -errno;
 	} else {
 		/* If it is the last, delete the intermediate and final */
 		status = unlink(intermediate);
 		if (status < 0)
-			return status;
+			return -errno;
 		status = unlink(final);
 		if (status < 0)
-			return status;
+			return -errno;
 		status = notify_extensions(tracee, LINK2SYMLINK_UNLINK, (intptr_t) final, 0);
 		if (status < 0)
 			return status;
