@@ -100,9 +100,10 @@ CI runs `cargo fmt --check` and `cargo clippy -- -D warnings` (pr-cli and the te
 ### Android unit tests (JVM)
 
 ```bash
-cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
+cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest :proot-engine:testDebugUnitTest
 # session-core, 208 tests: sessions, tasks, command sessions, terminal binds, Java constructors, End's /proc scan, PrCliCommand, ProcessRunner, bootstrap links
 # app, 43 tests: DistroOperations, InstalledContainers, NotificationAccess, TerminalStart
+# proot-engine, 5 tests: ProotLauncherTest (3), NetworkDnsTest (2)
 ```
 
 ### PTY contract tests (instrumented)
@@ -113,9 +114,10 @@ cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
 ```
 
 - This runs on every connected device; set `ANDROID_SERIAL` to pick one.
-- On an x86_64 host, run the tests on an x86_64 emulator image with `-PprTestAbis=x86_64`. It builds the PTY library for x86_64 too; the shipped AAR and APK stay arm64-only. arm64 system images do not run on x86_64 hosts. Android 11 (API 30) is the oldest release checked.
+- On an x86_64 host, run the tests on an x86_64 emulator image with `-PprTestAbis=x86_64`. It builds the PTY library for x86_64 too; without the property the AAR and APK stay arm64-only, so never pass `-PprTestAbis` to a release or AAR build (the app's own arm64 filter keeps x86_64 out of the APK, but the AAR would carry it). arm64 system images do not run on x86_64 hosts. Android 11 (API 30) is the oldest release checked.
+- The emulator needs an x86_64 system image (the `aosp_atd` image for API 30 is enough) and KVM on the host. Create it with `avdmanager` and boot it with `emulator -no-window`.
 - Processes started with `adb run-as` have no app seccomp filter, so behaviour that depends on the filter (SIGSYS handlers, `close_range` before Android 13) must be checked from inside the app or an instrumented test.
-- On some phones Gradle reports "There were failing tests" and exits 1 although the results show none failed; read `proot-engine/build/reports/androidTests/connected/debug/index.html`.
+- Over wireless debugging (adb serial `host:port`), Gradle reports "There were failing tests" and exits 1 even when every test passes (AGP 9.4.1 looks the device up by its raw serial). Read `proot-engine/build/reports/androidTests/connected/debug/index.html`.
 
 ### Host-side (pr-cli unit/integration)
 
