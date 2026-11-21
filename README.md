@@ -130,7 +130,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-In the app, **Test** in an installed container's menu runs the same suite. **64 tests** across 12 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot, exit; Test also runs readlink again under isolation, 73 results in all
+In the app, **Test** in an installed container's menu runs the same suite. **72 tests** across 13 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot, syscalls, exit; Test also runs readlink again under isolation, 81 results in all
 
 ## Project structure
 
