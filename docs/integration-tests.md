@@ -69,7 +69,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | ssh | 4 | `/usr/bin/ssh` exists | openssh-client: version, ed25519 keygen, fingerprint, scp binary |
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
-| syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST or ENOSYS); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
+| syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST expected; ENOSYS accepted only as the safe answer); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
@@ -218,7 +218,7 @@ for. The test names are the ones in `src/syscalls.rs`.
 2. **fchmodat2 is ENOSYS** — the mode is unchanged
 3. **setxattrat is ENOSYS** — the enter-stage rule for numbers above 440
 4. **a path-free syscall above the table still works** — `epoll_pwait2` (441) returns 0; passes without calling it below SDK 35
-5. **renameat2 with RENAME_NOREPLACE never overwrites** — `EEXIST` or `ENOSYS`, the target keeps its content
+5. **renameat2 with RENAME_NOREPLACE never overwrites** — `EEXIST` is the expected result on every supported Android (the filter allows `renameat2`); `ENOSYS` is accepted only as the safe answer if a filter ever traps it; the target keeps its content
 6. **faccessat2 with AT_SYMLINK_NOFOLLOW on a dangling symlink** — 0 or `ENOSYS`, never `ENOENT`
 
 ---

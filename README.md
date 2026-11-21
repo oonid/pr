@@ -51,7 +51,7 @@ The project consists of three layers:
 Android enforces several restrictions on app processes:
 - **W^X (Write-XOR-Execute)**: Prevents executing files in app-writable directories
 - **SELinux**: Blocks certain filesystem operations
-- **Zygote seccomp**: Blocks 18+ syscalls via BPF filter
+- **Zygote seccomp**: Traps syscalls with a BPF filter (SIGSYS); proot answers the ones it can
 
 Our engine handles all of these:
 - SIGSYS handlers intercept blocked syscalls and emulate them in userspace
