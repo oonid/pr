@@ -107,7 +107,7 @@ the enter stage translates it with `AT_SYMLINK_NOFOLLOW` honoured.
 
 **renameat2**: libcs call it only when flags are set (with 0 they use `renameat`). With flags 0 the
 handler downgrades to `renameat`; with `RENAME_NOREPLACE` or `RENAME_EXCHANGE` it answers `-ENOSYS`
-(dropping the flag made `mv -n` overwrite). The filter allows it from Android 11.
+(dropping the flag made `mv -n` overwrite). The filter has allowed it since Android 8, so this handler is believed unreachable.
 
 **process_madvise**: Advisory memory advice syscall. Safe to noop.
 

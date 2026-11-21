@@ -306,7 +306,7 @@ registers). The `false` parameter skipped this update, making all SIGSYS syscall
 conversions (openat2→openat, faccessat2→faccessat, etc.) ineffective on arm64.
 
 **PR_openat2 handler** (`seccomp.c` + `sysnums-arm64.h`): Added openat2 (syscall 437) to
-the syscall table and SIGSYS handler. Converts openat2 → openat, drops resolve flags.
+the syscall table and SIGSYS handler. Converts openat2 → openat, drops resolve flags. (Historical: this handler was replaced by `-ENOSYS` at the enter stage; see docs/important-notes.md.)
 
 **PR_faccessat handler** (`seccomp.c`): Returns 0 (proot fakes root, access() always succeeds).
 
