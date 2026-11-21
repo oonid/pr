@@ -13,7 +13,9 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <android/api-level.h>
 #include <android/log.h>
+#include <sys/resource.h>
 
 #define UNUSED __attribute__((unused))
 #define TAG "PTY"
@@ -175,12 +177,21 @@ static void reset_signals(void) {
         if (sig != SIGKILL && sig != SIGSTOP) signal(sig, SIG_DFL);
 }
 
-static void close_inherited_fds(void) {
-    if (syscall(SYS_close_range, 3, ~0U, 0) == 0) return;
-    for (int fd = 3; fd < 65536; fd++) close(fd);
+static int descriptor_limit(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0 || rl.rlim_cur == RLIM_INFINITY) return 65536;
+    if (rl.rlim_cur < 1024) return 1024;
+    if (rl.rlim_cur > 65536) return 65536;
+    return (int) rl.rlim_cur;
 }
 
-static void exec_child(const char *pts_name, const char *cmd, char **argv, char **envp) {
+static void close_inherited_fds(bool use_close_range, int fd_limit) {
+    if (use_close_range && syscall(SYS_close_range, 3, ~0U, 0) == 0) return;
+    for (int fd = 3; fd < fd_limit; fd++) close(fd);
+}
+
+static void exec_child(const char *pts_name, const char *cmd, char **argv, char **envp,
+                       bool use_close_range, int fd_limit) {
     reset_signals();
     setsid();
     int pts_fd = open(pts_name, O_RDWR);
@@ -188,7 +199,7 @@ static void exec_child(const char *pts_name, const char *cmd, char **argv, char 
     dup2(pts_fd, STDIN_FILENO);
     dup2(pts_fd, STDOUT_FILENO);
     dup2(pts_fd, STDERR_FILENO);
-    close_inherited_fds();
+    close_inherited_fds(use_close_range, fd_limit);
 
     execve(cmd, argv, envp);
 
@@ -245,6 +256,9 @@ Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
         goto fail;
     }
 
+    bool use_close_range = android_get_device_api_level() >= 33;
+    int fd_limit = descriptor_limit();
+
     pid_t pid = fork();
     if (pid < 0) {
         LOGE("fork: %s", strerror(errno));
@@ -254,7 +268,7 @@ Java_id_or_oo_pr_engine_PtyNative_nativeForkPty(
 
     if (pid == 0) {
         close(ptm_fd);
-        exec_child(pts_name, cmd, argv, envp);
+        exec_child(pts_name, cmd, argv, envp, use_close_range, fd_limit);
     }
 
     free(cmd);
