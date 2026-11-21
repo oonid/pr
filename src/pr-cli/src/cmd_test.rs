@@ -398,6 +398,7 @@ pub fn command_test(distro: &str, suite: Option<&str>, verbose: bool) -> Result<
         "chroot",
         "fakeroot",
         "syscalls",
+        "hardlink",
         "exit",
     ];
     let target_suites: Vec<&str> = match suite {

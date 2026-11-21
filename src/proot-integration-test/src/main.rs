@@ -9,6 +9,7 @@ mod fakeroot;
 mod gcc;
 mod general;
 mod git;
+mod hardlink;
 mod pipe;
 mod readlink;
 mod rust;
@@ -253,6 +254,24 @@ const SUITES: &[Suite] = &[
             Test {
                 name: "faccessat2 NOFOLLOW on a dangling symlink",
                 run: syscalls::test_faccessat2_nofollow_dangling,
+            },
+        ],
+    },
+    Suite {
+        name: "hardlink",
+        probe: hardlink::probe,
+        tests: &[
+            Test {
+                name: "a full basename is EMLINK and keeps the source",
+                run: hardlink::test_full_basename_is_emlink,
+            },
+            Test {
+                name: "a stale data name is never overwritten",
+                run: hardlink::test_stale_data_name_is_never_overwritten,
+            },
+            Test {
+                name: "the 1000th group of a basename gets its own data",
+                run: hardlink::test_thousandth_group_gets_its_own_data,
             },
         ],
     },
