@@ -46,6 +46,24 @@ class PtyNativeContractTest {
     }
 
     @Test
+    fun aSessionStartsAndExitsCleanly() {
+        val (masterFd, pid) = PtyNative.forkPtyWithPid(
+            "/system/bin/sh", arrayOf("sh", "-c", "exit 7"), null, 24, 80)
+        assertTrue("forkPty failed", masterFd >= 0 && pid > 0)
+        try {
+            var status = PtyNative.STILL_RUNNING
+            val deadline = System.currentTimeMillis() + 10_000
+            while (status == PtyNative.STILL_RUNNING && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+                status = PtyNative.waitPid(pid)
+            }
+            assertEquals("exit status $status (159 means killed by SIGSYS)", 7, status)
+        } finally {
+            PtyNative.close(masterFd)
+        }
+    }
+
+    @Test
     fun childGetsArgsAndEnvOnTopOfInheritedEnv() {
         val masterFd = PtyNative.forkPty(
             "/system/bin/sh",
