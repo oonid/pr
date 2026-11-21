@@ -67,6 +67,50 @@ static int rename_back(Tracee *tracee, const char *from, const char *to)
 	return 0;
 }
 
+static int repoint_intermediate(const char *intermediate, const char *target)
+{
+	char temporary[PATH_MAX];
+	int length;
+	int status;
+
+	length = snprintf(temporary, PATH_MAX, "%s.new", intermediate);
+	if (length < 0 || length >= PATH_MAX)
+		return -ENAMETOOLONG;
+	if (symlink(target, temporary) < 0) {
+		if (errno != EEXIST || unlink(temporary) < 0 || symlink(target, temporary) < 0)
+			return -errno;
+	}
+	if (rename(temporary, intermediate) < 0) {
+		status = -errno;
+		unlink(temporary);
+		return status;
+	}
+	return 0;
+}
+
+static void undo_first_link(Tracee *tracee, const char *original, const char *intermediate, const char *final)
+{
+	if (unlink(original) < 0)
+		return;
+	if (rename_back(tracee, final, original) == 0)
+		unlink(intermediate);
+	else
+		symlink(intermediate, original);
+}
+
+static int has_count(const char *final, int length)
+{
+	int i;
+
+	if (length < 4)
+		return 0;
+	for (i = length - 4; i < length; i++) {
+		if (!isdigit((unsigned char) final[i]))
+			return 0;
+	}
+	return 1;
+}
+
 /**
  * Move the path pointed to by @tracee's @sysarg to a new location,
  * symlink the original path to this new one, make @tracee's @sysarg
@@ -80,6 +124,7 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 	char new_intermediate[PATH_MAX];
 	char final[PATH_MAX];
 	char new_final[PATH_MAX];
+	char destination[PATH_MAX];
 	char * name;
 	const char * l2s_directory;
 	struct stat statl;
@@ -192,7 +237,7 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 			return size;
 
 		length = strlen(final);
-		if (length < 4)
+		if (!has_count(final, length))
 			return -EINVAL;
 		link_count = atoi(final + length - 4);
 		if (link_count >= 9999)
@@ -211,29 +256,24 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 			return status;
 		}
 
-		if (unlink(intermediate) < 0) {
-			status = -errno;
+		status = repoint_intermediate(intermediate, new_final);
+		if (status < 0) {
 			rename_back(tracee, new_final, final);
-			return status;
-		}
-		if (symlink(new_final, intermediate) < 0) {
-			status = -errno;
-			if (rename_back(tracee, new_final, final) == 0)
-				symlink(final, intermediate);
-			else
-				symlink(new_final, intermediate);
 			return status;
 		}
 	}
 
 	/* Perform symlink() operation within PRoot.  */
-	status = read_path(tracee, final, peek_reg(tracee, CURRENT, link_target_sysarg));
+	status = read_path(tracee, destination, peek_reg(tracee, CURRENT, link_target_sysarg));
 	if (status >= 0) {
-		status = symlink(intermediate, final);
+		status = symlink(intermediate, destination);
 		if (status < 0) status = -errno;
 	}
 	if (status < 0) {
-		decrement_link_count(tracee, sysarg);
+		if (first_link)
+			undo_first_link(tracee, original, intermediate, final);
+		else
+			decrement_link_count(tracee, sysarg);
 		return status;
 	}
 	poke_reg(tracee, SYSARG_RESULT, 0);
@@ -313,16 +353,11 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
 		if (status < 0)
 			return status;
 
-		strcpy(final, new_final);
-
-		/* Symlink the intermediate to the final file.  */
-		status = unlink(intermediate);
-		if (status < 0)
-			return -errno;
-
-		status = symlink(final, intermediate);
-		if (status < 0)
-			return -errno;
+		status = repoint_intermediate(intermediate, new_final);
+		if (status < 0) {
+			rename_back(tracee, new_final, final);
+			return status;
+		}
 	} else {
 		/* If it is the last, delete the intermediate and final */
 		status = unlink(intermediate);
