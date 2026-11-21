@@ -125,9 +125,9 @@ pub fn test_popen_reads_output() -> TestResult {
                if(!fgets(b,sizeof b,f))b[0]=0;int st=pclose(f);\
                printf(\"got=%s status=%d\\n\",b,st);return 0;}";
     let out = compile_and_run("popen", src)?;
-    if out.contains("pit") && out.contains("status=0") && out.contains("exit=0") {
+    if out.contains("got=pit") && out.contains("status=0") && out.contains("exit=0") {
         Ok(())
     } else {
-        Err(format!("popen: {:?}, want pit with status=0", out))
+        Err(format!("popen: {:?}, want got=pit with status=0", out))
     }
 }
