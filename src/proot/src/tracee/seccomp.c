@@ -92,7 +92,7 @@ void trim_sigsys_log(void)
 
 	if (sigsys_log_path(path) != 0)
 		return;
-	fd = open(path, O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+	fd = open(path, O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0)
 		return;
 	if (fstat(fd, &statl) == 0 && S_ISREG(statl.st_mode) && statl.st_size > SIGSYS_LOG_MAX)
@@ -753,17 +753,19 @@ static int handle_seccomp_event_common(Tracee *tracee)
 			break;
 		}
 #endif
-		static unsigned char sigsys_seen[128];
-		int first = 1;
-		if (kernel_num < 1024) {
-			unsigned char bit = 1u << (kernel_num & 7);
-			first = !(sigsys_seen[kernel_num >> 3] & bit);
-			sigsys_seen[kernel_num >> 3] |= bit;
-		}
+		static unsigned char sigsys_seen[129];
+		unsigned long slot = kernel_num < 1024 ? (unsigned long)kernel_num : 1024;
+		unsigned char bit = 1u << (slot & 7);
+		int first = !(sigsys_seen[slot >> 3] & bit);
 		char log_path[PATH_MAX];
 		int fd = -1;
+		struct stat logst;
 		if (first && sigsys_log_path(log_path) == 0)
-			fd = open(log_path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+			fd = open(log_path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600);
+		if (fd >= 0 && (fstat(fd, &logst) != 0 || !S_ISREG(logst.st_mode))) {
+			close(fd);
+			fd = -1;
+		}
 		if (fd >= 0) {
 			time_t now = time(NULL);
 			struct tm *tm = localtime(&now);
@@ -784,9 +786,10 @@ static int handle_seccomp_event_common(Tracee *tracee)
 				}
 				fclose(commf);
 			}
-			dprintf(fd, "SIGSYS: time=%s pid=%d comm=%s kernel_num=%lu pr=%d\n",
+			if (dprintf(fd, "SIGSYS: time=%s pid=%d comm=%s kernel_num=%lu pr=%d\n",
 				timebuf, (int)tracee->pid, comm,
-				(unsigned long)kernel_num, (int)sysnum);
+				(unsigned long)kernel_num, (int)sysnum) > 0)
+				sigsys_seen[slot >> 3] |= bit;
 			close(fd);
 		}
 		if (sysnum == PR_openat || sysnum == PR_fstatat64) {
