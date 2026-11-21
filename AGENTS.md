@@ -124,9 +124,9 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-**Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), exit (4, run by pr-cli itself)
+**Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), exit (4, run by pr-cli itself); 72 tests, 81 runs with the isolated readlink pass
 
-**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite.
+**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. The syscalls suite brings the count to 81 runs (72 tests); not yet run on a device.
 
 ### Known test failures (Alpine-specific)
 
@@ -202,9 +202,9 @@ Commit message policy:
 
 1. **targetSdk is 35** — Play Store minimum. Works via PROOT_LOADER mechanism (unbundled loader binary in nativeLibraryDir).
 2. **W^X / SELinux** — Only nativeLibraryDir allows execve. Files in app data cannot be exec'd. The PROOT_LOADER mechanism works around this.
-3. **Zygote seccomp** blocks 18+ syscalls. Proot has SIGSYS handlers — never remove them. See `docs/important-notes.md` for full list.
+3. **Zygote seccomp** traps syscalls with SIGSYS. The handlers stay for syscalls the filter blocks and proot can answer correctly; a handler that would rewrite a call it cannot carry over answers ENOSYS instead. See `docs/important-notes.md` for the list.
 4. **No host shell or host tools** — `PrBootstrap` prepares `files/usr` with Kotlin file APIs, and pr-cli does its file work in Rust. The APK ships no busybox; don't add a `/system/bin/sh` script or a host-tool call.
-5. **ARM64 x0 clobber bug** — register x0 may be clobbered by kernel before proot reads it at SIGSYS time. All handlers use ORIGINAL register version.
+5. **ARM64 x0 clobber bug** — register x0 may be clobbered by kernel before proot reads it at SIGSYS time. Handlers read their arguments from the ORIGINAL registers (`SYSARG_1` in chdir, fchdir and getcwd; the flags in renameat2 and faccessat2); the `rseq`/`default:` case reads the syscall number from CURRENT.
 6. **TLS alignment** — proot needs 64-byte PT_TLS alignment for Bionic. Build script patches this.
 7. **Fake root required** — `--change-id=0:0` (proot `-0`) must always be passed. dpkg and other tools check `getuid() == 0`.
 8. **Kernel release format** — `--kernel-release` takes ONLY the release string (e.g. `6.17.0-pr`), NOT the full `uname` output. The libc6 preinst script parses this with shell arithmetic.
@@ -221,5 +221,5 @@ Save their documents in the neutral docs layout, not the skills' default `docs/s
 - `docs/important-notes.md` — Critical constraints, seccomp handlers, pr-cli caveats, read first
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot; §29 covers bind mount bug
 - `docs/rust-toolchain-support.md` — vfork/CLONE_VM fix, link2symlink readlink fix
-- `docs/integration-tests.md` — Integration test suite (64 tests, 73 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (72 tests, 81 runs with the isolated readlink pass)
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (PROOT_LOADER mechanism)

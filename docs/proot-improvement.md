@@ -55,14 +55,12 @@ like `setsockopt`, `socket`, `bind`, `connect`, `mount`, `chroot`, `clone`, `for
 | `PR_fchdir` | `fchdir` | 50 | Resolve dirfd to path, update cwd, return success |
 | `PR_linkat` | `linkat` | 37 | Return `-EPERM` (§34); link2symlink handles hard links before this point |
 | `PR_getcwd` | `getcwd` | 17 | Read `tracee->fs->cwd`, write to tracee buffer, return length |
-| `PR_faccessat2` | `faccessat2` | 439 | Downgrade to `faccessat` (drop flags arg) and restart |
+| `PR_faccessat2` | `faccessat2` | 439 | Flags 0: downgrade to `faccessat` and restart; any flag: return `-ENOSYS` |
 | `PR_faccessat` | `faccessat` | 48 | Return 0 (noop — zygote blocks even the base `faccessat` on some kernels) |
-| `PR_renameat2` | `renameat2` | 276 | Downgrade to `renameat` (drop flags arg) and restart |
-| `PR_openat2` | `openat2` | 437 | Downgrade to `openat` (clear SYSARG_5 size=0) and restart |
+| `PR_renameat2` | `renameat2` | 276 | Flags 0: downgrade to `renameat` and restart; any flag: return `-ENOSYS` |
 | `PR_process_madvise` | `process_madvise` | 440 | Return 0 (noop — advisory syscall) |
 | `PR_fchmodat` | `fchmodat` | 53 | Return 0 (noop — seccomp blocks this on some kernels) |
-| `PR_clone3` | `clone3` | 435 | Convert clone3 args struct to clone register args, return -ENOSYS for CLONE_THREAD, strip CLONE_VM/CLONE_VFORK otherwise |
-| `PR_clone` | `clone` | 220 | Return -ENOSYS for CLONE_THREAD, strip CLONE_VM/CLONE_VFORK otherwise |
+| `PR_clone3` | `clone3` | 435 | Return `-ENOSYS`; the libc falls back to `clone` |
 | `PR_setuid` | `setuid` | 146 | Return 0 (noop — fake_id0 handles UID semantics) |
 | `PR_setgid` | `setgid` | 144 | Return 0 (noop — fake_id0 handles GID semantics) |
 | `PR_setreuid` | `setreuid` | 145 | Return 0 (noop) |
@@ -93,7 +91,7 @@ to read clobbered values — e.g. `fchdir(3)` appeared as `fchdir(0)` (stdin).
 
 **Fix**: All handlers that read `SYSARG_1` now use `ORIGINAL` register version (saved by
 `save_current_regs(ORIGINAL_SECCOMP_REWRITE)` right after `fetch_regs()`) instead of
-`CURRENT`. Affected handlers: `PR_chdir`, `PR_fchdir` (and `PR_linkat` until §34 made it return `-EPERM`). `SYSARG_2`-`SYSARG_6`
+`CURRENT`. Affected handlers: `PR_chdir`, `PR_fchdir`, `PR_getcwd` (and `PR_linkat` until §34 made it return `-EPERM`). The `renameat2` and `faccessat2` handlers read their flags (`SYSARG_5`, `SYSARG_4`) from `ORIGINAL` too, and the `default:` case reads the syscall number from `CURRENT`. `SYSARG_2`-`SYSARG_6`
 (x1-x5) are NOT affected since they don't overlap with the result register.
 
 **linkat**: Alpine's `apk` uses `linkat` for atomic file replacement (create temp file,
@@ -102,29 +100,40 @@ first tried `renameat()` with a copy fallback; it now returns `-EPERM` (§34), s
 link2symlink turns hard links into symlinks before the syscall reaches the kernel.
 
 **faccessat2**: Modern musl uses `faccessat2` (with flags) for `access()`. The zygote blocks
-it. The handler clears SYSARG_4 (flags) to downgrade to `faccessat` (without flags), which
-the kernel allows.
+it up to Android 15. When the flags are 0 the handler downgrades to `faccessat`; with any flag
+set (`AT_SYMLINK_NOFOLLOW`, `AT_EACCESS`) it answers `-ENOSYS`, since `faccessat` cannot carry them
+over (the first version dropped them silently). From Android 16 r3 the filter allows `faccessat2`;
+the enter stage translates it with `AT_SYMLINK_NOFOLLOW` honoured.
 
-**renameat2**: Same pattern — musl uses `renameat2` for `rename()`. Downgraded to `renameat`.
+**renameat2**: libcs call it only when flags are set (with 0 they use `renameat`). With flags 0 the
+handler downgrades to `renameat`; with `RENAME_NOREPLACE` or `RENAME_EXCHANGE` it answers `-ENOSYS`
+(dropping the flag made `mv -n` overwrite). The filter allows it from Android 11.
 
 **process_madvise**: Advisory memory advice syscall. Safe to noop.
 
 **setuid/setgid/setreuid/setregid/setfsuid/setfsgid**: The zygote blocks all UID/GID-changing
 syscalls. fake_id0 extension handles the semantic translation, so these handlers just return 0.
 
-**clone3**: Converts the clone3 args struct (passed via pointer) to individual register args for
-the clone syscall. Maps `args_ptr+offset` fields to SYSARG_1-5. Returns -ENOSYS if CLONE_THREAD
-is set (thread creation inside proot is not supported). Strips CLONE_VM and CLONE_VFORK to
-convert vfork-style spawns into regular fork().
+**clone3**: Answers `-ENOSYS`. The filter allows `clone3` from Android 14 QPR2 (android-14.0.0_r29);
+before that glibc 2.34 and later fall back to `clone` on `ENOSYS`. The earlier handler converted the
+args struct to a `clone` call, stripping CLONE_VM and CLONE_VFORK; it was removed because that made
+`posix_spawn` report success for a program that does not exist.
 
-**clone**: Same logic as clone3 but for the legacy clone syscall.
+**clone**: No SIGSYS case any more: every filter allows `clone`, so the case was never reached.
+
+**openat2**: No SIGSYS case. The enter stage answers `-ENOSYS` for `openat2` and for every arm64
+syscall number above 440 except `epoll_pwait2` (441), `landlock_*` (444-446) and `mseal` (462)
+(`refused_at_entry` in `syscall/enter.c`). The filter allows `openat2` from Android 16 r3, where
+without this its path would reach the kernel untranslated, and on earlier releases the old handler
+passed the `open_how` pointer to `openat` as its flags. An aarch32 (32-bit) guest still passes
+`openat2` untranslated; the app supports no 32-bit guests. Under `adb run-as` the process has no
+filter (`Seccomp: 0`), so SIGSYS handlers cannot be exercised there.
 
 ### Critical infrastructure: `push_specific_regs(true)` in seccomp handler
 
 In `restart_syscall_after_seccomp()`, our version calls `push_specific_regs(tracee, true)`
 (passing `including_sysnum = true`), while termux passes `false`. This is essential for all
-downgrade handlers (`PR_faccessat2→PR_faccessat`, `PR_openat2→PR_openat`, `PR_renameat2→PR_renameat`,
-`PR_clone3→PR_clone`) — without `true`, the `set_sysnum()` syscall number change would not take
+downgrade handlers (`PR_faccessat2→PR_faccessat` and `PR_renameat2→PR_renameat`, with flags 0) — without `true`, the `set_sysnum()` syscall number change would not take
 effect when the kernel processes the registers.
 
 ### Enhanced default case
@@ -139,8 +148,11 @@ The `default:` case in the SIGSYS handler differentiates between syscalls:
   real library at `/usr/lib/libncursesw.so.6`, causing "Error loading shared library: Function
   not implemented".
 
+- **`rseq` (293)**: Returns `-ENOSYS` without logging; glibc calls it at every process start.
+
 - **All other unknown syscalls**: Returns `-ENOSYS` and logs to
-  `$PROOT_TMP_DIR/sigsys-log.txt` (the host app's cache directory) for diagnostics. proot
+  `$PROOT_TMP_DIR/sigsys-log.txt` (the host app's cache directory) for diagnostics, once per syscall
+  number per proot process, opened with `O_NOFOLLOW`. proot
   appends to it and trims it at start once it is over 256 KiB, so parallel sessions keep
   each other's lines and every app using the library logs to its own directory.
 
@@ -387,7 +399,7 @@ define this constant.
 | `PR_execveat` | Converts to `PR_execve` when AT_FDCWD, else ENOSYS |
 | `PR_statx` | Separate handler with AT_SYMLINK_NOFOLLOW flag handling |
 | `PR_memfd_create` | Blocks specific names: `"JITCode:*"` (Qt JIT), `"opcache_lock"` (PHP 8.3), `"lib/apk/exec/*"` (apk-tools v3) |
-| `PR_clone`/`PR_clone3` | No ptrace-path handler since 2026-11: `CLONE_VM` and `CLONE_VFORK` pass through, as in upstream and Termux proot. The T8.1 handler stripped them when `CLONE_THREAD` was not set, which made glibc's `posix_spawn` (and Rust's `Command`) report success for a program that does not exist; the vfork hang it worked around no longer reproduces (vfork + exec, posix_spawn, `cargo build` and the full suite pass with the flags kept). The SIGSYS path, for devices whose filter blocks `clone`/`clone3`, still strips them |
+| `PR_clone`/`PR_clone3` | No ptrace-path handler since 2026-11 and no SIGSYS case for `clone`; the `clone3` SIGSYS case answers `-ENOSYS`. `CLONE_VM` and `CLONE_VFORK` pass through, as in upstream and Termux proot. The T8.1 handler stripped them when `CLONE_THREAD` was not set, which made glibc's `posix_spawn` (and Rust's `Command`) report success for a program that does not exist; the vfork hang it worked around no longer reproduces (vfork + exec, posix_spawn, `cargo build` and the full suite pass with the flags kept). |
 
 ### Android ioctl translation
 

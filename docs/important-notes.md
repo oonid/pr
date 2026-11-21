@@ -5,7 +5,7 @@ See also:
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (SELinux W^X bypass, seccomp analysis)
 - `docs/rust-port-pr-cli.md` — Replace proot-distro.sh with Rust binary
 - `docs/alpine-linux-support.md` — Alpine Linux investigation and fixes
-- `docs/integration-tests.md` — Integration test suite (64 tests, 73 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (72 tests, 81 runs with the isolated readlink pass)
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot
 
 ---
@@ -95,35 +95,56 @@ Even at targetSdk=35, the Android zygote installs a BPF seccomp filter on the ap
 (`Seccomp: 2, Seccomp_filters: 1`). This filter cannot be removed. proot never installs a seccomp filter of its own, so
 `PROOT_NO_SECCOMP=1` only silences proot's hint about seccomp (`cli.c`).
 
-**Blocked syscalls** (trigger SIGSYS from zygote filter):
+**Syscalls the filter traps and what proot does.** "Allowed from" is the first Android release whose
+bionic filter lets the call through (from the release tags of bionic's `SECCOMP_ALLOWLIST_*`); the
+default action for everything else is `SECCOMP_RET_TRAP`. "Unknown" means not checked against the tags.
 
-| Syscall | Number | Handler | Strategy |
-|---------|--------|---------|----------|
-| `getcwd` | 17 | `PR_getcwd` | Read `tracee->fs->cwd`, write to tracee buffer, return length |
-| `chdir` | 49 | `PR_chdir` | Translate path, update `tracee->fs->cwd`, return 0 |
-| `fchdir` | 50 | `PR_fchdir` | Resolve dirfd to path, update cwd, return 0 |
-| `linkat` | 37 | `PR_linkat` | Return `-EPERM`, as for a hard link the kernel refuses; link2symlink handles hard links before this point |
-| `renameat2` | 276 | `PR_renameat2` | Downgrade to `renameat` (drop flags) and restart |
-| `faccessat2` | 439 | `PR_faccessat2` | Downgrade to `faccessat` (drop flags) and restart |
-| `faccessat` | 48 | `PR_faccessat` | Return 0 (noop) |
-| `openat2` | 437 | `PR_openat2` | Downgrade to `openat` (clear size arg) and restart |
-| `process_madvise` | 440 | `PR_process_madvise` | Return 0 (noop — advisory) |
-| `fchmodat` | 53 | `PR_fchmodat` | Return 0 (noop) |
-| `clone3` | 435 | `PR_clone3` | Convert args to clone, strip CLONE_VM/CLONE_VFORK |
-| `clone` | 220 | `PR_clone` | Strip CLONE_VM/CLONE_VFORK |
-| `setuid` | 146 | `PR_setuid` | Return 0 (noop — fake_id0 handles semantics) |
-| `setgid` | 144 | `PR_setgid` | Return 0 (noop) |
-| `setreuid`/`setregid`/`setfsuid`/`setfsgid` | various | respective | Return 0 (noop) |
-| `memfd_create` | 279 | default | Return -ENOSYS |
-| `openat` | 56 | default | Return **-ENOENT** (not -ENOSYS) |
-| `fstatat64` | 79 | default | Return **-ENOENT** (not -ENOSYS) |
+| Syscall | Number | Allowed from | What proot does |
+|---------|--------|--------------|-----------------|
+| `renameat2` | 276 | Android 11 | With flags 0: restart as `renameat`. With any flag: `-ENOSYS` (`RENAME_NOREPLACE` and `RENAME_EXCHANGE` cannot be carried over) |
+| `clone3` | 435 | Android 14 QPR2 | `-ENOSYS`; glibc falls back to `clone`, which every filter allows |
+| `openat2` | 437 | Android 16 r3 | Never reaches the SIGSYS handler: `-ENOSYS` at the enter stage (see below) |
+| `faccessat2` | 439 | Android 16 r3 | With flags 0: restart as `faccessat`. With any flag: `-ENOSYS`. When the filter allows it, proot translates it at the enter stage, with `AT_SYMLINK_NOFOLLOW` honoured |
+| `process_madvise` | 440 | Unknown | Return 0 (advisory) |
+| `linkat` | 37 | Unknown | Return `-EPERM`, as for a hard link the kernel refuses; link2symlink handles hard links before this point |
+| `setuid`, `setgid`, `setreuid`, `setregid`, `setfsuid`, `setfsgid` | 146, 144, 145, 143, 151, 152 | Unknown | Return 0 (fake_id0 handles the semantics) |
+| `set_robust_list` | 99 | Unknown | Return `-ENOSYS` |
+| `rseq` | 293 | Never | Return `-ENOSYS`, not logged (glibc calls it at every process start) |
+| `getcwd` | 17 | Believed never needed | Read `tracee->fs->cwd`, write it to the tracee buffer, return the length |
+| `chdir` | 49 | Believed never needed | Translate the path, update `tracee->fs->cwd`, return 0 |
+| `fchdir` | 50 | Believed never needed | Resolve the dirfd to a path, update the cwd, return 0 |
+| `faccessat` | 48 | Believed never needed | Return 0 (noop) |
+| `fchmodat` | 53 | Believed never needed | Return 0 (noop) |
+| `openat`, `fstatat64` | 56, 79 | Believed never needed | `default:` case returns **-ENOENT** (not -ENOSYS) |
+| any other | | | `default:` case returns `-ENOSYS` and logs the number once per proot process (`memfd_create` 279 is one) |
+
+The handlers for `getcwd`, `chdir`, `fchdir`, `faccessat` and `fchmodat`, and the `default:` ENOENT for `openat` and `fstatat64`, are
+believed unreachable under the zygote filter (audit P21): the filter is believed not to trap these calls
+on any Android version. They stay for now, and nothing documented here depends on them. If one were
+reached, `faccessat` and `fchmodat` would report success for anything.
+
+`setxattrat`, `getxattrat`, `listxattrat`, `removexattrat` and `fchmodat2` are allowed from Android 16 r3 as
+well; proot does not translate their paths, so the enter-stage rule below answers `-ENOSYS`.
+
+**Enter-stage ENOSYS.** On arm64 with the default ABI, `translate_syscall_enter` (`syscall/enter.c`,
+`refused_at_entry`) returns `-ENOSYS` for `openat2` (437) and for every number above 440 except
+`epoll_pwait2` (441), `landlock_*` (444-446) and `mseal` (462). The path syscalls among them cannot be
+translated, so letting them through would resolve a guest path on the host. The call is voided and the
+status stored as its result, so the guest sees `ENOSYS` on every Android version, whether or not the filter
+traps the call; where the filter traps the voided call, `tracee/event.c` suppresses that SIGSYS. A 32-bit
+(aarch32) guest is not covered and passes `openat2` untranslated; the app supports no 32-bit guests.
+`translate_sysnum` (`syscall/sysnum.c`) maps a number at or above the table length to `PR_void`.
+
+**`adb run-as` has no filter.** An app process started under `adb run-as` shows `Seccomp: 0`, so no SIGSYS
+is raised there and these handlers never run. Check them from inside the app (Test in the container menu).
 
 Note: original enosys_test incorrectly used 281 for process_madvise; 281 is execveat on arm64.
 
 **aarch64 x0 clobber bug**: On aarch64, `SYSARG_1` and `SYSARG_RESULT` both map to register
-x0. At SIGSYS time the kernel may clobber x0 before proot reads it. All handlers that read
-`SYSARG_1` use `ORIGINAL` register version (saved right after `fetch_regs()`) instead of
-`CURRENT`. `SYSARG_2`-`SYSARG_6` (x1-x5) are unaffected. Without this fix, `fchdir(fd)`
+x0. At SIGSYS time the kernel may clobber x0 before proot reads it. The handlers that read
+`SYSARG_1` (`chdir`, `fchdir`, `getcwd`) use the `ORIGINAL` register version (saved right after
+`fetch_regs()`) instead of `CURRENT`; so do the `renameat2` and `faccessat2` handlers for their flags
+(`SYSARG_5`, `SYSARG_4`). The `default:` case reads the syscall number from `CURRENT` (for `rseq`). `SYSARG_2`-`SYSARG_6` (x1-x5) are unaffected. Without this fix, `fchdir(fd)`
 appeared as `fchdir(0)` because x0 was clobbered to 0.
 
 **openat/fstatat64 ENOENT fix**: The SIGSYS `default:` handler returns `-ENOENT` instead of
@@ -141,7 +162,7 @@ library.
 
 - `android/app/build.gradle.kts` — `targetSdk = 35` (works via PROOT_LOADER mechanism)
 - `src/proot/src/tracee/event.c` — seccomp patch (skip proot's own seccomp filter)
-- `src/proot/src/tracee/seccomp.c` — SIGSYS handlers (18 handlers, x0 clobber fix, ENOENT for openat/fstatat64)
+- `src/proot/src/tracee/seccomp.c` — SIGSYS handlers (16 handlers plus the `rseq`/`set_robust_list`/`default:` cases, x0 clobber fix, ENOENT for openat/fstatat64)
 - `src/pr-cli/src/login.rs` — proot invocation with PROOT_LOADER, PROOT_TMP_DIR, arg0("proot"), nativeLibraryDir paths
 - `src/pr-cli/src/shared.rs` — `build_proot_args()` with `--change-id=0:0`, `--kernel-release`, bind mounts
 - `docs/alpine-linux-support.md` — Alpine-specific investigation and seccomp findings

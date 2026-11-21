@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite.
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. With the `syscalls` suite and two more gcc tests the total is 72 tests, 81 runs with the isolated readlink pass (not yet run on a device).
 
 ---
 
@@ -61,7 +61,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | distro | 8 | always | Package manager detection, tool installation, os-release |
 | clone | 5 | always | Process spawning (fork+exec, piped output, nested spawns, threads, concurrent spawns) |
 | readlink | 9 | `/bin/sh` exists | T8.2 Part B: .l2s. symlink hiding via readlink skip; fd links of hard-linked files; `/proc/self/exe` of a program run by a hard link; small readlink buffers; run again isolated as `readlink-isolated` |
-| gcc | 7 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe; the distro libc's `posix_spawn` and `vfork` |
+| gcc | 7 | `/usr/bin/cc` or `/usr/bin/gcc` | T8.2 Part A: host_exe_before_l2s for /proc/self/exe; the distro libc's `posix_spawn`, `vfork`, `system()` and `popen()` (glibc on Ubuntu, musl on Alpine) |
 | rust | 4 | `/usr/bin/rustc` exists | T8.3 si_syscall=-1 suppression, T8.4 SIGSYS handlers |
 | git | 3 | `/usr/bin/git` exists | T8.3 si_syscall=-1, T8.4 setuid/setgid handlers |
 | pipe | 3 | always | pipe2 availability (disproves blocked-by-seccomp theory) |
@@ -125,8 +125,8 @@ that and of the device.
 3. **/proc/self/exe after exec** — no `.l2s.` in exe path after exec
 4. **posix_spawn of a missing program is ENOENT** — a C program built with the distro's `cc`; glibc reports the exec error through memory the vfork child shares with the parent, so it needs `CLONE_VM` and `CLONE_VFORK` kept (with them stripped it returned 0)
 5. **vfork and exec return to the parent** — `vfork` + `execvp("true")` and `vfork` + a failed `execv`, under `timeout 20`, so a vfork that never returns fails instead of hanging the suite
-6. **system("true") returns 0** — glibc `system` through `posix_spawn`
-7. **popen reads a child's output** — `popen("echo pit","r")` yields `pit` and `pclose` returns 0
+6. **system("true") returns 0** — the distro libc's `system` (glibc on Ubuntu, musl on Alpine)
+7. **popen reads a child's output** — the distro libc's `popen("echo pit","r")` prints `got=pit` and `pclose` returns 0
 
 #### rust (4 tests)
 
@@ -206,6 +206,20 @@ Each test calls `chroot()` in a forked child, so the runner keeps its root.
 8. **blocked linkat keeps the source** — a forked child installs a seccomp filter that traps
    `linkat`; the link fails with `EPERM` or succeeds, and the source stays. Only exercises the
    fallback when proot runs without `--link2symlink` (the VM's no-l2s launcher)
+
+---
+
+#### syscalls (6 tests)
+
+Raw `libc::syscall` calls from the bionic test binary, for the arm64 numbers proot has no translation
+for. The test names are the ones in `src/syscalls.rs`.
+
+1. **openat2 is ENOSYS and leaves the file intact** — 20 calls on a 4-byte file, each `ENOSYS`
+2. **fchmodat2 is ENOSYS** — the mode is unchanged
+3. **setxattrat is ENOSYS** — the enter-stage rule for numbers above 440
+4. **a path-free syscall above the table still works** — `epoll_pwait2` (441) returns 0; passes without calling it below SDK 35
+5. **renameat2 with RENAME_NOREPLACE never overwrites** — `EEXIST` or `ENOSYS`, the target keeps its content
+6. **faccessat2 with AT_SYMLINK_NOFOLLOW on a dangling symlink** — 0 or `ENOSYS`, never `ENOENT`
 
 ---
 
