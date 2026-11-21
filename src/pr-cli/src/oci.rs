@@ -1623,6 +1623,73 @@ mod tests {
     }
 
     #[test]
+    fn move_into_l2s_skips_a_taken_intermediate_number() {
+        let tmp = unique_tmp_dir("l2s-taken-intermediate");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        symlink("nowhere", l2s.join(".l2s.tool0001")).expect("plant");
+        let source = tmp.join("tool");
+        fs::write(&source, b"mine").expect("source");
+
+        let intermediate = move_into_l2s(&l2s, &source)
+            .expect("move")
+            .expect("a free number");
+
+        assert_eq!(intermediate, l2s.join(".l2s.tool0002"));
+        assert_eq!(fs::read(&source).expect("source"), b"mine");
+        assert_eq!(
+            fs::read(l2s.join(".l2s.tool0002.0002")).expect("data"),
+            b"mine"
+        );
+        assert!(fs::symlink_metadata(l2s.join(".l2s.tool0001")).is_ok());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn move_into_l2s_skips_a_number_whose_data_name_exists() {
+        let tmp = unique_tmp_dir("l2s-taken-data");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        fs::write(l2s.join(".l2s.tool0001.0002"), b"other").expect("plant");
+        let source = tmp.join("tool");
+        fs::write(&source, b"mine").expect("source");
+
+        let intermediate = move_into_l2s(&l2s, &source)
+            .expect("move")
+            .expect("a free number");
+
+        assert_eq!(intermediate, l2s.join(".l2s.tool0002"));
+        assert_eq!(fs::read(&source).expect("source"), b"mine");
+        assert_eq!(
+            fs::read(l2s.join(".l2s.tool0001.0002")).expect("stale"),
+            b"other"
+        );
+        assert!(fs::symlink_metadata(l2s.join(".l2s.tool0001")).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn move_into_l2s_is_none_when_every_number_is_taken() {
+        let tmp = unique_tmp_dir("l2s-full");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        for n in 1..=9999 {
+            symlink("nowhere", l2s.join(format!(".l2s.tool{:04}", n))).expect("plant");
+        }
+        let source = tmp.join("tool");
+        fs::write(&source, b"mine").expect("source");
+
+        assert_eq!(move_into_l2s(&l2s, &source).expect("move"), None);
+
+        assert_eq!(fs::read(&source).expect("source"), b"mine");
+        assert!(!fs::symlink_metadata(&source)
+            .expect("lstat")
+            .file_type()
+            .is_symlink());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn hardlink_below_an_absolute_symlink_lands_inside_the_rootfs() {
         let tmp = unique_tmp_dir("oci-hardlink-absolute-symlink");
         let rootfs = tmp.join("rootfs");
