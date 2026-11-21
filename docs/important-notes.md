@@ -116,7 +116,7 @@ else is `SECCOMP_RET_TRAP`. "Never" means no release allows it.
 | `faccessat` | 48 | Believed never needed | Return 0 (noop) |
 | `fchmodat` | 53 | Believed never needed | Return 0 (noop) |
 | `openat`, `fstatat64` | 56, 79 | Believed never needed | `default:` case returns **-ENOENT** (not -ENOSYS) |
-| any other | | | `default:` case returns `-ENOSYS` and logs the number once per proot process (`memfd_create` 279 is one) |
+| any other | | | `default:` case returns `-ENOSYS` and logs the number once per proot process (for example `kcmp` 272, `pkey_alloc` 289, `kexec_load` 104). Numbers above 440 are answered at the enter stage (ENOSYS, or passed through for `epoll_pwait2`, `landlock_*` and `mseal`), so they never reach the SIGSYS handler or the log |
 
 The handlers for `getcwd`, `chdir`, `fchdir`, `faccessat` and `fchmodat`, and the `default:` ENOENT for `openat` and `fstatat64`, are
 believed unreachable under the zygote filter (audit P21): the filter is believed not to trap these calls
@@ -129,7 +129,7 @@ well; proot does not translate their paths, so the enter-stage rule below answer
 **Enter-stage ENOSYS.** On arm64 with the default ABI, `translate_syscall_enter` (`syscall/enter.c`,
 `refused_at_entry`) returns `-ENOSYS` for `openat2` (437) and for every number above 440 except
 `epoll_pwait2` (441), `landlock_*` (444-446) and `mseal` (462). The path syscalls among them cannot be
-translated, so letting them through would resolve a guest path on the host. The call is voided and the
+translated, so letting them through would resolve a guest path on the host. The allowed set above 440 was taken from bionic tag android-16.0.0_r4 (the vendored bionic has no Android 17 tags), so a path-free syscall that a later filter allows gets ENOSYS until it is added. The call is voided and the
 status stored as its result, so the guest sees `ENOSYS` on every Android version, whether or not the filter
 traps the call; where the filter traps the voided call, `tracee/event.c` suppresses that SIGSYS. A 32-bit
 (aarch32) guest is not covered and passes `openat2` untranslated; the app supports no 32-bit guests.

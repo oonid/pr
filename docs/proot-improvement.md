@@ -123,7 +123,7 @@ args struct to a `clone` call, stripping CLONE_VM and CLONE_VFORK; it was remove
 
 **openat2**: No SIGSYS case. The enter stage answers `-ENOSYS` for `openat2` and for every arm64
 syscall number above 440 except `epoll_pwait2` (441), `landlock_*` (444-446) and `mseal` (462)
-(`refused_at_entry` in `syscall/enter.c`). The filter allows `openat2` from Android 16 r3, where
+(`refused_at_entry` in `syscall/enter.c`). The allowed set above 440 was taken from bionic tag android-16.0.0_r4 (the vendored bionic has no Android 17 tags), so a path-free syscall that a later filter allows gets ENOSYS until it is added. The filter allows `openat2` from Android 16 r3, where
 without this its path would reach the kernel untranslated, and on earlier releases the old handler
 passed the `open_how` pointer to `openat` as its flags. An aarch32 (32-bit) guest still passes
 `openat2` untranslated; the app supports no 32-bit guests. Under `adb run-as` the process has no
