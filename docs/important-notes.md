@@ -97,7 +97,7 @@ Even at targetSdk=35, the Android zygote installs a BPF seccomp filter on the ap
 
 **Syscalls the filter traps and what proot does.** "Allowed from" is the first Android release whose
 bionic filter lets the call through (from the release tags of bionic's `SECCOMP_ALLOWLIST_*`); the
-default action for everything else is `SECCOMP_RET_TRAP`. "Unknown" means not checked against the tags.
+default action for everything else is `SECCOMP_RET_TRAP`. Releases are bionic release tags; "Never" means not allowed by any of them.
 
 | Syscall | Number | Allowed from | What proot does |
 |---------|--------|--------------|-----------------|
@@ -105,10 +105,10 @@ default action for everything else is `SECCOMP_RET_TRAP`. "Unknown" means not ch
 | `clone3` | 435 | Android 14 QPR2 | `-ENOSYS`; glibc falls back to `clone`, which every filter allows |
 | `openat2` | 437 | Android 16 r3 | Never reaches the SIGSYS handler: `-ENOSYS` at the enter stage (see below) |
 | `faccessat2` | 439 | Android 16 r3 | With flags 0: restart as `faccessat`. With any flag: `-ENOSYS`. When the filter allows it, proot translates it at the enter stage, with `AT_SYMLINK_NOFOLLOW` honoured |
-| `process_madvise` | 440 | Unknown | Return 0 (advisory) |
-| `linkat` | 37 | Unknown | Return `-EPERM`, as for a hard link the kernel refuses; link2symlink handles hard links before this point |
-| `setuid`, `setgid`, `setreuid`, `setregid`, `setfsuid`, `setfsgid` | 146, 144, 145, 143, 151, 152 | Unknown | Return 0 (fake_id0 handles the semantics) |
-| `set_robust_list` | 99 | Unknown | Return `-ENOSYS` |
+| `process_madvise` | 440 | `android-12.0.0_r1` (handler unreachable from then) | Return 0 (advisory) |
+| `linkat` | 37 | Always (in `SYSCALLS.TXT` since 9; handler believed unreachable) | Return `-EPERM`, as for a hard link the kernel refuses; link2symlink handles hard links before this point |
+| `setuid`, `setgid`, `setreuid`, `setregid`, `setfsuid`, `setfsgid` | 146, 144, 145, 143, 151, 152 | Never (app blocklist) | Return 0 (fake_id0 handles the semantics) |
+| `set_robust_list` | 99 | Never | Return `-ENOSYS` |
 | `rseq` | 293 | Never | Return `-ENOSYS`, not logged (glibc calls it at every process start) |
 | `getcwd` | 17 | Believed never needed | Read `tracee->fs->cwd`, write it to the tracee buffer, return the length |
 | `chdir` | 49 | Believed never needed | Translate the path, update `tracee->fs->cwd`, return 0 |
