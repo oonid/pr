@@ -129,3 +129,41 @@ pub fn test_thousandth_group_gets_its_own_data() -> TestResult {
     clean(basename, dir);
     result
 }
+
+fn existing_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let source = format!("{}/{}", dir, basename);
+    let target = format!("{}/b", dir);
+    fs::write(&source, b"x").map_err(|e| format!("write: {}", e))?;
+    fs::write(&target, b"b").map_err(|e| format!("write: {}", e))?;
+    let rc = unsafe { libc::link(c(&source).as_ptr(), c(&target).as_ptr()) };
+    let err = errno();
+    if rc != -1 || err != libc::EEXIST {
+        return Err(format!("link: rc={} errno={}, want EEXIST", rc, err));
+    }
+    let meta = fs::symlink_metadata(&source).map_err(|e| format!("lstat source: {}", e))?;
+    if !meta.file_type().is_file() {
+        return Err("the source is no longer a regular file".to_string());
+    }
+    expect_content(&source, "x")?;
+    expect_content(&target, "b")?;
+    let prefix = format!(".l2s.{}", basename);
+    let left: Vec<String> = fs::read_dir(STORE)
+        .map_err(|e| format!("read {}: {}", STORE, e))?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(&prefix))
+        .collect();
+    if !left.is_empty() {
+        return Err(format!("the failed link left {:?} in {}", left, STORE));
+    }
+    Ok(())
+}
+
+pub fn test_link_onto_existing_name_keeps_the_source() -> TestResult {
+    let basename = "pithlexist";
+    let dir = "/tmp/pit-hl-exist";
+    let result = existing_body(basename, dir);
+    clean(basename, dir);
+    result
+}

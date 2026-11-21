@@ -273,6 +273,10 @@ const SUITES: &[Suite] = &[
                 name: "the 1000th group of a basename gets its own data",
                 run: hardlink::test_thousandth_group_gets_its_own_data,
             },
+            Test {
+                name: "a link onto an existing name keeps the source a regular file",
+                run: hardlink::test_link_onto_existing_name_keeps_the_source,
+            },
         ],
     },
     Suite {

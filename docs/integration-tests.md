@@ -46,7 +46,7 @@ src/proot-integration-test/
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
   src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (8 tests)
   src/syscalls.rs         path syscalls proot cannot translate: ENOSYS, path-free ones still work (6 tests)
-  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group (3 tests)
+  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group, existing name (4 tests)
 ```
 
 The `exit` suite is not in the guest binary: a program inside proot cannot see proot's own exit status,
@@ -71,7 +71,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
 | syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST expected; ENOSYS accepted only as the safe answer); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
-| hardlink | 3 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data |
+| hardlink | 4 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
@@ -225,7 +225,7 @@ for. The test names are the ones in `src/syscalls.rs`.
 
 ---
 
-#### hardlink (3 tests)
+#### hardlink (4 tests)
 
 The store is `/.l2s` (`PROOT_L2S_DIR`). Each test plants entries named `.l2s.<basename>NNNN` and
 `.l2s.<basename>NNNN.CCCC` under `/.l2s`, links a file named `<basename>` from `/tmp/pit-hl-*`, and removes
@@ -237,6 +237,9 @@ everything afterwards.
    link succeeds, both names read the new content, the planted file keeps its own
 3. **the 1000th group of a basename gets its own data** — groups 0001 to 0999 planted; the link
    succeeds and group 0999's data is untouched
+4. **a link onto an existing name keeps the source a regular file** — `link()` onto an existing name
+   fails with `EEXIST`; the source is still a regular file with its content, the existing name keeps
+   its own, and nothing for the basename is left in `/.l2s`
 
 ---
 

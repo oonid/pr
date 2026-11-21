@@ -793,10 +793,28 @@ fn add_l2s_name(intermediate: &Path) -> Result<PathBuf, String> {
     let mut counted = std::ffi::OsStr::from_bytes(stem).to_os_string();
     counted.push(format!("{:04}", count + 1));
     let counted = PathBuf::from(counted);
-    fs::rename(&data, &counted).map_err(failed)?;
-    fs::remove_file(intermediate).map_err(failed)?;
-    std::os::unix::fs::symlink(&counted, intermediate).map_err(failed)?;
+    rename_noreplace(&data, &counted).map_err(failed)?;
+    if let Err(e) = repoint_l2s(intermediate, &counted) {
+        let _ = rename_noreplace(&counted, &data);
+        return Err(failed(e));
+    }
     Ok(intermediate.to_path_buf())
+}
+
+fn repoint_l2s(intermediate: &Path, target: &Path) -> std::io::Result<()> {
+    let mut temporary = intermediate.as_os_str().to_os_string();
+    temporary.push(".new");
+    let temporary = PathBuf::from(temporary);
+    if let Err(e) = std::os::unix::fs::symlink(target, &temporary) {
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(e);
+        }
+        fs::remove_file(&temporary)?;
+        std::os::unix::fs::symlink(target, &temporary)?;
+    }
+    fs::rename(&temporary, intermediate).inspect_err(|_| {
+        let _ = fs::remove_file(&temporary);
+    })
 }
 
 fn move_into_l2s(l2s_dir: &Path, source: &Path) -> Result<Option<PathBuf>, String> {
@@ -1723,6 +1741,47 @@ mod tests {
             fs::read(l2s.join(".l2s.tool1000.0002")).expect("data"),
             b"mine"
         );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_l2s_name_never_overwrites_the_next_count() {
+        let tmp = unique_tmp_dir("l2s-next-count-taken");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        let intermediate = l2s.join(".l2s.tool0001");
+        let data = l2s.join(".l2s.tool0001.0002");
+        let taken = l2s.join(".l2s.tool0001.0003");
+        fs::write(&data, b"mine").expect("data");
+        symlink(&data, &intermediate).expect("intermediate");
+        fs::write(&taken, b"other").expect("plant");
+
+        assert!(add_l2s_name(&intermediate).is_err());
+
+        assert_eq!(fs::read(&taken).expect("taken"), b"other");
+        assert_eq!(fs::read_link(&intermediate).expect("intermediate"), data);
+        assert_eq!(fs::read(&intermediate).expect("data"), b"mine");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_l2s_name_repoints_the_intermediate_and_leaves_no_temporary() {
+        let tmp = unique_tmp_dir("l2s-repoint");
+        let l2s = tmp.join(".l2s");
+        fs::create_dir_all(&l2s).expect("mkdir");
+        let intermediate = l2s.join(".l2s.tool0001");
+        let data = l2s.join(".l2s.tool0001.0002");
+        fs::write(&data, b"mine").expect("data");
+        symlink(&data, &intermediate).expect("intermediate");
+
+        assert_eq!(add_l2s_name(&intermediate).expect("add"), intermediate);
+
+        assert_eq!(
+            fs::read_link(&intermediate).expect("intermediate"),
+            l2s.join(".l2s.tool0001.0003")
+        );
+        assert_eq!(fs::read(&intermediate).expect("data"), b"mine");
+        assert!(fs::symlink_metadata(l2s.join(".l2s.tool0001.new")).is_err());
         let _ = fs::remove_dir_all(&tmp);
     }
 
