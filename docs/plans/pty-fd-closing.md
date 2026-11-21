@@ -22,7 +22,7 @@
 
 ## Global Constraints
 
-- AGENTS.md applies: no comments; `vendor/` read only; commits `fix|test|chore|ci|docs: …`, body ≤ 72 columns, no trailers; no device identifiers, bare `adb` in docs.
+- AGENTS.md applies: no comments; `vendor/` read only; commits `fix|test|chore|docs: …`, body ≤ 72 columns, no trailers; no device identifiers, bare `adb` in docs.
 - The fork child stays async-signal-safe: everything it needs (whether to use `close_range`, the descriptor limit) is computed in the parent before `fork()`.
 - The shipped AAR and APK stay arm64-only; x86_64 is built only when the test property is set.
 - Ask before: installing the SDK command-line tools and an emulator system image (about 1 GB download), creating the emulator, and each Gradle instrumented-test run.
@@ -62,7 +62,7 @@
 
 - [ ] **Step 1:** Add a step running `./gradlew :proot-engine:testDebugUnitTest` next to the `:session-core` one.
 - [ ] **Step 2:** Document the `prTestAbis` property and the emulator run (x86_64 image, KVM; arm64 images do not run on x86_64 hosts; `adb run-as` has no seccomp filter) in AGENTS.md's Testing section.
-- [ ] **Step 3: Commit** `ci: run the proot-engine JVM tests` and `docs: running the PTY contract tests on an emulator`.
+- [ ] **Step 3: Commit** `chore: run the proot-engine JVM tests` and `docs: running the PTY contract tests on an emulator`.
 
 ---
 
