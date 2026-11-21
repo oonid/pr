@@ -126,7 +126,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 
 **Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), exit (4, run by pr-cli itself); 72 tests, 81 runs with the isolated readlink pass
 
-**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. The syscalls suite brings the count to 81 runs (72 tests); not yet run on a device.
+**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. 81/81 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests.
 
 ### Known test failures (Alpine-specific)
 
