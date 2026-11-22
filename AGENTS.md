@@ -138,9 +138,9 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-**Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), hardlink (9), exit (4, run by pr-cli itself); 77 tests, 86 runs with the isolated readlink pass
+**Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), hardlink (9), exit (4, run by pr-cli itself); 81 tests, 90 runs with the isolated readlink pass
 
-**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. 81/81 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. Test through the app on Android 17: pending.
+**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. 81/81 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. **90/90** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-22), run from the app's Test, with the hardlink suite (9).
 
 ### Known test failures (Alpine-specific)
 
@@ -235,5 +235,5 @@ Save their documents in the neutral docs layout, not the skills' default `docs/s
 - `docs/important-notes.md` — Critical constraints, seccomp handlers, pr-cli caveats, read first
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot; §29 covers bind mount bug
 - `docs/rust-toolchain-support.md` — vfork/CLONE_VM fix, link2symlink readlink fix
-- `docs/integration-tests.md` — Integration test suite (77 tests, 86 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (81 tests, 90 runs with the isolated readlink pass)
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (PROOT_LOADER mechanism)

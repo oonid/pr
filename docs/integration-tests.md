@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. Test through the app on Android 17: pending. That is 77 tests, 86 runs with the isolated readlink pass.
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. **90/90** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-22), run from the app's Test, with the hardlink suite (9). That is 81 tests, 90 runs with the isolated readlink pass.
 
 ---
 
