@@ -110,7 +110,7 @@ cd android && ./gradlew :session-core:testDebugUnitTest :app:testDebugUnitTest
 (cd src/pr-cli && cargo test)
 ```
 
-**330 tests**: 301 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
+**336 tests**: 307 library unit tests, 15 in the binaries and 14 plugin-parser integration tests.
 
 ### Instrumented (requires connected Android device)
 
@@ -132,7 +132,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test alpine
 adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 ```
 
-In the app, **Test** in an installed container's menu runs the same suite. **72 tests** across 13 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot, syscalls, exit; Test also runs readlink again under isolation, 81 results in all
+In the app, **Test** in an installed container's menu runs the same suite. **82 tests** across 14 suites: distro, clone, readlink, gcc, rust, git, pipe, general, ssh, chroot, fakeroot, syscalls, hardlink, exit; Test also runs readlink again under isolation, 91 results in all
 
 ## Project structure
 
