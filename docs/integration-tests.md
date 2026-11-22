@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. That is 72 tests, 81 runs with the isolated readlink pass.
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. That is 75 tests, 84 runs with the isolated readlink pass.
 
 ---
 
@@ -46,7 +46,7 @@ src/proot-integration-test/
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
   src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (8 tests)
   src/syscalls.rs         path syscalls proot cannot translate: ENOSYS, path-free ones still work (6 tests)
-  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group, existing name (4 tests)
+  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group, existing name, link counts (7 tests)
 ```
 
 The `exit` suite is not in the guest binary: a program inside proot cannot see proot's own exit status,
@@ -71,7 +71,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
 | syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST expected; ENOSYS accepted only as the safe answer); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
-| hardlink | 4 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file |
+| hardlink | 7 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file; a failed `RENAME_NOREPLACE` keeps the count, a rename over a hard link drops one name, and unlinking the last name removes the data |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
@@ -225,7 +225,7 @@ for. The test names are the ones in `src/syscalls.rs`.
 
 ---
 
-#### hardlink (4 tests)
+#### hardlink (7 tests)
 
 The store is `/.l2s` (`PROOT_L2S_DIR`). Each test plants entries named `.l2s.<basename>NNNN` and
 `.l2s.<basename>NNNN.CCCC` under `/.l2s`, links a file named `<basename>` from `/tmp/pit-hl-*`, and removes
@@ -240,6 +240,12 @@ everything afterwards.
 4. **a link onto an existing name keeps the source a regular file** — `link()` onto an existing name
    fails with `EEXIST`; the source is still a regular file with its content, the existing name keeps
    its own, and nothing for the basename is left in `/.l2s`
+5. **a failed NOREPLACE rename keeps the link count** — `renameat2(c, b, RENAME_NOREPLACE)` onto a hard
+   link fails with `EEXIST`; after `unlink(a)` the name `b` still reads the data
+6. **rename over a hard link drops one name** — `rename(c, b)` over a hard link of `a`; `a` still reads
+   the data and has `st_nlink == 1`
+7. **unlink of the last name removes the data** — after both names are unlinked nothing for the basename
+   is left in `/.l2s`
 
 ---
 

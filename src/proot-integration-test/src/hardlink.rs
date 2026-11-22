@@ -167,3 +167,94 @@ pub fn test_link_onto_existing_name_keeps_the_source() -> TestResult {
     clean(basename, dir);
     result
 }
+
+fn noreplace_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    let other = format!("{}/c", dir);
+    fs::write(&a, b"data").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(&a, &b).map_err(|e| format!("link: {}", e))?;
+    fs::write(&other, b"other").map_err(|e| format!("write: {}", e))?;
+    let rc = unsafe {
+        libc::syscall(
+            276,
+            libc::AT_FDCWD,
+            c(&other).as_ptr(),
+            libc::AT_FDCWD,
+            c(&b).as_ptr(),
+            1,
+        )
+    };
+    let err = errno();
+    if rc != -1 || err != libc::EEXIST {
+        return Err(format!("renameat2: rc={} errno={}, want EEXIST", rc, err));
+    }
+    fs::remove_file(&a).map_err(|e| format!("unlink: {}", e))?;
+    expect_content(&b, "data")?;
+    expect_content(&other, "other")
+}
+
+pub fn test_failed_noreplace_rename_keeps_the_link_count() -> TestResult {
+    let basename = "pithlnorep";
+    let dir = "/tmp/pit-hl-norep";
+    let result = noreplace_body(basename, dir);
+    clean(basename, dir);
+    result
+}
+
+fn rename_over_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    let other = format!("{}/c", dir);
+    fs::write(&a, b"data").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(&a, &b).map_err(|e| format!("link: {}", e))?;
+    fs::write(&other, b"other").map_err(|e| format!("write: {}", e))?;
+    fs::rename(&other, &b).map_err(|e| format!("rename: {}", e))?;
+    expect_content(&a, "data")?;
+    expect_content(&b, "other")?;
+    let meta = fs::metadata(&a).map_err(|e| format!("stat {}: {}", a, e))?;
+    let nlink = std::os::unix::fs::MetadataExt::nlink(&meta);
+    if nlink != 1 {
+        return Err(format!("st_nlink of {} is {}, want 1", a, nlink));
+    }
+    Ok(())
+}
+
+pub fn test_rename_over_a_hard_link_drops_one_name() -> TestResult {
+    let basename = "pithlover";
+    let dir = "/tmp/pit-hl-over";
+    let result = rename_over_body(basename, dir);
+    clean(basename, dir);
+    result
+}
+
+fn last_name_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    fs::write(&a, b"data").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(&a, &b).map_err(|e| format!("link: {}", e))?;
+    fs::remove_file(&a).map_err(|e| format!("unlink {}: {}", a, e))?;
+    fs::remove_file(&b).map_err(|e| format!("unlink {}: {}", b, e))?;
+    let prefix = format!(".l2s.{}", basename);
+    let left: Vec<String> = fs::read_dir(STORE)
+        .map_err(|e| format!("read {}: {}", STORE, e))?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(&prefix))
+        .collect();
+    if !left.is_empty() {
+        return Err(format!("{:?} remain in {}", left, STORE));
+    }
+    Ok(())
+}
+
+pub fn test_unlink_of_the_last_name_removes_the_data() -> TestResult {
+    let basename = "pithllast";
+    let dir = "/tmp/pit-hl-last";
+    let result = last_name_body(basename, dir);
+    clean(basename, dir);
+    result
+}
