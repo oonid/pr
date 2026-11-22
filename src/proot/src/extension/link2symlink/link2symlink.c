@@ -218,8 +218,18 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 		else
 			name++;
 
-		if (strncmp(name, PREFIX, strlen(PREFIX)) == 0)
+		if (strncmp(name, PREFIX, strlen(PREFIX)) == 0) {
 			first_link = 0;
+		} else {
+			status = read_path(tracee, destination, peek_reg(tracee, CURRENT, link_target_sysarg));
+			if (status >= 0 && symlink(intermediate, destination) < 0)
+				status = -errno;
+			if (status < 0)
+				return status;
+			poke_reg(tracee, SYSARG_RESULT, 0);
+			set_sysnum(tracee, PR_void);
+			return 0;
+		}
 	} else {
 		/* compute new name */
 		name = strrchr(original,'/');
