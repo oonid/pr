@@ -586,7 +586,7 @@ pub(crate) fn decompressed_reader(file: fs::File) -> Result<Box<dyn Read>, Strin
     let mut reader = std::io::BufReader::new(file);
     let magic = reader.fill_buf().map_err(|e| e.to_string())?;
     Ok(if magic.starts_with(&[0x1f, 0x8b]) {
-        Box::new(flate2::read::GzDecoder::new(reader))
+        Box::new(flate2::read::MultiGzDecoder::new(reader))
     } else if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
         Box::new(xz2::read::XzDecoder::new(reader))
     } else if magic.starts_with(b"BZh") {
@@ -649,6 +649,7 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<usize,
         }
 
         let is_dir = entry.header().entry_type().is_dir();
+        remove_if_type_differs(rootfs, &relative_path, is_dir)?;
         let within_root = entry
             .unpack_in(rootfs)
             .map_err(|e| format!("extract {}: {}", relative_path.display(), e))?;
@@ -976,6 +977,26 @@ pub(crate) fn sanitize_layer_path(path: &Path) -> Result<PathBuf, String> {
     Ok(cleaned)
 }
 
+fn remove_if_type_differs(
+    rootfs: &Path,
+    relative_path: &Path,
+    entry_is_dir: bool,
+) -> Result<(), String> {
+    let (Some(parent), Some(name)) = (relative_path.parent(), relative_path.file_name()) else {
+        return Ok(());
+    };
+    let path = resolve_in_root(rootfs, parent, true)?.join(name);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("stat {}: {}", path.display(), e)),
+    };
+    if metadata.is_dir() == entry_is_dir {
+        return Ok(());
+    }
+    remove_path_if_exists(&path)
+}
+
 fn apply_whiteout_if_needed(
     rootfs: &Path,
     relative_path: &Path,
@@ -985,9 +1006,9 @@ fn apply_whiteout_if_needed(
     let Some(file_name) = relative_path.file_name().and_then(|s| s.to_str()) else {
         return Ok(false);
     };
-    if !file_name.starts_with(".wh.") {
+    let Some(target_name) = file_name.strip_prefix(".wh.") else {
         return Ok(false);
-    }
+    };
 
     let parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
     let parent_dir = rootfs.join(parent);
@@ -999,8 +1020,14 @@ fn apply_whiteout_if_needed(
         return Ok(true);
     }
 
-    let target_name = file_name.trim_start_matches(".wh.");
-    if target_name.is_empty() {
+    if target_name.starts_with(".wh.") {
+        return Ok(true);
+    }
+    if matches!(target_name, "" | "." | "..") {
+        crate::shared::msg_warning(&format!(
+            "ignoring whiteout with invalid target: {}",
+            relative_path.display()
+        ));
         return Ok(true);
     }
     if in_store(&parent.join(target_name)) {
@@ -1224,6 +1251,170 @@ mod tests {
         }
         let encoder = builder.into_inner().expect("finish tar");
         let _ = encoder.finish().expect("finish gzip");
+    }
+
+    type TypedEntry<'a> = (&'a str, tar::EntryType, Option<&'a str>);
+
+    fn write_typed_layer(path: &Path, entries: &[TypedEntry]) {
+        let file = fs::File::create(path).expect("create tar");
+        let mut builder = tar::Builder::new(file);
+        for (entry_path, kind, link) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(*kind);
+            header.set_mode(if kind.is_dir() { 0o755 } else { 0o644 });
+            header.set_size(0);
+            header.set_cksum();
+            match link {
+                Some(target) => builder
+                    .append_link(&mut header, *entry_path, *target)
+                    .expect("append link"),
+                None => builder
+                    .append_data(&mut header, *entry_path, std::io::empty())
+                    .expect("append entry"),
+            }
+        }
+        builder.finish().expect("finish tar");
+    }
+
+    fn apply_two(first: &[TypedEntry], second: &[TypedEntry], label: &str) -> (PathBuf, PathBuf) {
+        let tmp = unique_tmp_dir(label);
+        let rootfs = tmp.join("rootfs");
+        let one = tmp.join("one.tar");
+        let two = tmp.join("two.tar");
+        write_typed_layer(&one, first);
+        write_typed_layer(&two, second);
+        apply_layer_blob(&one, &rootfs).expect("apply first layer");
+        apply_layer_blob(&two, &rootfs).expect("apply second layer");
+        (tmp, rootfs)
+    }
+
+    #[test]
+    fn a_later_layer_can_turn_a_directory_into_a_symlink() {
+        let (tmp, rootfs) = apply_two(
+            &[
+                ("d/", tar::EntryType::Directory, None),
+                ("d/inner", tar::EntryType::Regular, None),
+            ],
+            &[("d", tar::EntryType::Symlink, Some("elsewhere"))],
+            "oci-dir-to-symlink",
+        );
+        let meta = fs::symlink_metadata(rootfs.join("d")).expect("stat d");
+        assert!(meta.file_type().is_symlink());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_later_layer_can_turn_a_file_into_a_directory() {
+        let (tmp, rootfs) = apply_two(
+            &[("d", tar::EntryType::Regular, None)],
+            &[
+                ("d/", tar::EntryType::Directory, None),
+                ("d/inner", tar::EntryType::Regular, None),
+            ],
+            "oci-file-to-dir",
+        );
+        assert!(rootfs.join("d").is_dir());
+        assert!(rootfs.join("d/inner").is_file());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_later_layer_can_turn_a_symlink_into_a_directory() {
+        let (tmp, rootfs) = apply_two(
+            &[
+                ("real/", tar::EntryType::Directory, None),
+                ("d", tar::EntryType::Symlink, Some("real")),
+            ],
+            &[
+                ("d/", tar::EntryType::Directory, None),
+                ("d/inner", tar::EntryType::Regular, None),
+            ],
+            "oci-symlink-to-dir",
+        );
+        let meta = fs::symlink_metadata(rootfs.join("d")).expect("stat d");
+        assert!(meta.is_dir());
+        assert!(rootfs.join("d/inner").is_file());
+        assert!(!rootfs.join("real/inner").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_directory_over_a_directory_still_merges() {
+        let (tmp, rootfs) = apply_two(
+            &[
+                ("d/", tar::EntryType::Directory, None),
+                ("d/old", tar::EntryType::Regular, None),
+            ],
+            &[("d/", tar::EntryType::Directory, None)],
+            "oci-dir-merge",
+        );
+        assert!(rootfs.join("d/old").is_file());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn whiteout_names_dot_and_dotdot_remove_nothing() {
+        let tmp = unique_tmp_dir("oci-whiteout-dots");
+        let rootfs = tmp.join("rootfs");
+        let one = tmp.join("one.tar");
+        let two = tmp.join("two.tar");
+        write_layer_tar(&one, &[("keep/file", Some(b"x"))]);
+        write_layer_tar(&two, &[("keep/.wh..", None), (".wh...", None)]);
+        apply_layer_blob(&one, &rootfs).expect("apply first layer");
+        apply_layer_blob(&two, &rootfs).expect("apply second layer");
+        assert!(rootfs.join("keep/file").is_file());
+        assert!(rootfs.is_dir());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn aufs_metadata_names_are_not_whiteouts() {
+        let tmp = unique_tmp_dir("oci-whiteout-aufs");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(&rootfs).expect("mkdir rootfs");
+        fs::write(rootfs.join("plnk"), b"x").expect("seed plnk");
+        let layer = tmp.join("layer.tar");
+        write_layer_tar(&layer, &[(".wh..wh.plnk", None)]);
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        assert!(rootfs.join("plnk").is_file());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_multi_member_gzip_layer_is_applied_whole() {
+        use std::io::Write;
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            for (name, body) in [("first", b"one"), ("second", b"two")] {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_mode(0o644);
+                header.set_size(body.len() as u64);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, name, &body[..])
+                    .expect("append file");
+            }
+            builder.finish().expect("finish tar");
+        }
+        let split = 1024;
+        let tmp = unique_tmp_dir("oci-multi-gzip");
+        let layer = tmp.join("layer.tar.gz");
+        let mut out = fs::File::create(&layer).expect("create gz");
+        for part in [&tar_bytes[..split], &tar_bytes[split..]] {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(part).expect("compress");
+            out.write_all(&encoder.finish().expect("finish member"))
+                .expect("write member");
+        }
+        drop(out);
+        let rootfs = tmp.join("rootfs");
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        assert_eq!(fs::read(rootfs.join("first")).expect("first"), b"one");
+        assert_eq!(fs::read(rootfs.join("second")).expect("second"), b"two");
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
