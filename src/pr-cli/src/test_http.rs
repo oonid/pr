@@ -43,6 +43,7 @@ pub fn status(status: &'static str) -> Step {
 
 #[derive(Debug, Clone)]
 pub struct Request {
+    pub path: String,
     pub authorization: Option<String>,
 }
 
@@ -78,6 +79,7 @@ fn handle(mut stream: std::net::TcpStream, step: Step, seen: &Mutex<Vec<Request>
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
     let mut line = String::new();
     let _ = reader.read_line(&mut line);
+    let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
     let mut authorization = None;
     loop {
         let mut header = String::new();
@@ -90,9 +92,10 @@ fn handle(mut stream: std::net::TcpStream, step: Step, seen: &Mutex<Vec<Request>
             }
         }
     }
-    seen.lock()
-        .expect("requests")
-        .push(Request { authorization });
+    seen.lock().expect("requests").push(Request {
+        path,
+        authorization,
+    });
     let _ = respond(&mut stream, step);
 }
 
