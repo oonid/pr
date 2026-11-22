@@ -648,7 +648,15 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<usize,
             continue;
         }
 
-        let is_dir = entry.header().entry_type().is_dir();
+        let kind = entry.header().entry_type();
+        let is_dir = kind.is_dir()
+            || (!kind.is_symlink()
+                && entry.header().as_ustar().is_none()
+                && entry.path_bytes().ends_with(b"/"));
+        if resolve_in_root(rootfs, &relative_path, false)?.starts_with(rootfs.join(L2S_DIR)) {
+            ignored += 1;
+            continue;
+        }
         remove_if_type_differs(rootfs, &relative_path, is_dir)?;
         let within_root = entry
             .unpack_in(rootfs)
@@ -1414,6 +1422,56 @@ mod tests {
         apply_layer_blob(&layer, &rootfs).expect("apply layer");
         assert_eq!(fs::read(rootfs.join("first")).expect("first"), b"one");
         assert_eq!(fs::read(rootfs.join("second")).expect("second"), b"two");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_layer_cannot_remove_the_store_through_an_alias() {
+        let tmp = unique_tmp_dir("oci-store-alias");
+        let rootfs = tmp.join("rootfs");
+        let one = tmp.join("one.tar");
+        let two = tmp.join("two.tar");
+        write_layer_tar_with_links(
+            &one,
+            Some(("usr/bin/a", b"data")),
+            &[("usr/bin/b", "usr/bin/a", true)],
+        );
+        write_typed_layer(
+            &two,
+            &[
+                ("s", tar::EntryType::Symlink, Some(".")),
+                ("s/.l2s", tar::EntryType::Regular, None),
+            ],
+        );
+        apply_layer_blob(&one, &rootfs).expect("apply first layer");
+        apply_layer_blob(&two, &rootfs).expect("apply second layer");
+        assert!(fs::symlink_metadata(rootfs.join(".l2s"))
+            .expect("stat store")
+            .is_dir());
+        assert_eq!(fs::read(rootfs.join("usr/bin/a")).expect("a"), b"data");
+        assert_eq!(fs::read(rootfs.join("usr/bin/b")).expect("b"), b"data");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn an_old_format_directory_name_merges_into_an_existing_directory() {
+        let tmp = unique_tmp_dir("oci-old-format-dir");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(rootfs.join("d")).expect("mkdir d");
+        fs::write(rootfs.join("d/old"), b"x").expect("seed");
+        let layer = tmp.join("layer.tar");
+        let mut builder = tar::Builder::new(fs::File::create(&layer).expect("create tar"));
+        let mut header = tar::Header::new_old();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o755);
+        header.set_size(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "d/", std::io::empty())
+            .expect("append");
+        builder.finish().expect("finish tar");
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+        assert!(rootfs.join("d/old").is_file());
         let _ = fs::remove_dir_all(&tmp);
     }
 
