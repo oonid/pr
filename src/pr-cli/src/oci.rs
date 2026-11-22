@@ -573,7 +573,7 @@ async fn download_to_partial(
     Ok(())
 }
 
-pub fn apply_layer_blob(blob_path: &Path, rootfs: &Path) -> Result<(), String> {
+pub fn apply_layer_blob(blob_path: &Path, rootfs: &Path) -> Result<usize, String> {
     let blob = fs::File::open(blob_path)
         .map_err(|e| format!("open layer blob {}: {}", blob_path.display(), e))?;
     let reader = decompressed_reader(blob)
@@ -598,14 +598,15 @@ pub(crate) fn decompressed_reader(file: fs::File) -> Result<Box<dyn Read>, Strin
     })
 }
 
-fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), String> {
+fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<usize, String> {
     use std::collections::HashSet;
 
     fs::create_dir_all(rootfs).map_err(|e| format!("create rootfs {}: {}", rootfs.display(), e))?;
     let mut archive = tar::Archive::new(reader);
     archive.set_preserve_permissions(true);
     archive.set_preserve_mtime(true);
-    let mut created_paths: HashSet<PathBuf> = HashSet::new();
+    let mut created_paths: HashSet<PathBuf> = HashSet::from([rootfs.join(L2S_DIR)]);
+    let mut ignored = 0;
     let mut pending_hardlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     for entry in archive
@@ -620,8 +621,12 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
         if relative_path.as_os_str().is_empty() {
             continue;
         }
+        if in_store(&relative_path) {
+            ignored += 1;
+            continue;
+        }
 
-        if apply_whiteout_if_needed(rootfs, &relative_path, &created_paths)? {
+        if apply_whiteout_if_needed(rootfs, &relative_path, &created_paths, &mut ignored)? {
             continue;
         }
 
@@ -684,7 +689,21 @@ fn apply_layer_tar_stream(reader: Box<dyn Read>, rootfs: &Path) -> Result<(), St
         pending_hardlinks = remaining;
     }
 
-    Ok(())
+    Ok(ignored)
+}
+
+pub(crate) fn in_store(relative: &Path) -> bool {
+    relative.components().next() == Some(Component::Normal(L2S_DIR.as_ref()))
+}
+
+fn store_is_directory(l2s_dir: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(l2s_dir) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => fs::create_dir(l2s_dir)
+            .map(|()| true)
+            .map_err(|e| format!("create {}: {}", l2s_dir.display(), e)),
+        Err(e) => Err(format!("stat {}: {}", l2s_dir.display(), e)),
+    }
 }
 
 pub(crate) fn link_inside_root(
@@ -706,8 +725,8 @@ pub(crate) fn link_inside_root(
             .map_err(|e| format!("create hardlink parent {}: {}", parent.display(), e))?;
     }
     remove_path_if_exists(&destination)?;
-    if link2symlink && rootfs.is_absolute() {
-        let l2s_dir = rootfs.join(L2S_DIR);
+    let l2s_dir = rootfs.join(L2S_DIR);
+    if link2symlink && rootfs.is_absolute() && store_is_directory(&l2s_dir)? {
         let intermediate = match l2s_intermediate(&l2s_dir, &source, &source_metadata) {
             Some(intermediate) => Some(add_l2s_name(&intermediate)?),
             None if source_metadata.is_file() => move_into_l2s(&l2s_dir, &source)?,
@@ -961,6 +980,7 @@ fn apply_whiteout_if_needed(
     rootfs: &Path,
     relative_path: &Path,
     protected_paths: &std::collections::HashSet<PathBuf>,
+    ignored: &mut usize,
 ) -> Result<bool, String> {
     let Some(file_name) = relative_path.file_name().and_then(|s| s.to_str()) else {
         return Ok(false);
@@ -981,6 +1001,10 @@ fn apply_whiteout_if_needed(
 
     let target_name = file_name.trim_start_matches(".wh.");
     if target_name.is_empty() {
+        return Ok(true);
+    }
+    if in_store(&parent.join(target_name)) {
+        *ignored += 1;
         return Ok(true);
     }
 
@@ -1559,6 +1583,111 @@ mod tests {
             );
         }
         assert_eq!(regular_files_under(&rootfs), 1);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_layer_cannot_replace_the_store_with_a_symlink() {
+        let tmp = unique_tmp_dir("oci-l2s-symlink");
+        let rootfs = tmp.join("rootfs");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(rootfs.join(".l2s")).expect("mkdir .l2s");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        let layer = tmp.join("layer.tar");
+        let mut builder = tar::Builder::new(fs::File::create(&layer).expect("create tar"));
+        let mut whiteout = tar::Header::new_gnu();
+        whiteout.set_entry_type(tar::EntryType::Regular);
+        whiteout.set_size(0);
+        whiteout.set_cksum();
+        builder
+            .append_data(&mut whiteout, ".wh..l2s", std::io::empty())
+            .expect("append whiteout");
+        let mut store = tar::Header::new_gnu();
+        store.set_entry_type(tar::EntryType::Symlink);
+        store.set_size(0);
+        store.set_cksum();
+        builder
+            .append_link(&mut store, ".l2s", &outside)
+            .expect("append symlink");
+        let mut payload = tar::Header::new_gnu();
+        payload.set_entry_type(tar::EntryType::Regular);
+        payload.set_mode(0o644);
+        payload.set_size(7);
+        payload.set_cksum();
+        builder
+            .append_data(&mut payload, "payload", &b"payload"[..])
+            .expect("append payload");
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Link);
+        link.set_size(0);
+        link.set_cksum();
+        builder
+            .append_link(&mut link, "x", "payload")
+            .expect("append hardlink");
+        builder.finish().expect("finish tar");
+        drop(builder);
+
+        let ignored = apply_layer_blob(&layer, &rootfs).expect("apply layer");
+
+        assert_eq!(
+            fs::read_dir(&outside).expect("read outside").count(),
+            0,
+            "{:?}",
+            fs::read_dir(&outside)
+                .expect("read outside")
+                .map(|e| e.expect("entry").file_name())
+                .collect::<Vec<_>>()
+        );
+        assert!(fs::symlink_metadata(rootfs.join(".l2s"))
+            .expect("stat .l2s")
+            .is_dir());
+        assert_eq!(fs::read(rootfs.join("x")).expect("read x"), b"payload");
+        assert_eq!(ignored, 2);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_root_opaque_whiteout_keeps_the_store() {
+        let tmp = unique_tmp_dir("oci-l2s-opaque");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(rootfs.join(".l2s")).expect("mkdir .l2s");
+        fs::write(rootfs.join(".l2s/.l2s.a0001.0002"), b"a").expect("write data");
+        fs::write(rootfs.join("old"), b"old").expect("write old");
+        let layer = tmp.join("layer.tar");
+        write_layer_tar(&layer, &[(".wh..wh..opq", None), ("new", Some(b"new"))]);
+
+        apply_layer_blob(&layer, &rootfs).expect("apply layer");
+
+        assert!(!rootfs.join("old").exists());
+        assert_eq!(
+            fs::read(rootfs.join(".l2s/.l2s.a0001.0002")).expect("read data"),
+            b"a"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn link_inside_root_copies_when_the_store_is_not_a_directory() {
+        let tmp = unique_tmp_dir("oci-l2s-not-dir");
+        let rootfs = tmp.join("rootfs");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&rootfs).expect("mkdir rootfs");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        symlink(&outside, rootfs.join(".l2s")).expect("symlink .l2s");
+        fs::write(rootfs.join("payload"), b"payload").expect("write payload");
+
+        let linked =
+            link_inside_root(&rootfs, Path::new("x"), Path::new("payload"), true).expect("link");
+
+        assert!(linked);
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        assert!(fs::symlink_metadata(rootfs.join("payload"))
+            .expect("stat payload")
+            .is_file());
+        assert!(fs::symlink_metadata(rootfs.join("x"))
+            .expect("stat x")
+            .is_file());
+        assert_eq!(fs::read(rootfs.join("x")).expect("read x"), b"payload");
         let _ = fs::remove_dir_all(&tmp);
     }
 

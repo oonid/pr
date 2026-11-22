@@ -1,4 +1,3 @@
-use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -36,8 +35,13 @@ fn parse_passwd_entry(line: &str) -> Option<PasswdEntry> {
     })
 }
 
-fn find_user_in_passwd(passwd_path: &str, user: &str) -> Result<PasswdEntry, String> {
-    let content = fs::read_to_string(passwd_path).map_err(|e| format!("read passwd: {}", e))?;
+fn find_user_in_passwd(rootfs: &Path, user: &str) -> Result<PasswdEntry, String> {
+    let Some(content) =
+        read_rootfs_file(rootfs, "etc/passwd").map_err(|e| format!("read passwd: {}", e))?
+    else {
+        msg_error("the selected distribution doesn't have /etc/passwd.");
+        return Err("no /etc/passwd".to_string());
+    };
     for line in content.lines() {
         if let Some(entry) = parse_passwd_entry(line) {
             if line.starts_with(&format!("{}:", user)) {
@@ -130,6 +134,13 @@ fn environment_entries(content: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn rootfs_environment(rootfs: &Path) -> Vec<(String, String)> {
+    match read_rootfs_file(rootfs, "etc/environment") {
+        Ok(Some(content)) => environment_entries(&content),
+        _ => Vec::new(),
+    }
+}
+
 fn unquote(value: &str) -> &str {
     ['"', '\'']
         .iter()
@@ -208,15 +219,9 @@ pub fn command_login(
         return Err("not installed".to_string());
     }
 
-    let passwd_path = format!("{}/etc/passwd", rootfs);
-    if !Path::new(&passwd_path).exists() {
-        msg_error("the selected distribution doesn't have /etc/passwd.");
-        return Err("no /etc/passwd".to_string());
-    }
+    let entry = find_user_in_passwd(Path::new(&rootfs), user)?;
 
     refresh_resolv_conf(Path::new(&rootfs));
-
-    let entry = find_user_in_passwd(&passwd_path, user)?;
 
     update_etc_environment(&rootfs);
 
@@ -242,15 +247,12 @@ pub fn command_login(
         }
     }
 
-    let env_file = format!("{}/etc/environment", rootfs);
-    if let Ok(content) = fs::read_to_string(&env_file) {
-        for (key, value) in environment_entries(&content) {
-            if !login_env
-                .iter()
-                .any(|e| e.split('=').next() == Some(key.as_str()))
-            {
-                login_env.push(format!("{}={}", key, value));
-            }
+    for (key, value) in rootfs_environment(Path::new(&rootfs)) {
+        if !login_env
+            .iter()
+            .any(|e| e.split('=').next() == Some(key.as_str()))
+        {
+            login_env.push(format!("{}={}", key, value));
         }
     }
 
@@ -302,6 +304,7 @@ pub fn command_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -416,29 +419,55 @@ mod tests {
     #[test]
     fn find_user_in_passwd_finds_expected_user() {
         let tmp_dir = unique_temp_dir("pr-cli-login-passwd");
-        fs::create_dir_all(&tmp_dir).expect("create tmp dir");
-        let passwd = tmp_dir.join("passwd");
+        fs::create_dir_all(tmp_dir.join("etc")).expect("create tmp dir");
+        let passwd = tmp_dir.join("etc/passwd");
         fs::write(
             &passwd,
             "root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
         )
         .expect("write passwd");
 
-        let entry = find_user_in_passwd(passwd.to_str().expect("passwd path"), "alice")
-            .expect("find alice entry");
+        let entry = find_user_in_passwd(&tmp_dir, "alice").expect("find alice entry");
         assert_eq!(entry.home, "/home/alice");
 
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
     #[test]
+    fn login_reads_passwd_inside_the_rootfs() {
+        let tmp_dir = unique_temp_dir("pr-cli-login-passwd-symlink");
+        let rootfs = tmp_dir.join("rootfs");
+        let other = tmp_dir.join("other");
+        fs::create_dir_all(&rootfs).expect("create rootfs");
+        fs::create_dir_all(&other).expect("create other");
+        fs::write(other.join("passwd"), "root:x:0:0:root:/outside:/bin/sh\n")
+            .expect("write other passwd");
+        fs::write(other.join("environment"), "FROM=outside\n").expect("write other env");
+        std::os::unix::fs::symlink(&other, rootfs.join("etc")).expect("symlink etc");
+        let inside = rootfs.join(other.strip_prefix("/").expect("absolute"));
+        fs::create_dir_all(&inside).expect("create inside");
+        fs::write(inside.join("passwd"), "root:x:0:0:root:/inside:/bin/sh\n")
+            .expect("write inside passwd");
+        fs::write(inside.join("environment"), "FROM=inside\n").expect("write inside env");
+
+        let entry = find_user_in_passwd(&rootfs, "root").expect("find root");
+
+        assert_eq!(entry.home, "/inside");
+        assert_eq!(
+            rootfs_environment(&rootfs),
+            vec![("FROM".to_string(), "inside".to_string())]
+        );
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
     fn find_user_in_passwd_returns_error_when_missing() {
         let tmp_dir = unique_temp_dir("pr-cli-login-passwd-missing");
-        fs::create_dir_all(&tmp_dir).expect("create tmp dir");
-        let passwd = tmp_dir.join("passwd");
+        fs::create_dir_all(tmp_dir.join("etc")).expect("create tmp dir");
+        let passwd = tmp_dir.join("etc/passwd");
         fs::write(&passwd, "root:x:0:0:root:/root:/bin/sh\n").expect("write passwd");
 
-        let err = match find_user_in_passwd(passwd.to_str().expect("passwd path"), "alice") {
+        let err = match find_user_in_passwd(&tmp_dir, "alice") {
             Ok(_) => panic!("must fail for missing user"),
             Err(err) => err,
         };
