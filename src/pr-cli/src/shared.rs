@@ -387,6 +387,10 @@ pub fn msg_error(text: &str) {
     println!("\x1b[1;34m[\x1b[31m!\x1b[1;34m\x1b[36m {}\x1b[0m", text);
 }
 
+pub fn msg_warning(text: &str) {
+    eprintln!("\x1b[1;34m[\x1b[31m!\x1b[1;34m\x1b[36m {}\x1b[0m", text);
+}
+
 pub fn can_read_dir(path: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let Ok(meta) = std::fs::metadata(path) else {
@@ -453,11 +457,15 @@ pub fn build_proot_args(
     let l2s_dir = format!("{}/.l2s", rootfs);
     match lstat_in_rootfs(Path::new(rootfs), ".l2s") {
         Some(metadata) if metadata.is_dir() => std::env::set_var("PROOT_L2S_DIR", &l2s_dir),
-        Some(_) => msg_error(&format!(
-            "{} is not a directory; hard links in this container are kept beside their files",
-            l2s_dir
-        )),
-        None => {}
+        found => {
+            std::env::remove_var("PROOT_L2S_DIR");
+            if found.is_some() {
+                msg_warning(&format!(
+                    "not using {} for hard links: it is not a directory (links are kept beside their files)",
+                    l2s_dir
+                ));
+            }
+        }
     }
 
     let mut args: Vec<String> = Vec::new();
@@ -600,9 +608,9 @@ fn rootfs_bind(rootfs: &str, source: &str, guest: &str, directory: bool) -> Opti
     } else {
         "a regular file"
     };
-    msg_error(&format!(
-        "{} is missing or not {}; {} is not bound",
-        path, kind, guest
+    msg_warning(&format!(
+        "not binding {} at {}: it is not {}",
+        path, guest, kind
     ));
     None
 }
@@ -911,6 +919,81 @@ mod tests {
 
         let _ = fs::remove_dir_all(base);
         std::env::remove_var("PROOT_L2S_DIR");
+    }
+
+    #[test]
+    fn proot_args_drop_a_stale_store_setting() {
+        let _guard = env_lock().lock().expect("lock env");
+        let saved_l2s = std::env::var_os("PROOT_L2S_DIR");
+        let base = unique_temp_dir("pr-cli-shared-proot-stale-l2s");
+        let linked = base.join("linked");
+        let missing = base.join("missing");
+        let outside = base.join("outside");
+        fs::create_dir_all(&linked).expect("create linked rootfs");
+        fs::create_dir_all(&missing).expect("create missing rootfs");
+        fs::create_dir_all(&outside).expect("create outside");
+        std::os::unix::fs::symlink(&outside, linked.join(".l2s")).expect("symlink .l2s");
+
+        std::env::set_var("PROOT_L2S_DIR", "/stale");
+        build_proot_args(linked.to_str().expect("path"), true, false, &[]);
+        let after_symlink = std::env::var_os("PROOT_L2S_DIR");
+        std::env::set_var("PROOT_L2S_DIR", "/stale");
+        build_proot_args(missing.to_str().expect("path"), true, false, &[]);
+        let after_missing = std::env::var_os("PROOT_L2S_DIR");
+        restore_var("PROOT_L2S_DIR", saved_l2s);
+
+        assert_eq!(after_symlink, None);
+        assert_eq!(after_missing, None);
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn proot_args_bind_real_sources() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_lock().lock().expect("lock env");
+        let saved_l2s = std::env::var_os("PROOT_L2S_DIR");
+        std::env::remove_var("PROOT_L2S_DIR");
+        let base = unique_temp_dir("pr-cli-shared-proot-real");
+        let real = base.join("real");
+        let fresh = base.join("fresh");
+        fs::create_dir_all(real.join("tmp")).expect("create tmp");
+        fs::create_dir_all(real.join(".l2s")).expect("create .l2s");
+        fs::create_dir_all(real.join("proc")).expect("create proc");
+        fs::create_dir_all(real.join("sys/.empty")).expect("create sys/.empty");
+        fs::write(real.join("proc/.stat"), "cpu 0\n").expect("write proc/.stat");
+        fs::create_dir_all(&fresh).expect("create fresh rootfs");
+        let real_str = real.to_str().expect("path");
+        let fresh_str = fresh.to_str().expect("path");
+
+        let real_args = build_proot_args(real_str, true, false, &[]);
+        let l2s = std::env::var_os("PROOT_L2S_DIR");
+        std::env::remove_var("PROOT_L2S_DIR");
+        let fresh_args = build_proot_args(fresh_str, true, false, &[]);
+        restore_var("PROOT_L2S_DIR", saved_l2s);
+
+        assert!(
+            real_args.contains(&format!("--bind={}/tmp:/dev/shm", real_str)),
+            "{:?}",
+            real_args
+        );
+        assert_eq!(l2s, Some(format!("{}/.l2s", real_str).into()));
+        assert!(
+            fresh_args.contains(&format!("--bind={}/tmp:/dev/shm", fresh_str)),
+            "{:?}",
+            fresh_args
+        );
+        let tmp_meta = fs::symlink_metadata(fresh.join("tmp")).expect("stat fresh tmp");
+        assert!(tmp_meta.is_dir());
+        assert_eq!(tmp_meta.permissions().mode() & 0o7777, 0o1777);
+        assert_eq!(
+            rootfs_bind(real_str, "proc/.stat", "/proc/stat", false),
+            Some(format!("--bind={}/proc/.stat:/proc/stat", real_str))
+        );
+        assert_eq!(
+            rootfs_bind(real_str, "sys/.empty", "/sys/fs/selinux", true),
+            Some(format!("--bind={}/sys/.empty:/sys/fs/selinux", real_str))
+        );
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]

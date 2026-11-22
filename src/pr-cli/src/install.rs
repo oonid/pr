@@ -725,7 +725,7 @@ where
 fn warn_ignored_store_entries(ignored: usize) {
     if ignored > 0 {
         msg_error(&format!(
-            "ignoring {} entries at /.l2s in the image",
+            "ignoring {} entries at /.l2s in the image (pr keeps its own hard-link store there)",
             ignored
         ));
     }
