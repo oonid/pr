@@ -5,7 +5,7 @@ See also:
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (SELinux W^X bypass, seccomp analysis)
 - `docs/rust-port-pr-cli.md` — Replace proot-distro.sh with Rust binary
 - `docs/alpine-linux-support.md` — Alpine Linux investigation and fixes
-- `docs/integration-tests.md` — Integration test suite (77 tests, 86 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (81 tests, 90 runs with the isolated readlink pass)
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot
 
 ---
@@ -278,6 +278,8 @@ The store, as it works now (`link2symlink.c`; pr-cli's install-time code in `oci
   deletes the intermediate and the data.
 - Hard-linking a symlink that is not a store entry copies the symlink (same target); nothing
   enters the store.
+- A file that has been hard-linked stays a store entry after its other names are removed (its
+  count drops to 1); this matches earlier behaviour.
 - Errors are returned as the real errno. `EXDEV` and others used to be reported as `EPERM`.
 
 Known limits:
