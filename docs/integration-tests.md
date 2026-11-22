@@ -46,7 +46,7 @@ src/proot-integration-test/
   src/chroot.rs           fake-root chroot into a directory and a missing one (2 tests)
   src/fakeroot.rs         chown errors, owner of the real user's files, blocked linkat (8 tests)
   src/syscalls.rs         path syscalls proot cannot translate: ENOSYS, path-free ones still work (6 tests)
-  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group, existing name, link counts, symlink copy (9 tests)
+  src/hardlink.rs         link2symlink store limits: full basename, stale data name, 1000th group, existing name, link counts, symlink copy, exchange (10 tests)
 ```
 
 The `exit` suite is not in the guest binary: a program inside proot cannot see proot's own exit status,
@@ -71,7 +71,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
 | syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST expected; ENOSYS accepted only as the safe answer); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
-| hardlink | 9 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file; a failed `RENAME_NOREPLACE` keeps the count, a rename over a hard link drops one name, and unlinking the last name removes the data; renaming a hard link onto itself keeps the count; hard-linking a symlink copies the symlink and adds nothing to the store |
+| hardlink | 10 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file; a failed `RENAME_NOREPLACE` keeps the count, a rename over a hard link drops one name, and unlinking the last name removes the data; renaming a hard link onto itself keeps the count; hard-linking a symlink copies the symlink and adds nothing to the store; `RENAME_EXCHANGE` keeps the count |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
@@ -225,7 +225,7 @@ for. The test names are the ones in `src/syscalls.rs`.
 
 ---
 
-#### hardlink (9 tests)
+#### hardlink (10 tests)
 
 The store is `/.l2s` (`PROOT_L2S_DIR`). Each test plants entries named `.l2s.<basename>NNNN` and
 `.l2s.<basename>NNNN.CCCC` under `/.l2s`, links a file named `<basename>` from `/tmp/pit-hl-*`, and removes
@@ -250,6 +250,9 @@ everything afterwards.
    the name `b` still reads the data
 9. **hard-linking a symlink makes a symlink with the same target** — `link()` of a symlink to `target-pit`
    succeeds; both names read `target-pit` and nothing for the target or basename is in `/.l2s`
+10. **RENAME_EXCHANGE keeps the link count** — `renameat2(c, b, RENAME_EXCHANGE)` over a hard link of `a`
+    succeeds (skipped on `EINVAL` or `ENOSYS`); `b` reads the other data, `c` the shared data, and after
+    `unlink(a)` `c` still reads it
 
 ---
 

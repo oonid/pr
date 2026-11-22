@@ -297,6 +297,10 @@ const SUITES: &[Suite] = &[
                 name: "hard-linking a symlink makes a symlink with the same target",
                 run: hardlink::test_link_of_a_symlink_copies_it,
             },
+            Test {
+                name: "RENAME_EXCHANGE keeps the link count",
+                run: hardlink::test_rename_exchange_keeps_the_link_count,
+            },
         ],
     },
     Suite {
