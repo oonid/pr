@@ -116,7 +116,7 @@ cd android && ./gradlew :proot-engine:connectedDebugAndroidTest
 - This runs on every connected device; set `ANDROID_SERIAL` to pick one.
 - On an x86_64 host, run the tests on an x86_64 emulator image with `-PprTestAbis=x86_64`. It builds the PTY library for x86_64 too; without the property the AAR and APK stay arm64-only, so never pass `-PprTestAbis` to a release or AAR build (the app's own arm64 filter keeps x86_64 out of the APK, but the AAR would carry it). arm64 system images do not run on x86_64 hosts. Android 11 (API 30) is the oldest release checked.
 - The emulator needs an x86_64 system image (the `aosp_atd` image for API 30 is enough) and KVM on the host. Create it with `avdmanager` and boot it with `emulator -no-window`.
-- Processes started with `adb run-as` have no app seccomp filter, so behaviour that depends on the filter (SIGSYS handlers, `close_range` before Android 13) must be checked from inside the app or an instrumented test.
+- Processes started with `adb run-as` have no app seccomp filter, so behaviour that depends on the filter (SIGSYS handlers, `close_range` before Android 13) must be checked from inside the app or an instrumented test. Under `run-as`, `PROOT_TMP_DIR` must use the same path spelling as pr-cli's prefix (`/data/data/<pkg>/cache`), or a `/tmp` to `.l2s` rename crosses mount points (`EXDEV`).
 - Over wireless debugging (adb serial `host:port`), Gradle reports "There were failing tests" and exits 1 even when every test passes (AGP 9.4.1 looks the device up by its raw serial). Read `proot-engine/build/reports/androidTests/connected/debug/index.html`.
 
 ### Host-side (pr-cli unit/integration)
@@ -140,7 +140,7 @@ adb shell run-as id.or.oo.pr files/usr/bin/pr-cli test debian
 
 **Test suites:** distro (8), clone (5), readlink (9, run again isolated), gcc (7), rust (4), git (3), pipe (3), general (9), ssh (4), chroot (2), fakeroot (8), syscalls (6), hardlink (9), exit (4, run by pr-cli itself); 77 tests, 86 runs with the isolated readlink pass
 
-**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. 81/81 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests.
+**Results:** 55/55 pass on Alpine and Ubuntu 26.04 (Android 16, 2026-10), including rust (rustc compile + cargo build); 66/66 on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the readlink-isolated pass. 68/68 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; 69/69 with the fakeroot utimensat test; 73/73 with the exit suite. 81/81 on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. Test through the app on Android 17: pending.
 
 ### Known test failures (Alpine-specific)
 

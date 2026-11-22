@@ -4,7 +4,7 @@ Automated regression testing for proot behavior inside Linux distros (Alpine,
 Debian, etc.). A cross-compiled guest binary runs inside proot via `pr-cli test <distro>`,
 exercising syscall interception, filesystem virtualization, and toolchain support.
 
-Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. That is 77 tests, 86 runs with the isolated readlink pass.
+Result: **55/55 pass** on Alpine and Ubuntu 26.04 (Android 16, 2026-10); **66/66** on Alpine and Ubuntu 26.04 (Android 17, 2026-11), counting the `readlink-isolated` pass; **68/68** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-08) with the two gcc spawn tests; **69/69** on both with the fakeroot utimensat test (2026-11-08); **73/73** with the exit suite. **81/81** on Alpine and Ubuntu 26.04 (Android 17, 2026-11-21), run from the app's Test, with the syscalls suite (6) and the two new gcc tests. Test through the app on Android 17: pending. That is 77 tests, 86 runs with the isolated readlink pass.
 
 ---
 
@@ -71,7 +71,7 @@ other suites do, with `--kill-on-exit`, and checking the status it exits with.
 | chroot | 2 | always | fake_id0 chroot emulation (ptrace and SIGSYS paths) |
 | fakeroot | 8 | `geteuid() == 0` | fake_id0 chown and utimensat errors and owner mapping; seccomp `linkat` fallback |
 | syscalls | 6 | always | `openat2`, `fchmodat2` and `setxattrat` return ENOSYS (the first two also leave the file unchanged); `epoll_pwait2` above the syscall table still works; `renameat2` with `RENAME_NOREPLACE` never overwrites (EEXIST expected; ENOSYS accepted only as the safe answer); `faccessat2` with `AT_SYMLINK_NOFOLLOW` on a dangling symlink is 0 or ENOSYS, never ENOENT |
-| hardlink | 9 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file; a failed `RENAME_NOREPLACE` keeps the count, a rename over a hard link drops one name, and unlinking the last name removes the data; renaming a hard link onto itself keeps the count |
+| hardlink | 9 | always | link2symlink store in `/.l2s`: a basename with 9999 groups gives `EMLINK` and keeps the source; a stale data name is never overwritten; the 1000th group gets its own data; a link onto an existing name gives `EEXIST` and leaves the source a regular file; a failed `RENAME_NOREPLACE` keeps the count, a rename over a hard link drops one name, and unlinking the last name removes the data; renaming a hard link onto itself keeps the count; hard-linking a symlink copies the symlink and adds nothing to the store |
 | exit | 4 | always (run by pr-cli) | proot's exit status: a normal exit, a program killed by SIGKILL or SIGTERM, processes left behind |
 
 ### Suite Details
