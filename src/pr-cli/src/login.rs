@@ -136,7 +136,10 @@ fn environment_entries(content: &str) -> Vec<(String, String)> {
 
 fn rootfs_environment(rootfs: &Path) -> Vec<(String, String)> {
     match read_rootfs_file(rootfs, "etc/environment") {
-        Ok(Some(content)) => environment_entries(&content),
+        Ok(Some(content)) => environment_entries(&content)
+            .into_iter()
+            .filter(|(key, _)| !key.starts_with("PROOT_"))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -430,6 +433,40 @@ mod tests {
         let entry = find_user_in_passwd(&tmp_dir, "alice").expect("find alice entry");
         assert_eq!(entry.home, "/home/alice");
 
+        let _ = fs::remove_dir_all(tmp_dir);
+    }
+
+    #[test]
+    fn a_container_environment_cannot_set_proot_settings() {
+        let tmp_dir = unique_temp_dir("pr-cli-login-proot-env");
+        fs::create_dir_all(tmp_dir.join("etc")).expect("create etc");
+        fs::write(
+            tmp_dir.join("etc/environment"),
+            "PROOT_L2S_DIR=/x\nPROOT_TMP_DIR=/y\nFOO=bar\n",
+        )
+        .expect("write environment");
+
+        let guest = rootfs_environment(&tmp_dir);
+        let env = login_process_env(
+            std::iter::empty(),
+            vec![
+                ("PROOT_L2S_DIR".to_string(), "/rootfs/.l2s".to_string()),
+                ("PROOT_TMP_DIR".to_string(), "/cache".to_string()),
+            ],
+            guest,
+        );
+
+        let mut env = env;
+        env.sort();
+        assert_eq!(
+            env,
+            [
+                ("FOO", "bar"),
+                ("PROOT_L2S_DIR", "/rootfs/.l2s"),
+                ("PROOT_TMP_DIR", "/cache")
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+        );
         let _ = fs::remove_dir_all(tmp_dir);
     }
 
