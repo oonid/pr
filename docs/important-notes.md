@@ -252,6 +252,42 @@ only that. proot resolves a symlink's absolute target as a guest path, so under 
 L2S link made by the app (gcc, cc, ...) failed `execve` with ENOENT while `stat` still worked.
 `build_proot_args()` now also binds the other path of the app directory (`app_dir_alias()`).
 
+### The link2symlink store
+
+The store, as it works now (`link2symlink.c`; pr-cli's install-time code in `oci.rs`
+(`move_into_l2s`, `add_l2s_name`, `rename_noreplace`) follows the same rule):
+
+- Layout: `<rootfs>/.l2s` holds, per hard-linked file, an intermediate symlink
+  `.l2s.<basename>NNNN` that points to the data file `.l2s.<basename>NNNN.CCCC`. Every name of
+  the file is a symlink to the intermediate; `CCCC` is the link count that `stat` reports.
+- Limits: groups `0001` to `9999` per basename, link count `0002` to `9999`. Past either limit
+  `link()` fails with `EMLINK` and the source stays a regular file.
+- Claiming a group: proot creates the intermediate as a symlink with `symlink()`, which is
+  exclusive, then moves the data in with a no-replace `renameat2`. A taken intermediate or a
+  stale data name (data without an intermediate) is skipped and the next group is tried; an
+  existing file is never overwritten.
+- Adding a name: the data file is renamed to the next count (no-replace), then the intermediate
+  is re-pointed atomically: a `.new` symlink is created beside it and renamed over it.
+- Rollback: if the destination symlink cannot be made (including a destination that already
+  exists, `EEXIST`), the count is lowered again or, for a first link, the data moves back to the
+  source name and the intermediate is removed.
+- Lowering counts: only at the exit stage of a rename or unlink, after it succeeded and the name
+  is gone or now a different file (compared by device and inode). The name is remembered at
+  syscall entry in per-tracee state. `RENAME_EXCHANGE` is excluded. A failed
+  `RENAME_NOREPLACE` or a rename of a name onto itself keeps the count; the last name removed
+  deletes the intermediate and the data.
+- Hard-linking a symlink that is not a store entry copies the symlink (same target); nothing
+  enters the store.
+- Errors are returned as the real errno. `EXDEV` and others used to be reported as `EPERM`.
+
+Known limits:
+
+- A user symlink whose target ends like a store name (`.l2s.<x>`) is treated as a store entry.
+- Renaming and unlinking one name at the same time in two sessions can lower its count twice.
+- A crash between steps can leave a `.new` temporary (removed at the next re-point of that
+  intermediate) or a count one too high (the data is kept, never lost).
+- Stores whose counts are already wrong from older builds are not repaired.
+
 ### Container DNS follows the active network
 
 pr-cli used to write `8.8.8.8` / `8.8.4.4` (install) or `8.8.8.8` / `1.1.1.1` (login) into
