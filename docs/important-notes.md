@@ -5,7 +5,7 @@ See also:
 - `docs/targetsdk35-compatibility.md` — targetSdk 35 compatibility (SELinux W^X bypass, seccomp analysis)
 - `docs/rust-port-pr-cli.md` — Replace proot-distro.sh with Rust binary
 - `docs/alpine-linux-support.md` — Alpine Linux investigation and fixes
-- `docs/integration-tests.md` — Integration test suite (75 tests, 84 runs with the isolated readlink pass)
+- `docs/integration-tests.md` — Integration test suite (76 tests, 85 runs with the isolated readlink pass)
 - `docs/proot-improvement.md` — Our proot fork vs vendor/proot and vendor/termux-proot
 
 ---
