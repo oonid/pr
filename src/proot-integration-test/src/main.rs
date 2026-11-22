@@ -289,6 +289,10 @@ const SUITES: &[Suite] = &[
                 name: "unlink of the last name removes the data",
                 run: hardlink::test_unlink_of_the_last_name_removes_the_data,
             },
+            Test {
+                name: "renaming a hard link onto itself keeps the link count",
+                run: hardlink::test_rename_onto_itself_keeps_the_link_count,
+            },
         ],
     },
     Suite {

@@ -4,6 +4,8 @@ use std::fs;
 use std::os::unix::fs::symlink;
 
 const STORE: &str = "/.l2s";
+const SYS_RENAMEAT2: libc::c_long = 276;
+const RENAME_NOREPLACE: libc::c_uint = 1;
 
 pub fn probe() -> bool {
     true
@@ -178,12 +180,12 @@ fn noreplace_body(basename: &str, dir: &str) -> TestResult {
     fs::write(&other, b"other").map_err(|e| format!("write: {}", e))?;
     let rc = unsafe {
         libc::syscall(
-            276,
+            SYS_RENAMEAT2,
             libc::AT_FDCWD,
             c(&other).as_ptr(),
             libc::AT_FDCWD,
             c(&b).as_ptr(),
-            1,
+            RENAME_NOREPLACE,
         )
     };
     let err = errno();
@@ -255,6 +257,25 @@ pub fn test_unlink_of_the_last_name_removes_the_data() -> TestResult {
     let basename = "pithllast";
     let dir = "/tmp/pit-hl-last";
     let result = last_name_body(basename, dir);
+    clean(basename, dir);
+    result
+}
+
+fn onto_itself_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    fs::write(&a, b"data").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(&a, &b).map_err(|e| format!("link: {}", e))?;
+    fs::rename(&b, &b).map_err(|e| format!("rename: {}", e))?;
+    fs::remove_file(&a).map_err(|e| format!("unlink: {}", e))?;
+    expect_content(&b, "data")
+}
+
+pub fn test_rename_onto_itself_keeps_the_link_count() -> TestResult {
+    let basename = "pithlself";
+    let dir = "/tmp/pit-hl-self";
+    let result = onto_itself_body(basename, dir);
     clean(basename, dir);
     result
 }
