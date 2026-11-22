@@ -279,3 +279,39 @@ pub fn test_rename_onto_itself_keeps_the_link_count() -> TestResult {
     clean(basename, dir);
     result
 }
+
+fn symlink_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    symlink("target-pit", &a).map_err(|e| format!("symlink: {}", e))?;
+    let rc = unsafe { libc::link(c(&a).as_ptr(), c(&b).as_ptr()) };
+    let err = errno();
+    if rc != 0 {
+        return Err(format!("link: rc={} errno={}, want 0", rc, err));
+    }
+    for path in [&b, &a] {
+        let got = fs::read_link(path).map_err(|e| format!("readlink {}: {}", path, e))?;
+        if got.to_string_lossy() != "target-pit" {
+            return Err(format!("{} points to {:?}, want target-pit", path, got));
+        }
+    }
+    let left: Vec<String> = fs::read_dir(STORE)
+        .map_err(|e| format!("read {}: {}", STORE, e))?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains("target-pit") || name.contains(basename))
+        .collect();
+    if !left.is_empty() {
+        return Err(format!("the link left {:?} in {}", left, STORE));
+    }
+    Ok(())
+}
+
+pub fn test_link_of_a_symlink_copies_it() -> TestResult {
+    let basename = "pithlsym";
+    let dir = "/tmp/pit-hl-sym";
+    let result = symlink_body(basename, dir);
+    clean(basename, dir);
+    result
+}
