@@ -277,6 +277,18 @@ const SUITES: &[Suite] = &[
                 name: "a link onto an existing name keeps the source a regular file",
                 run: hardlink::test_link_onto_existing_name_keeps_the_source,
             },
+            Test {
+                name: "a failed NOREPLACE rename keeps the link count",
+                run: hardlink::test_failed_noreplace_rename_keeps_the_link_count,
+            },
+            Test {
+                name: "rename over a hard link drops one name",
+                run: hardlink::test_rename_over_a_hard_link_drops_one_name,
+            },
+            Test {
+                name: "unlink of the last name removes the data",
+                run: hardlink::test_unlink_of_the_last_name_removes_the_data,
+            },
         ],
     },
     Suite {
