@@ -14,7 +14,7 @@ use crate::commands_extra::force_remove_dir_all;
 use crate::install_marker::{pending_install, InstallMarker, PendingInstall};
 use crate::install_model::{write_oci_install_metadata, OciInstallMetadata};
 use crate::oci::{
-    apply_layer_blob, blob_matches_digest, blob_path, blob_url, fetch_bearer_token,
+    apply_layer_blob, blob_matches_digest, blob_path, blob_url, fetch_bearer_token, in_store,
     link_inside_root, parse_bearer_challenge, resolve_in_root, sanitize_layer_path,
     select_manifest_descriptor, OciDescriptor, OciManifest, OciPlatform,
     DOCKER_MANIFEST_LIST_MEDIA_TYPE, DOCKER_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE,
@@ -701,6 +701,7 @@ fn install_oci_layers<F>(
 where
     F: FnMut(&OciDescriptor, &Path) -> Result<(), String>,
 {
+    let mut ignored = 0;
     for layer in layers {
         let blob = blob_path(cache_dir, &layer.digest)?;
         if blob.exists() && !blob_matches_digest(&blob, &layer.digest)? {
@@ -715,9 +716,19 @@ where
             msg_status(&format!("Downloading OCI layer {}...", layer.digest));
             fetch(layer, &blob)?;
         }
-        apply_layer_blob(&blob, rootfs)?;
+        ignored += apply_layer_blob(&blob, rootfs)?;
     }
+    warn_ignored_store_entries(ignored);
     Ok(())
+}
+
+fn warn_ignored_store_entries(ignored: usize) {
+    if ignored > 0 {
+        msg_error(&format!(
+            "ignoring {} entries at /.l2s in the image",
+            ignored
+        ));
+    }
 }
 
 fn install_from_oci_reference(reference: &str, override_alias: Option<&str>) -> Result<(), String> {
@@ -850,6 +861,7 @@ fn extract_tarball(
     let decompressor = crate::oci::decompressed_reader(file)
         .map_err(|e| format!("read archive {}: {}", archive_path, e))?;
     let mut archive = tar::Archive::new(decompressor);
+    let mut ignored = 0;
 
     for entry in archive
         .entries()
@@ -861,6 +873,10 @@ fn extract_tarball(
             continue;
         };
         if exclude.iter().any(|exc| relative.starts_with(exc)) {
+            continue;
+        }
+        if in_store(&relative) {
+            ignored += 1;
             continue;
         }
 
@@ -888,6 +904,7 @@ fn extract_tarball(
 
         unpack_entry(root, &relative, &mut entry)?;
     }
+    warn_ignored_store_entries(ignored);
 
     // Post-extraction: ensure ELF binaries have their execute bit set.
     // This is a safety net in case fchmod silently failed for some entries.
@@ -1988,6 +2005,35 @@ mod tests {
             fs::read(rootfs.join("usr/bin/perl5")).expect("read perl5"),
             b"perl"
         );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_tarball_cannot_replace_the_store_with_a_symlink() {
+        let tmp = unique_temp_dir("pr-cli-extract-l2s-symlink");
+        let outside = tmp.join("outside");
+        let rootfs = tmp.join("rootfs");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        fs::create_dir_all(rootfs.join(".l2s")).expect("mkdir .l2s");
+        let archive = tmp.join("rootfs.tar.xz");
+        let outside_str = outside.to_str().unwrap().to_string();
+        write_raw_xz_tar(
+            &archive,
+            &[
+                RawEntry::Symlink("top/.l2s", &outside_str),
+                RawEntry::File("top/payload", b"payload", 0o644),
+                RawEntry::Hardlink("top/x", "top/payload"),
+            ],
+        );
+
+        extract_tarball(archive.to_str().unwrap(), rootfs.to_str().unwrap(), 1, &[])
+            .expect("extract");
+
+        assert_eq!(fs::read_dir(&outside).expect("read outside").count(), 0);
+        assert!(fs::symlink_metadata(rootfs.join(".l2s"))
+            .expect("stat .l2s")
+            .is_dir());
+        assert_eq!(fs::read(rootfs.join("x")).expect("read x"), b"payload");
         let _ = fs::remove_dir_all(&tmp);
     }
 
