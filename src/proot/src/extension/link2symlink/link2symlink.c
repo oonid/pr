@@ -29,7 +29,17 @@
 #define RENAME_NOREPLACE (1 << 0)
 #endif
 
-static int decrement_link_count(Tracee *tracee, Reg sysarg);
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
+
+typedef struct {
+	char *path;
+	char *intermediate;
+	Sysnum sysnum;
+	dev_t device;
+	ino_t inode;
+} PendingRemoval;
 
 /**
  * Copy the contents of the @symlink into @value (nul terminated).
@@ -109,6 +119,52 @@ static int has_count(const char *final, int length)
 			return 0;
 	}
 	return 1;
+}
+
+static int lower_link_count(Tracee *tracee, const char intermediate[PATH_MAX])
+{
+	char final[PATH_MAX];
+	char new_final[PATH_MAX];
+	int status;
+	int length;
+	int link_count;
+
+	status = my_readlink(intermediate, final);
+	if (status < 0)
+		return status;
+
+	length = strlen(final);
+	if (!has_count(final, length))
+		return -EINVAL;
+	link_count = atoi(final + length - 4) - 1;
+
+	if (link_count > 0) {
+		length = snprintf(new_final, PATH_MAX, "%.*s%04d", length - 4, final, link_count);
+		if (length < 0 || length >= PATH_MAX)
+			return -ENAMETOOLONG;
+
+		status = rename_noreplace(final, new_final);
+		if (status < 0)
+			return status;
+		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
+		if (status < 0) {
+			rename_noreplace(new_final, final);
+			return status;
+		}
+
+		status = repoint_intermediate(intermediate, new_final);
+		if (status < 0) {
+			rename_back(tracee, new_final, final);
+			return status;
+		}
+		return 0;
+	}
+
+	if (unlink(intermediate) < 0)
+		return -errno;
+	if (unlink(final) < 0)
+		return -errno;
+	return notify_extensions(tracee, LINK2SYMLINK_UNLINK, (intptr_t) final, 0);
 }
 
 /**
@@ -273,7 +329,7 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 		if (first_link)
 			undo_first_link(tracee, original, intermediate, final);
 		else
-			decrement_link_count(tracee, sysarg);
+			lower_link_count(tracee, intermediate);
 		return status;
 	}
 	poke_reg(tracee, SYSARG_RESULT, 0);
@@ -283,95 +339,87 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
 }
 
 
-/* If path points a file that is a symlink to a file that begins
- *   with PREFIX, let the file be deleted, but also delete the
- *   symlink that was created and decremnt the count that is tacked
- *   to end of original file.
- */
-static int decrement_link_count(Tracee *tracee, Reg sysarg)
+static int read_chain(const char path[PATH_MAX], char intermediate[PATH_MAX], struct stat *statl)
 {
-	char original[PATH_MAX];
-	char intermediate[PATH_MAX];
 	char final[PATH_MAX];
-	char new_final[PATH_MAX];
-	char * name;
-	struct stat statl;
-	ssize_t size;
-	int status;
-	int link_count;
+	char *name;
 
-	/* Note: this path was already canonicalized.  */
-	size = read_string(tracee, original, peek_reg(tracee, CURRENT, sysarg), PATH_MAX);
-	if (size < 0)
-		return size;
-	if (size >= PATH_MAX)
-		return -ENAMETOOLONG;
-
-	/* Check if it is a converted link already.  */
-	status = lstat(original, &statl);
-	if (status < 0)
+	if (lstat(path, statl) < 0 || !S_ISLNK(statl->st_mode))
 		return 0;
-
-	if (!S_ISLNK(statl.st_mode))
+	if (my_readlink(path, intermediate) < 0)
 		return 0;
-
-	size = my_readlink(original, intermediate);
-	if (size < 0)
-		return size;
 
 	name = strrchr(intermediate, '/');
 	if (name == NULL)
 		name = intermediate;
 	else
 		name++;
-
-	/* Check if an l2s file is pointed to */
 	if (strncmp(name, PREFIX, strlen(PREFIX)) != 0)
 		return 0;
 
-	/* Read intermediate link - if this fails then
-	 * this link2symlink is broken and we silently
-	 * skip as we were removing it anyway.  */
-	size = my_readlink(intermediate, final);
-	if (size < 0) {
-		VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
-		return 0;
+	return my_readlink(intermediate, final) == 0;
+}
+
+static void forget_removed_name(Extension *extension)
+{
+	PendingRemoval *pending = talloc_get_type(extension->config, PendingRemoval);
+
+	if (pending == NULL)
+		return;
+	TALLOC_FREE(pending->path);
+	TALLOC_FREE(pending->intermediate);
+}
+
+static void remember_removed_name(Extension *extension, Tracee *tracee, Reg sysarg)
+{
+	PendingRemoval *pending = talloc_get_type(extension->config, PendingRemoval);
+	char path[PATH_MAX];
+	char intermediate[PATH_MAX];
+	struct stat statl;
+	ssize_t size;
+
+	if (pending == NULL)
+		return;
+
+	size = read_string(tracee, path, peek_reg(tracee, CURRENT, sysarg), PATH_MAX);
+	if (size < 0 || size >= PATH_MAX)
+		return;
+	if (!read_chain(path, intermediate, &statl))
+		return;
+
+	pending->path = talloc_strdup(pending, path);
+	pending->intermediate = talloc_strdup(pending, intermediate);
+	if (pending->path == NULL || pending->intermediate == NULL) {
+		VERBOSE(tracee, 1, "link2symlink: can't remember \"%s\"", path);
+		forget_removed_name(extension);
+		return;
+	}
+	pending->sysnum = get_sysnum(tracee, ORIGINAL);
+	pending->device = statl.st_dev;
+	pending->inode = statl.st_ino;
+}
+
+static void lower_removed_name(Extension *extension, Tracee *tracee)
+{
+	PendingRemoval *pending = talloc_get_type(extension->config, PendingRemoval);
+	struct stat statl;
+	int status;
+
+	if (pending == NULL || pending->intermediate == NULL)
+		return;
+
+	if (get_sysnum(tracee, ORIGINAL) == pending->sysnum
+	    && peek_reg(tracee, CURRENT, SYSARG_RESULT) == 0
+	    && !(lstat(pending->path, &statl) == 0
+		 && statl.st_dev == pending->device
+		 && statl.st_ino == pending->inode)) {
+		status = lower_link_count(tracee, pending->intermediate);
+		if (status < 0)
+			VERBOSE(tracee, 1, "link2symlink: can't lower the count of \"%s\": %s",
+				pending->intermediate, strerror(-status));
 	}
 
-	link_count = atoi(final + strlen(final) - 4);
-	link_count--;
-
-	/* Check if it is or is not the last link to delete */
-	if (link_count > 0) {
-		strncpy(new_final, final, strlen(final) - 4);
-		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
-
-		status = rename(final, new_final);
-		if (status < 0)
-			return -errno;
-		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
-		if (status < 0)
-			return status;
-
-		status = repoint_intermediate(intermediate, new_final);
-		if (status < 0) {
-			rename_back(tracee, new_final, final);
-			return status;
-		}
-	} else {
-		/* If it is the last, delete the intermediate and final */
-		status = unlink(intermediate);
-		if (status < 0)
-			return -errno;
-		status = unlink(final);
-		if (status < 0)
-			return -errno;
-		status = notify_extensions(tracee, LINK2SYMLINK_UNLINK, (intptr_t) final, 0);
-		if (status < 0)
-			return status;
-		}
-
-	return 0;
+	forget_removed_name(extension);
 }
 
 /**
@@ -773,67 +821,46 @@ int link2symlink_callback(Extension *extension, ExtensionEvent event,
 			FILTERED_SYSNUM_END,
 		};
 		extension->filtered_sysnums = filtered_sysnums;
-		return 0;
+		extension->config = talloc_zero(extension, PendingRemoval);
+		return extension->config == NULL ? -1 : 0;
 	}
+
+	case INHERIT_PARENT:
+		return 1;
+
+	case INHERIT_CHILD:
+		extension->config = talloc_zero(extension, PendingRemoval);
+		return extension->config == NULL ? -1 : 0;
 
 	case SYSCALL_ENTER_END: {
 		Tracee *tracee = TRACEE(extension);
 
+		forget_removed_name(extension);
+
 		switch (get_sysnum(tracee, ORIGINAL)) {
 		case PR_rename:
-			/*int rename(const char *oldpath, const char *newpath);
-			 *If newpath is a psuedo hard link decrement the link count.
-			 */
-
-			status = decrement_link_count(tracee, SYSARG_2);
-			if (status < 0)
-				return status;
-
+			if ((int) data1 >= 0)
+				remember_removed_name(extension, tracee, SYSARG_2);
 			break;
 
 		case PR_renameat:
+			if ((int) data1 >= 0)
+				remember_removed_name(extension, tracee, SYSARG_4);
+			break;
+
 		case PR_renameat2:
-			/*int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
-			 *If newpath is a psuedo hard link decrement the link count.
-			 */
-
-			status = decrement_link_count(tracee, SYSARG_4);
-			if (status < 0)
-				return status;
-
+			if ((int) data1 >= 0 && (peek_reg(tracee, CURRENT, SYSARG_5) & RENAME_EXCHANGE) == 0)
+				remember_removed_name(extension, tracee, SYSARG_4);
 			break;
 
 		case PR_unlink:
-			/* If path points a file that is an symlink to a file that begins
-			 *   with PREFIX, let the file be deleted, but also decrement the
-			 *   hard link count, if it is greater than 1, otherwise delete
-			 *   the original file and intermediate file too.
-			 */
-
-			status = decrement_link_count(tracee, SYSARG_1);
-			if (status < 0)
-				return status;
-
+			if ((int) data1 >= 0)
+				remember_removed_name(extension, tracee, SYSARG_1);
 			break;
 
 		case PR_unlinkat:
-			/* If this is request to delete directory, don't handle it here.
-			 * directories cannot be hard links.  */
-			if ((peek_reg(tracee, CURRENT, SYSARG_3) & AT_REMOVEDIR) != 0)
-			{
-				return 0;
-			}
-
-			/* If path points a file that is a symlink to a file that begins
-			 *   with PREFIX, let the file be deleted, but also delete the
-			 *   symlink that was created and decremnt the count that is tacked
-			 *   to end of original file.
-			 */
-
-			status = decrement_link_count(tracee, SYSARG_2);
-			if (status < 0)
-				return status;
-
+			if ((int) data1 >= 0 && (peek_reg(tracee, CURRENT, SYSARG_3) & AT_REMOVEDIR) == 0)
+				remember_removed_name(extension, tracee, SYSARG_2);
 			break;
 
 		case PR_link:
@@ -896,7 +923,10 @@ int link2symlink_callback(Extension *extension, ExtensionEvent event,
 	}
 
 	case SYSCALL_EXIT_END: {
-		return handle_sysexit_end(TRACEE(extension));
+		Tracee *tracee = TRACEE(extension);
+
+		lower_removed_name(extension, tracee);
+		return handle_sysexit_end(tracee);
 	}
 
 	case TRANSLATED_PATH:
