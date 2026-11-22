@@ -113,9 +113,22 @@ struct RegistryPlatform {
     os_features: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ImageConfig {
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    architecture: String,
+    #[serde(default)]
+    variant: Option<String>,
+}
+
+const MAX_IMAGE_CONFIG_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug)]
 struct ResolvedOciManifest {
     manifest: OciManifest,
+    config: ImageConfig,
     bearer_token: Option<String>,
 }
 
@@ -407,6 +420,105 @@ async fn fetch_manifest_json(
     Err(format!("failed to authorize OCI manifest request {}", url))
 }
 
+async fn fetch_image_config(
+    client: &reqwest::Client,
+    url: &str,
+    digest: &str,
+    token: &mut Option<String>,
+) -> Result<ImageConfig, String> {
+    let too_large = || {
+        format!(
+            "OCI image config {} is larger than {} bytes",
+            url, MAX_IMAGE_CONFIG_BYTES
+        )
+    };
+    let mut refreshed = false;
+    loop {
+        let mut request = client.get(url);
+        if let Some(token) = token.as_deref() {
+            request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", token));
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|e| format!("request OCI image config {}: {}", url, e))?;
+
+        if !response.status().is_success() {
+            match crate::oci::status_failure(url, &response) {
+                crate::oci::Failure::Unauthorized(header) if !refreshed => {
+                    refreshed = true;
+                    let challenge = parse_bearer_challenge(&header).ok_or_else(|| {
+                        format!("unsupported WWW-Authenticate challenge: {}", header)
+                    })?;
+                    *token = Some(fetch_bearer_token(client, &challenge).await?);
+                    continue;
+                }
+                crate::oci::Failure::Unauthorized(_) => {
+                    return Err(format!("request {} failed with HTTP 401", url));
+                }
+                crate::oci::Failure::Retry(e) | crate::oci::Failure::Fatal(e) => return Err(e),
+            }
+        }
+
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("read OCI image config {}: {}", url, e))?
+        {
+            if bytes.len() + chunk.len() > MAX_IMAGE_CONFIG_BYTES {
+                return Err(too_large());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if !crate::oci::bytes_match_digest(&bytes, digest)? {
+            return Err(format!(
+                "OCI image config {} does not match digest {}",
+                url, digest
+            ));
+        }
+        return serde_json::from_slice(&bytes)
+            .map_err(|e| format!("decode OCI image config {}: {}", url, e));
+    }
+}
+
+fn platform_label(os: &str, architecture: &str, variant: Option<&str>) -> String {
+    match variant.filter(|variant| !variant.is_empty()) {
+        Some(variant) => format!("{}/{}/{}", os, architecture, variant),
+        None => format!("{}/{}", os, architecture),
+    }
+}
+
+fn image_architecture(
+    reference: &str,
+    config: &ImageConfig,
+    device_arch: &str,
+) -> Result<Option<String>, String> {
+    if config.architecture.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut platform = OciPlatform::new(config.os.clone(), config.architecture.clone());
+    platform.variant = config.variant.clone();
+    if platform.runs_on(device_arch) {
+        return Ok(Some(config.architecture.clone()));
+    }
+    let needed = match crate::oci::normalize_architecture(device_arch) {
+        Some(target) => platform_label("linux", target.oci_architecture, target.variant.as_deref()),
+        None => platform_label("linux", device_arch, None),
+    };
+    let os = if config.os.is_empty() {
+        "unknown"
+    } else {
+        &config.os
+    };
+    Err(format!(
+        "image {} is built for {}; this device needs {}",
+        reference,
+        platform_label(os, &config.architecture, config.variant.as_deref()),
+        needed
+    ))
+}
+
 async fn resolve_oci_manifest(
     oci_ref: &ResolvedOciReference,
     architecture: &str,
@@ -435,7 +547,7 @@ async fn resolve_oci_manifest(
         || top_media_type.contains("image.index")
         || !top_manifest.manifests.is_empty();
 
-    let (selected_manifest, selected_token) = if is_index {
+    let (selected_manifest, mut selected_token) = if is_index {
         let descriptors: Vec<OciDescriptor> = top_manifest
             .manifests
             .into_iter()
@@ -469,6 +581,9 @@ async fn resolve_oci_manifest(
             selected_manifest.schema_version
         ));
     }
+    let config_url = blob_url(&oci_ref.registry_base, &oci_ref.repository, &config.digest);
+    let image_config =
+        fetch_image_config(&client, &config_url, &config.digest, &mut selected_token).await?;
 
     Ok(ResolvedOciManifest {
         manifest: OciManifest {
@@ -482,6 +597,7 @@ async fn resolve_oci_manifest(
                 .collect(),
             annotations: std::collections::BTreeMap::new(),
         },
+        config: image_config,
         bearer_token: selected_token,
     })
 }
@@ -658,6 +774,20 @@ fn populate_oci_container(
     let device_arch = detect_device_arch();
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("create tokio runtime: {}", e))?;
     let resolved_manifest = rt.block_on(resolve_oci_manifest(resolved, &device_arch))?;
+    let selected_architecture = match image_architecture(
+        reference,
+        &resolved_manifest.config,
+        &device_arch,
+    )? {
+        Some(architecture) => architecture,
+        None => {
+            msg_error(&format!(
+                "image {} does not say which architecture it is built for; installing it without checking",
+                reference
+            ));
+            device_arch.clone()
+        }
+    };
     let mut bearer_token = resolved_manifest.bearer_token;
     let manifest = resolved_manifest.manifest;
 
@@ -696,7 +826,7 @@ fn populate_oci_container(
         install_name.to_string(),
         reference,
         normalized_oci_reference(resolved),
-        device_arch,
+        selected_architecture,
         created_at,
     );
     write_oci_install_metadata(Path::new(&metadata_path), &metadata)
@@ -2099,7 +2229,8 @@ mod tests {
     fn manifest_bytes(marker: &str) -> Vec<u8> {
         format!(
             "{{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"config\":{{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"digest\":\"{}\",\"size\":2}},\"layers\":[],\"annotations\":{{\"m\":\"{}\"}}}}",
-            PIN, marker
+            digest_of(ARM64_CONFIG),
+            marker
         )
         .into_bytes()
     }
@@ -2116,8 +2247,12 @@ mod tests {
         format!("sha256:{:x}", Sha256::digest(bytes))
     }
 
-    fn serve_registry(routes: Vec<(String, Vec<u8>)>) -> String {
+    fn serve_registry(mut routes: Vec<(String, Vec<u8>)>) -> String {
         use std::io::{BufRead, Write};
+        routes.push((
+            format!("/v2/library/box/blobs/{}", digest_of(ARM64_CONFIG)),
+            ARM64_CONFIG.to_vec(),
+        ));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("local addr"));
         std::thread::spawn(move || {
@@ -2225,6 +2360,183 @@ mod tests {
             (format!("/v2/library/box/manifests/{}", good), served),
         ]);
         resolve_from(&base, "latest", false).expect("a matching manifest is used");
+    }
+
+    const ARM64_CONFIG: &[u8] = br#"{"os":"linux","architecture":"arm64"}"#;
+
+    fn image_manifest(config_digest: &str, layer_digest: &str) -> Vec<u8> {
+        format!(
+            "{{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"config\":{{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"digest\":\"{}\",\"size\":2}},\"layers\":[{{\"mediaType\":\"application/vnd.oci.image.layer.v1.tar+gzip\",\"digest\":\"{}\",\"size\":1}}]}}",
+            config_digest, layer_digest
+        )
+        .into_bytes()
+    }
+
+    struct ServedInstall {
+        result: Result<(), String>,
+        paths: Vec<String>,
+        config_path: String,
+        layer_path: String,
+        selected_architecture: Option<String>,
+    }
+
+    fn install_served_image(label: &str, config: &[u8], config_digest: &str) -> ServedInstall {
+        use crate::test_http::*;
+        let (layer, layer_digest) = gzip_layer("etc/os-release", b"ID=box\n");
+        let server = serve(vec![
+            ok(&image_manifest(config_digest, &layer_digest)),
+            ok(config),
+            ok(&layer),
+        ]);
+        let resolved = ResolvedOciReference {
+            registry_base: server.base.clone(),
+            repository: "library/box".to_string(),
+            reference: "latest".to_string(),
+            digest_reference: false,
+        };
+        let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prefix = unique_temp_dir(label).join("usr");
+        std::env::set_var("APP_PREFIX", &prefix);
+        std::env::set_var("DISTRO_ARCH", "aarch64");
+
+        let result = populate_oci_container("box:latest", &resolved, "box");
+        let selected_architecture =
+            fs::read(get_oci_container_manifest_path("box"))
+                .ok()
+                .map(|bytes| {
+                    serde_json::from_slice::<OciInstallMetadata>(&bytes)
+                        .expect("decode metadata")
+                        .selected_architecture
+                });
+
+        std::env::remove_var("APP_PREFIX");
+        std::env::remove_var("DISTRO_ARCH");
+        drop(guard);
+        let _ = fs::remove_dir_all(prefix.parent().expect("base"));
+        ServedInstall {
+            result,
+            paths: server.requests().into_iter().map(|r| r.path).collect(),
+            config_path: format!("/v2/library/box/blobs/{}", config_digest),
+            layer_path: format!("/v2/library/box/blobs/{}", layer_digest),
+            selected_architecture,
+        }
+    }
+
+    #[test]
+    fn a_single_manifest_for_another_architecture_is_refused_before_layers() {
+        let config = br#"{"os":"linux","architecture":"amd64"}"#;
+        let served = install_served_image("pr-cli-oci-amd64", config, &digest_of(config));
+
+        assert_eq!(
+            served.result,
+            Err(
+                "image box:latest is built for linux/amd64; this device needs linux/arm64"
+                    .to_string()
+            )
+        );
+        assert!(
+            served.paths.contains(&served.config_path),
+            "{:?}",
+            served.paths
+        );
+        assert!(
+            !served.paths.contains(&served.layer_path),
+            "{:?}",
+            served.paths
+        );
+    }
+
+    #[test]
+    fn a_single_manifest_for_this_architecture_installs() {
+        let served =
+            install_served_image("pr-cli-oci-arm64", ARM64_CONFIG, &digest_of(ARM64_CONFIG));
+
+        served.result.expect("an arm64 image installs");
+        assert_eq!(
+            served.paths[1..],
+            [served.config_path.clone(), served.layer_path.clone()]
+        );
+        assert_eq!(served.selected_architecture.as_deref(), Some("arm64"));
+    }
+
+    #[test]
+    fn a_config_that_does_not_match_its_digest_is_refused() {
+        let served = install_served_image(
+            "pr-cli-oci-config-digest",
+            ARM64_CONFIG,
+            &digest_of(br#"{"os":"linux","architecture":"amd64"}"#),
+        );
+
+        let err = served.result.expect_err("a mismatched config is refused");
+        assert!(err.contains("config"), "{}", err);
+        assert!(err.contains("does not match"), "{}", err);
+        assert!(
+            served.paths.contains(&served.config_path),
+            "{:?}",
+            served.paths
+        );
+        assert!(
+            !served.paths.contains(&served.layer_path),
+            "{:?}",
+            served.paths
+        );
+    }
+
+    #[test]
+    fn a_config_larger_than_a_mebibyte_is_refused() {
+        let mut config = ARM64_CONFIG[..ARM64_CONFIG.len() - 1].to_vec();
+        config.extend_from_slice(b",\"pad\":\"");
+        config.resize(1024 * 1024, b'x');
+        config.extend_from_slice(b"\"}");
+        let served = install_served_image("pr-cli-oci-config-size", &config, &digest_of(&config));
+
+        let err = served.result.expect_err("an oversized config is refused");
+        assert!(err.contains("larger than"), "{}", err);
+        assert!(
+            !served.paths.contains(&served.layer_path),
+            "{:?}",
+            served.paths
+        );
+    }
+
+    #[test]
+    fn the_config_platform_is_judged_like_an_index_entry() {
+        let config = |os: &str, architecture: &str, variant: Option<&str>| ImageConfig {
+            os: os.to_string(),
+            architecture: architecture.to_string(),
+            variant: variant.map(str::to_string),
+        };
+        assert_eq!(
+            image_architecture("a", &config("linux", "arm64", Some("v8")), "aarch64"),
+            Ok(Some("arm64".to_string()))
+        );
+        assert_eq!(
+            image_architecture("a", &config("linux", "", None), "aarch64"),
+            Ok(None)
+        );
+        assert_eq!(
+            image_architecture("a", &config("windows", "arm64", None), "aarch64"),
+            Err("image a is built for windows/arm64; this device needs linux/arm64".to_string())
+        );
+        assert_eq!(
+            image_architecture("a", &config("linux", "arm", Some("v6")), "armv7"),
+            Err("image a is built for linux/arm/v6; this device needs linux/arm/v7".to_string())
+        );
+    }
+
+    #[test]
+    fn a_config_without_an_architecture_is_accepted_with_a_warning() {
+        let config = br#"{"os":"linux"}"#;
+        let served = install_served_image("pr-cli-oci-no-arch", config, &digest_of(config));
+
+        served
+            .result
+            .expect("an image without an architecture installs");
+        assert_eq!(
+            served.paths[1..],
+            [served.config_path.clone(), served.layer_path.clone()]
+        );
+        assert_eq!(served.selected_architecture.as_deref(), Some("aarch64"));
     }
 
     #[test]

@@ -53,6 +53,11 @@ impl OciPlatform {
         Some(normalized)
     }
 
+    pub fn runs_on(&self, architecture: &str) -> bool {
+        normalize_architecture(architecture)
+            .is_some_and(|target| self.score_for_target(&target).is_some())
+    }
+
     fn score_for_target(&self, target: &NormalizedArchitecture) -> Option<u8> {
         if !self.os.is_empty() && !self.os.eq_ignore_ascii_case("linux") {
             return None;
