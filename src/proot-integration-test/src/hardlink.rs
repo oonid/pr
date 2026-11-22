@@ -6,6 +6,7 @@ use std::os::unix::fs::symlink;
 const STORE: &str = "/.l2s";
 const SYS_RENAMEAT2: libc::c_long = 276;
 const RENAME_NOREPLACE: libc::c_uint = 1;
+const RENAME_EXCHANGE: libc::c_uint = 2;
 
 pub fn probe() -> bool {
     true
@@ -312,6 +313,45 @@ pub fn test_link_of_a_symlink_copies_it() -> TestResult {
     let basename = "pithlsym";
     let dir = "/tmp/pit-hl-sym";
     let result = symlink_body(basename, dir);
+    clean(basename, dir);
+    result
+}
+
+fn exchange_body(basename: &str, dir: &str) -> TestResult {
+    setup(basename, dir)?;
+    let a = format!("{}/{}", dir, basename);
+    let b = format!("{}/b", dir);
+    let other = format!("{}/c", dir);
+    fs::write(&a, b"data").map_err(|e| format!("write: {}", e))?;
+    fs::hard_link(&a, &b).map_err(|e| format!("link: {}", e))?;
+    fs::write(&other, b"other").map_err(|e| format!("write: {}", e))?;
+    let rc = unsafe {
+        libc::syscall(
+            SYS_RENAMEAT2,
+            libc::AT_FDCWD,
+            c(&other).as_ptr(),
+            libc::AT_FDCWD,
+            c(&b).as_ptr(),
+            RENAME_EXCHANGE,
+        )
+    };
+    let err = errno();
+    if rc == -1 && (err == libc::EINVAL || err == libc::ENOSYS) {
+        return Ok(());
+    }
+    if rc != 0 {
+        return Err(format!("renameat2: rc={} errno={}, want 0", rc, err));
+    }
+    expect_content(&b, "other")?;
+    expect_content(&other, "data")?;
+    fs::remove_file(&a).map_err(|e| format!("unlink: {}", e))?;
+    expect_content(&other, "data")
+}
+
+pub fn test_rename_exchange_keeps_the_link_count() -> TestResult {
+    let basename = "pithlxchg";
+    let dir = "/tmp/pit-hl-xchg";
+    let result = exchange_body(basename, dir);
     clean(basename, dir);
     result
 }
