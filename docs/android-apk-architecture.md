@@ -550,7 +550,7 @@ Code checking for distro existence (`InstalledContainers` in the app) must check
 
 #### Image config and layer application
 
-After picking the manifest, `pr-cli` fetches the image config (at most 1 MiB, checked against its digest) and compares its `architecture` (with `variant`) to the device's. A mismatch is refused before any layer is downloaded ("image ... is built for ...; this device needs ..."). A config without an architecture only warns. Layers are applied as the OCI image spec describes: an entry whose type differs from what is on disk (file over directory or the reverse) replaces it, `.wh.<name>` removes `<name>` and `.wh..wh..opq` empties its directory (other `.wh.` names, `.wh...` and `..` remove nothing), and a gzip layer made of several members is read to the end.
+After picking the manifest, `pr-cli` fetches the image config (at most 1 MiB, checked against its digest) and compares its `architecture` (with `variant`) to the device's. A mismatch is refused before any layer is downloaded ("image ... is built for ...; this device needs ..."). A config without an architecture only warns. Layers are applied as the OCI image spec describes: an entry whose type differs from what is on disk (file over directory or the reverse) replaces it, `.wh.<name>` removes `<name>`, `.wh..wh..opq` empties its directory, other `.wh..wh.*` names (aufs metadata) and the names `.wh.`, `.wh..` and `.wh...` remove nothing, and a gzip layer made of several members is read to the end.
 
 #### Downloads
 
