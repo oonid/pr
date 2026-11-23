@@ -227,6 +227,14 @@ still has them; reinstalling the `passwd` package restores the real binaries:
 
 ## pr-cli Caveats
 
+### Container `/etc/environment` and rootfs bind sources
+
+A container's `/etc/environment` can no longer set `PROOT_*` variables: `pr-cli login` drops
+them and passes only its own `PROOT_*` settings to proot. The bind sources under the rootfs
+(`tmp`, `proc/.*`, `sys/.empty`) are bound only when they are the expected type (directory or
+regular file, not a symlink out of the rootfs); otherwise `pr-cli` prints a warning on stderr
+and starts without that bind.
+
 ### `touch` silently failed inside proot (fixed)
 
 `touch` and Python's `Path.touch()` call `utimensat` on the path first and create
